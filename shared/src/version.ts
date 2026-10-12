@@ -6,4 +6,4 @@
  * the npm package version.
  */
 export const GAME_NAME = 'CHOG WAVES';
-export const BUILD_VERSION = '0.0.1';
+export const BUILD_VERSION = '0.0.2';

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { BUILD_VERSION } from '@chog/shared';
 
 /**
  * What the screens show, and how a clip gets to them.
@@ -186,7 +187,7 @@ export class HouseAd {
     ctx.shadowBlur = 0;
     ctx.font = '600 30px system-ui, "Segoe UI", sans-serif';
     ctx.fillStyle = '#ffd9b0';
-    ctx.fillText('GENESIS · 0.0.1', W / 2, H * 0.4 + 88);
+    ctx.fillText(`GENESIS · ${BUILD_VERSION}`, W / 2, H * 0.4 + 88);
 
     // a ticker along the bottom edge
     const msg = 'FOLD GATE OPEN   ·   SIX DUNGEONS   ·   WAVE STATION   ·   ';

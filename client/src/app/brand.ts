@@ -64,22 +64,6 @@ export function wordmark(lines: string[], { cell = 6, ink = '#ffffff', ribbon = 
 }
 
 /**
- * The five Chogs that front the gate.
- *
- * These are the current renders (`blender/out/traits/tokenN_head.png`, copied in as a
- * snapshot on 2026-10-11), not the old baked atlases the world still walks around in.
- * They are chosen by looking at the art: #1 wears the chain id on its shirt, which is
- * about as on-brand as a genesis token gets.
- */
-export const BRAND_CAST: [number, string][] = [
-  [1, 'the 143 shirt'],
-  [4, 'bolt helmet'],
-  [13, 'bucket hat'],
-  [26, 'pizza beanie'],
-  [111, 'the skull'],
-];
-
-/**
  * The street, painted.
  *
  * A login screen with nothing behind it is a modal, so the gate draws its own horizon:

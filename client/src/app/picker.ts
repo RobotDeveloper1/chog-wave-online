@@ -2,7 +2,7 @@ import './picker.css';
 import { GENESIS_SUPPLY, describeBuild, type HolderCard, type HoldingsView } from '@chog/shared';
 import { net } from '../net.ts';
 import { wallet } from '../wallet.ts';
-import { BRAND_CAST, street, wordmark } from './brand.ts';
+import { street, wordmark } from './brand.ts';
 
 /**
  * The gate in front of the world.
@@ -161,19 +161,7 @@ class Picker {
     foot.append(this.fosterButton(false), this.enterBtn);
     this.enterBtn.addEventListener('click', () => this.confirm());
 
-    const cast = h('footer', 'pk-cast');
-    for (const [id, label] of BRAND_CAST) {
-      const bust = h('div', 'pk-bust');
-      bust.style.backgroundImage = `url(/brand/cast/${id}.png)`;
-      bust.style.animationDelay = `${-(id % 5) * 0.5}s`;
-      const cap = h('figcaption', '');
-      cap.append(h('b', '', `#${id}`), document.createTextNode(` ${label}`));
-      const fig = h('figure', 'pk-chog');
-      fig.append(bust, cap);
-      cast.append(fig);
-    }
-
-    this.root.append(this.canvas, top, this.lineEl, hero, main, cast, foot);
+    this.root.append(this.canvas, top, this.lineEl, hero, main, foot);
   }
 
   /** The way in for somebody who owns none of this. Not a consolation prize — the floor prices most people out. */
