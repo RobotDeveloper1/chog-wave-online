@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>CHOG 3D probe</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #120c1e; overflow: hidden; }
+      canvas { display: block; }
+      #log { position: fixed; left: 8px; top: 8px; color: #9fe8dc; font: 11px ui-monospace, monospace; white-space: pre; }
+    </style>
+  </head>
+  <body>
+    <div id="log">loading…</div>
+    <script type="module">
+      import * as THREE from 'three';
+      import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+      const log = (m) => { document.getElementById('log').textContent += '\n' + m; };
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(1);
+      renderer.setSize(640, 640, false);
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      document.body.appendChild(renderer.domElement);
+
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x120c1e);
+
+      const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 100);
+
+      // The Blender original is lit flat with emission-dominant toon shaders.
+      // Three's MeshToonMaterial needs a real light, so the key stands in for it.
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x3a2a55, 1.15));
+      const key = new THREE.DirectionalLight(0xffffff, 1.35);
+      key.position.set(-2.5, 3.5, 4);
+      scene.add(key);
+
+      // Three-tone ramp keeps the banded cel look instead of a soft gradient.
+      const ramp = new THREE.DataTexture(
+        new Uint8Array([70, 70, 70, 255, 160, 160, 160, 255, 255, 255, 255, 255]),
+        3, 1, THREE.RGBAFormat,
+      );
+      ramp.needsUpdate = true;
+      ramp.minFilter = ramp.magFilter = THREE.NearestFilter;
+      ramp.generateMipmaps = false;
+
+      let mixer = null;
+      const clips = [];
+
+      // Outline as a fixed world-space extrusion along the normal. Scaling the
+      // hull by a percentage looked right on the head and swallowed the eyes,
+      // which sit proud of it — thickness has to be absolute, not relative.
+      const hullMat = new THREE.ShaderMaterial({
+        vertexShader: `
+          uniform float kThickness;
+          void main() {
+            vec3 pos = position + normal * kThickness;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 kColor;
+          void main() { gl_FragColor = vec4(kColor, 1.0); }
+        `,
+        uniforms: {
+          kThickness: { value: 0.022 },
+          kColor: { value: new THREE.Color(0x120a1c) },
+        },
+        side: THREE.BackSide,
+      });
+
+      new GLTFLoader().load('/probe-chog.glb', async (gltf) => {
+        const root = gltf.scene;
+        // glTF exports base colour only from a Principled setup; the Blender
+        // toon shader is a custom node tree, so every material arrived black.
+        // Names survive the export, so colour comes from the manifest instead.
+        const mats = await fetch('/chog-mats.json').then((r) => r.json());
+        const palette = mats['1'] || {};
+
+        const meshes = [];
+        root.traverse((o) => { if (o.isMesh) meshes.push(o); });
+        for (const o of meshes) {
+          const src = Array.isArray(o.material) ? o.material[0] : o.material;
+          const name = src ? src.name : '';
+          const hex = palette[name.split('.')[0]];
+          const col = new THREE.Color(hex ? `#${hex}` : 0xffffff);
+          o.material = new THREE.MeshToonMaterial({ color: col, gradientMap: ramp });
+
+          const hull = new THREE.Mesh(o.geometry, hullMat);
+          o.add(hull);
+        }
+        scene.add(root);
+
+        const box = new THREE.Box3().setFromObject(root);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        root.position.sub(center);
+        log(`bbox ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
+
+        clips.push(...gltf.animations.map((a) => a.name));
+        if (gltf.animations.length) {
+          mixer = new THREE.AnimationMixer(root);
+          mixer.clipAction(gltf.animations[0]).play();
+        }
+        window.__ready = true;
+        window.__clips = clips;
+        log('clips: ' + (clips.join(', ') || 'NONE'));
+        render(0);
+      });
+
+      const clock = new THREE.Clock();
+      function render(angleDeg) {
+        if (mixer) mixer.update(clock.getDelta());
+        const a = (angleDeg * Math.PI) / 180;
+        const r = 5.4;
+        camera.position.set(Math.sin(a) * r, 1.35, Math.cos(a) * r);
+        camera.lookAt(0, 0, 0);
+        renderer.render(scene, camera);
+      }
+
+      window.__shot = (angleDeg) => {
+        render(angleDeg);
+        return renderer.domElement.toDataURL('image/png');
+      };
+      window.__state = () => ({ ready: !!window.__ready, clips: window.__clips || [] });
+    </script>
+  </body>
+</html>

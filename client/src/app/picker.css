@@ -1,0 +1,325 @@
+/*
+ * The gate in front of the world — and the game's front door.
+ *
+ * Two phases on one screen, switched by `data-phase` on the root:
+ *
+ *   auth  nobody has signed in. This is the marketing surface, so it carries the identity:
+ *         the painted street behind everything, the wordmark at full size, the five Chogs
+ *         that front the game along the bottom, and one action that is obviously the action.
+ *   pick  a session exists. The brand steps back to a 3px lockup in the header and the
+ *         screen becomes a workbench: the wallet's Chogs on the left, the build the server
+ *         will run for the one you choose on the right.
+ *
+ * The material language is the HUD's, unchanged: a plate is a tool, not glass — flat fill,
+ * one opaque hairline, one hard drop shadow, one 45 degree cut. Colour is spent only on
+ * meaning, and the wave ribbon under the wordmark is part of that economy: mint when the
+ * gate is ready, gold while the chain is still being read, rose when the server refused.
+ *
+ * Sizes are `em` off one root size (`clamp` on the viewport height), so a laptop and a
+ * projector get the same layout rather than the same pixel sizes.
+ */
+
+@font-face {
+  font-family: "Oxanium";
+  src: url("/fonts/oxanium-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Share Tech Mono";
+  src: url("/fonts/sharetechmono-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+.chog-pick {
+  --ink: #ece6fb;
+  --dim: #a093c2;
+  --faint: #665a8a;
+  --mint: #43e2a8;
+  --gold: #f5c343;
+  --rose: #ff5d72;
+  --violet: #9a72ea;
+  --plate: #171129;
+  --plate-up: #201838;
+  --recess: #0a0716;
+  --edge: #382c58;
+  --edge-hi: #6d56ab;
+  --cut: .6em;
+  --r: 2px;
+  --ui: "Oxanium", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --mono: "Share Tech Mono", ui-monospace, Consolas, monospace;
+
+  position: fixed; inset: 0; z-index: 60;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: var(--ink);
+  font: 400 clamp(11px, 1.32vh, 20px)/1.45 var(--ui);
+  user-select: none;
+  background: #06040c;
+}
+.pk-street { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; }
+/* the violet ceiling, so the plates are not floating in a void */
+.chog-pick::after {
+  content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none;
+  background: radial-gradient(120% 80% at 18% -10%, rgba(154, 114, 234, .2) 0%, transparent 55%);
+}
+.chog-pick > *:not(.pk-street) { position: relative; z-index: 2; }
+
+.chog-pick button {
+  font: inherit;
+  color: inherit;
+  background: var(--plate-up);
+  border: 1px solid var(--edge);
+  border-bottom-width: 2px;
+  border-radius: var(--r);
+  padding: .5em .9em;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.chog-pick button:hover:not(:disabled) { border-color: var(--edge-hi); background: #281f46; }
+.chog-pick button:disabled { color: var(--faint); cursor: default; }
+.chog-pick button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+
+/* ---------------------------------------------------------------- the name */
+
+.pk-top {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 1.5em;
+  padding: 1.5em 2.2em 0;
+}
+.pk-brand { display: grid; gap: .55em; }
+.pk-mark { display: block; }
+.pk-tag { font: 400 .74em var(--mono); letter-spacing: .42em; color: var(--mint); text-transform: uppercase; }
+.pk-supply { font: 400 .72em var(--mono); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+
+.pk-wallet { display: flex; align-items: center; gap: .7em; }
+.pk-monad {
+  display: flex; align-items: center; gap: .6em;
+  padding: .5em .8em;
+  background: rgba(10, 7, 22, .8);
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+}
+.pk-monad > img { height: 1.15em; width: auto; display: block; }
+.pk-monad > i { width: 1px; height: 1.2em; background: var(--edge); }
+.pk-chain {
+  font: 400 .74em var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  color: var(--faint); white-space: nowrap;
+}
+.pk-chain.on { color: var(--mint); }
+.pk-chain.bad { color: var(--gold); }
+.pk-wallet-act { font: 400 .84em var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+
+/* ---------------------------------------------------------------- the line the chain talks in */
+
+.pk-line { display: flex; align-items: center; gap: .9em; min-height: 1.7em; padding: .4em 2.2em 0; }
+/* a refusal is the most important sentence on the screen, so it gets a plate of its own */
+.pk-line.bad {
+  margin-top: .5em; padding: .55em .9em;
+  background: rgba(255, 93, 114, .07);
+  border-left: 3px solid var(--rose);
+}
+.pk-note { font: 400 .82em var(--mono); letter-spacing: .04em; color: var(--gold); }
+.pk-note.bad { color: var(--rose); font-size: .95em; }
+.pk-bar {
+  flex: 1; max-width: 20em; height: .45em;
+  background: var(--recess); border: 1px solid var(--edge); border-radius: 1px; overflow: hidden;
+}
+.pk-bar > b { display: block; height: 100%; background: var(--violet); }
+
+/* ---------------------------------------------------------------- the hero (auth) */
+
+.pk-hero { display: grid; grid-template-columns: minmax(0, 1fr) 28em; gap: 2.4em; align-content: start; padding: 2.6em 2.2em 0; max-width: 78em; }
+.pk-h1 { margin: 0 0 .5em; font: 800 2.3em/1.05 var(--ui); letter-spacing: -.01em; color: #fff; }
+.pk-h1 > em { font-style: normal; color: #fff; }
+.pk-lede { margin: 0 0 1.7em; max-width: 30em; color: var(--dim); font-size: 1.02em; }
+.pk-lede > b { color: var(--ink); font-weight: 700; }
+
+.pk-steps { display: flex; }
+.pk-step { display: grid; gap: .25em; padding-right: 1.4em; margin-right: 1.4em; border-right: 1px solid var(--edge); }
+.pk-step:last-child { border-right: 0; margin-right: 0; padding-right: 0; }
+.pk-step > b { font: 400 .72em var(--mono); letter-spacing: .2em; color: var(--faint); }
+.pk-step > span { font-size: .86em; color: var(--dim); }
+.pk-step.now > b { color: var(--mint); }
+
+.pk-act {
+  display: grid; gap: .7em; align-content: start;
+  padding: 1.2em;
+  background: var(--plate);
+  border: 1px solid var(--edge);
+  box-shadow: 0 1.2em 2.6em rgba(0, 0, 0, .72), inset 0 1px 0 rgba(255, 255, 255, .05);
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+}
+.pk-kicker { font: 400 .68em var(--mono); letter-spacing: .24em; color: var(--faint); text-transform: uppercase; }
+/*
+ * Both primary actions need `.chog-pick` in the selector: the generic button rule above is
+ * a class *and* an element, so a bare `.pk-connect` loses the specificity race and the
+ * plate colour silently wins — which is exactly how the mint button stopped being mint.
+ */
+.chog-pick .pk-connect {
+  display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .7em;
+  width: 100%; padding: .7em .8em; text-align: left;
+  font: 800 1.12em var(--ui); letter-spacing: .01em; color: #04241a;
+  background: var(--mint); border: 1px solid #2c9c76; border-bottom-width: 2px; border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - .5em) 0, 100% .5em, 100% 100%, 0 100%);
+  box-shadow: 0 .2em 0 #1b6b4f;
+}
+.chog-pick .pk-connect:hover:not(:disabled) { background: #5cf0b9; border-color: #2c9c76; }
+.chog-pick .pk-connect > span { display: grid; gap: .15em; }
+.chog-pick .pk-connect > small { display: block; font: 400 .68em var(--mono); letter-spacing: .12em; color: #0a4a35; text-transform: uppercase; }
+.chog-pick .pk-connect > i { font: 400 1.1em var(--mono); color: #0a4a35; opacity: .65; font-style: normal; }
+/* no extension in this browser: still the loudest thing in the plate, still readable */
+.chog-pick .pk-connect:disabled { color: var(--dim); background: var(--plate); border-color: var(--edge); box-shadow: none; cursor: default; }
+.chog-pick .pk-connect:disabled > small { color: var(--faint); letter-spacing: .06em; text-transform: none; }
+.chog-pick .pk-connect:disabled > i { color: var(--faint); opacity: 1; }
+.pk-foster { width: 100%; text-align: left; color: var(--dim); }
+.pk-foster > small { display: block; font: 400 .72em var(--mono); color: var(--faint); }
+.pk-foster:hover:not(:disabled) { color: var(--ink); }
+.pk-fine { margin: 0; font: 400 .72em/1.6 var(--mono); color: var(--faint); }
+.pk-fine > b { color: var(--dim); font-weight: 400; }
+
+/* ---------------------------------------------------------------- the cast (auth) */
+
+.pk-cast { display: flex; align-items: flex-end; justify-content: center; gap: clamp(14px, 3vw, 46px); padding: 0 2em 2em; }
+.pk-chog { display: grid; justify-items: center; gap: .3em; margin: 0; }
+.pk-chog > figcaption { font: 400 .68em var(--mono); letter-spacing: .14em; color: var(--faint); text-transform: uppercase; }
+.pk-chog > figcaption > b { color: var(--dim); font-weight: 400; }
+.pk-bust {
+  width: clamp(64px, 12.5vh, 132px); aspect-ratio: 1;
+  background-repeat: no-repeat; background-size: contain; background-position: center;
+  background-color: #fff;
+  border: 1px solid var(--edge);
+  filter: drop-shadow(0 .4em .8em rgba(0, 0, 0, .7));
+  animation: pk-bob 3.4s ease-in-out infinite;
+}
+@keyframes pk-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-.28em); }
+}
+
+/* ---------------------------------------------------------------- the shelf (pick) */
+
+.pk-main { display: grid; grid-template-columns: minmax(0, 1fr) 22em; gap: 1.1em; min-height: 0; padding: 1.4em 2.2em 0; }
+.pk-shelf { display: flex; flex-direction: column; justify-content: center; gap: .5em; min-height: 0; }
+.pk-micro { font: 400 .7em var(--mono); letter-spacing: .22em; text-transform: uppercase; color: var(--faint); }
+.pk-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(16.5em, 1fr));
+  gap: .7em; align-content: start; overflow: auto; min-height: 0; padding: .2em .3em .2em 0;
+}
+
+/* one Chog, as the server described it */
+.pk-card {
+  display: grid; grid-template-columns: 5.2em minmax(0, 1fr); gap: .7em; align-items: center;
+  padding: .65em; text-align: left;
+  background: var(--recess);
+  border: 1px solid var(--edge);
+  border-left: 3px solid var(--el, var(--edge-hi));
+  border-bottom-width: 1px;
+  border-radius: var(--r);
+}
+.pk-card:hover { border-color: var(--edge-hi); border-left-color: var(--el, var(--edge-hi)); }
+/* the screen's one glow: this is the Chog that will actually be played */
+.pk-card.sel { background: #141026; box-shadow: 0 0 0 1px var(--el, var(--mint)), 0 0 1.5em -.35em var(--el, var(--mint)); }
+.pk-card.pk-ghost { --el: var(--faint); border-style: dashed; opacity: .82; }
+
+.pk-art {
+  display: grid; place-items: center; aspect-ratio: 1;
+  background: repeating-linear-gradient(45deg, #100b1e 0 6px, #0b0718 6px 12px);
+  border: 1px solid var(--edge); border-radius: var(--r); overflow: hidden;
+}
+/*
+ * The baked atlas is 6 columns x 4 rows of 128px cells and idle is row 0, so scaling the
+ * sheet to 600% x 400% makes each of 0/20/40/60/80/100% land on exactly one frame. Six
+ * keyframe stops and `steps(1,end)` animate it with no canvas and no decoder.
+ */
+.pk-sprite {
+  width: 100%; height: 100%;
+  background-repeat: no-repeat; background-size: 600% 400%; background-position: 0% 0%;
+  image-rendering: pixelated;
+  animation: pk-idle .78s steps(1, end) infinite;
+}
+@keyframes pk-idle {
+  0% { background-position: 0% 0%; }
+  16.667% { background-position: 20% 0%; }
+  33.333% { background-position: 40% 0%; }
+  50% { background-position: 60% 0%; }
+  66.667% { background-position: 80% 0%; }
+  83.333%, 100% { background-position: 100% 0%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pk-sprite, .pk-bust { animation: none; }
+}
+
+.pk-plate { font: 400 1.25em var(--mono); color: var(--el, var(--dim)); }
+.pk-meta { display: grid; gap: .08em; min-width: 0; }
+.pk-id { font: 400 .72em var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
+.pk-name { font-size: .98em; font-weight: 700; line-height: 1.15; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pk-el { font: 400 .74em var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--el, var(--dim)); }
+.pk-hist { font: 400 .72em var(--mono); color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.pk-empty {
+  grid-column: 1 / -1; padding: 1.1em .9em;
+  background: rgba(255, 255, 255, .012);
+  border: 1px dashed var(--edge); border-radius: var(--r);
+  color: var(--dim); font-size: .92em;
+}
+
+/* ---------------------------------------------------------------- the build readout */
+
+.pk-detail {
+  display: flex; flex-direction: column; gap: .45em; align-self: center; max-height: 100%;
+  padding: .9em 1em 1.1em;
+  background: var(--plate-up); border: 1px solid var(--edge); border-radius: var(--r); overflow: auto;
+}
+.pk-dhead { display: grid; gap: .1em; padding-bottom: .5em; border-bottom: 1px solid var(--edge); }
+/* the face you are about to wear, at the size it deserves rather than a 3em thumbnail */
+.pk-dart {
+  display: grid; place-items: center; width: 7.5em; height: 7.5em; margin: .1em auto .5em;
+  background: repeating-linear-gradient(45deg, #100b1e 0 6px, #0b0718 6px 12px);
+  border: 1px solid var(--el, var(--edge)); border-radius: var(--r); overflow: hidden;
+}
+.pk-dhead > b { font-size: 1.05em; font-weight: 800; letter-spacing: .06em; color: var(--el, var(--mint)); }
+.pk-dhead > span { font-size: 1.1em; color: #fff; }
+.pk-dline { margin: 0; font-size: .85em; color: var(--dim); }
+.pk-dim { margin: .5em 0 0; font-size: .9em; color: var(--faint); }
+
+/* ---------------------------------------------------------------- the play bar (pick) */
+
+.pk-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 1em;
+  padding: .9em 2.2em 1.2em; margin-top: .8em;
+  border-top: 1px solid var(--edge);
+  background: linear-gradient(0deg, rgba(6, 4, 12, .9), rgba(6, 4, 12, .35));
+}
+.pk-foot .pk-foster { width: auto; text-align: left; }
+.chog-pick .pk-enter {
+  padding: .6em 1.5em; font-size: 1.02em; font-weight: 800; letter-spacing: .08em; text-transform: uppercase;
+  color: #04241a; background: var(--mint); border-color: #2c9c76; border-radius: 0;
+  clip-path: polygon(0 0, calc(100% - .5em) 0, 100% .5em, 100% 100%, 0 100%);
+  box-shadow: 0 2px 0 #1b6b4f;
+}
+.chog-pick .pk-enter:hover:not(:disabled) { background: #5cf0b9; border-color: #2c9c76; }
+.chog-pick .pk-enter:disabled { color: var(--faint); background: var(--plate-up); border-color: var(--edge); box-shadow: none; }
+
+/* ---------------------------------------------------------------- phase visibility */
+
+.chog-pick[data-phase='auth'] .pk-main,
+.chog-pick[data-phase='auth'] .pk-foot,
+.chog-pick[data-phase='auth'] .pk-wallet-act { display: none; }
+.chog-pick[data-phase='pick'] .pk-hero,
+.chog-pick[data-phase='pick'] .pk-cast { display: none; }
+.chog-pick[data-phase='pick'] .pk-supply { display: none; }
+.chog-pick[data-phase='pick'] .pk-main { flex: 1; }
+.chog-pick[data-phase='pick'] { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+
+/* a portrait window has no room for two columns */
+@media (max-width: 900px) {
+  .pk-hero, .pk-main { grid-template-columns: minmax(0, 1fr); }
+  .pk-detail { max-height: 11em; }
+  .pk-grid { grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); }
+  .pk-cast { gap: .8em; }
+  .pk-bust { width: clamp(48px, 9vh, 76px); }
+  .pk-step > span { display: none; }
+}

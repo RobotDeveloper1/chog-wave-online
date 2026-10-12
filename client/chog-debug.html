@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>chog rig debug</title>
+    <style>
+      html, body { margin: 0; height: 100dvh; background: #223; overscroll-behavior: none; }
+      #tag { position: fixed; left: 8px; top: 8px; color: #efe; font: 12px monospace; z-index: 9; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="tag">booting…</div>
+    <script type="module">
+      import * as THREE from 'three';
+      import { loadChogNFT } from '/src/app/chogLoader.ts';
+
+      const MOD = {
+        baseUrl: '/models/chog-base.glb',
+        partsUrl: '/models/trait-parts.json',
+        colorsUrl: '/models/trait-colors.json',
+        skinsUrl: '/models/skins.json',
+      };
+      // Token 1's real trait values.
+      const traits = {
+        Head: 'MCGA', Body: 'Yellow 143 Jersey', Eyes: 'BTC Glass',
+        Mouth: 'Flat', Skin: 'Pink', Base: 'Origin', Form: 'Chog',
+      };
+      const anim = new URLSearchParams(location.search).get('anim') ?? 'idle';
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(1);
+      document.body.append(renderer.domElement);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x334455);
+      const camera = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.1, 60);
+      const camMode = new URLSearchParams(location.search).get('cam') ?? 'full';
+      if (camMode === 'face') { camera.position.set(0, 2.75, 2.6); camera.lookAt(0, 2.45, 0); }
+      else if (camMode === 'side') { camera.position.set(5.4, 2.1, 0.8); camera.lookAt(0, 1.5, 0); }
+      else { camera.position.set(0, 2.2, 7.2); camera.lookAt(0, 1.6, 0); }
+
+      const key = new THREE.DirectionalLight(0xffffff, 3.0);
+      key.position.set(1.5, 3, 2);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(0xffffff, 0.8);
+      fill.position.set(-2, 2, 1);
+      scene.add(fill);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.35));
+
+      const chog = await loadChogNFT({ ...MOD, traits, tokenId: 1 });
+      chog.root.scale.setScalar(1.6);
+      // ?hull=0 hides the client-side inverted-hull outlines so the base
+      // geometry can be judged on its own.
+      if (new URLSearchParams(location.search).get('hull') === '0') {
+        chog.root.traverse((o) => {
+          if (!o.isMesh) return;
+          if (o.material && o.material.type === 'ShaderMaterial') o.visible = false;
+        });
+      }
+      scene.add(chog.root);
+      const tag = document.getElementById('tag');
+
+      // Deterministic clock: ?anim=walk uses speed 1, ?anim=idle just stands.
+      window.__t = 0;
+      window.__step = (dt) => {
+        window.__t += dt;
+        chog.update(dt);
+      };
+      if (anim === 'walk') { chog.play('walk'); chog.setSpeed(1); }
+      else chog.play('idle');
+
+      let last = performance.now();
+      const loop = () => {
+        const now = performance.now();
+        window.__step((now - last) / 1000);
+        last = now;
+        tag.textContent = `anim=${anim} cam=${camMode} t=${window.__t.toFixed(2)}s`;
+        renderer.render(scene, camera);
+        requestAnimationFrame(loop);
+      };
+      loop();
+    </script>
+  </body>
+</html>

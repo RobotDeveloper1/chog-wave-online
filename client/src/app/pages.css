@@ -1,0 +1,258 @@
+/*
+ * The lower screen's deck pages: the Folder, where the deck a Chog fights with is built, and
+ * the Library, the fusion book. Same language as the rest of the menu — flat plates in a recess,
+ * mono for numbers, a 45 degree cut on the big surfaces — with the element colour (`--c`) as the
+ * only accent a row is allowed.
+ */
+
+.fold2 { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) auto; gap: .6em; height: 100%; padding: .6em .8em .7em; }
+.fd-col { display: flex; flex-direction: column; min-height: 0; padding: .5em .5em .4em; border: 1px solid var(--edge); background: var(--recess); }
+.fd-col > header { display: flex; align-items: baseline; gap: .6em; margin-bottom: .4em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.fd-col > header b { font: 400 .95em var(--mono); letter-spacing: 0; color: var(--gold); }
+.fd-col > header b.ok { color: var(--mint); } .fd-col > header b.bad { color: var(--rose); }
+.fd-col > header small { margin-left: auto; min-width: 0; font: 400 .66em var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fd-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .22em; padding-right: .25em; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+
+.fdr { --c: var(--violet); display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto 3em 1.6em 1.8em; align-items: center; gap: .4em; padding: .2em .35em .2em .45em;
+  border: 1px solid color-mix(in srgb, var(--c) 30%, var(--edge)); border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 8%, var(--plate)); }
+.fd-col:first-child .fdr { cursor: pointer; }
+.fdr:hover { background: color-mix(in srgb, var(--c) 14%, var(--plate)); }
+.fdr.sel { border-color: var(--c); background: color-mix(in srgb, var(--c) 22%, var(--plate-up)); }
+.fdr.dim { opacity: .5; }
+.fdr .el { display: grid; place-items: center; color: var(--c); }
+.fdr .el svg { width: 1.1em; height: 1.1em; }
+.fdr .nm { min-width: 0; font: 700 .88em var(--ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fdr .nm .sig { margin-right: .3em; font-style: normal; color: var(--gold); }
+.fdr .st { font: 400 .76em var(--mono); color: var(--dim); white-space: nowrap; }
+.fdr .st b { color: var(--c); }
+.fdr .kl { font: 400 .58em var(--mono); color: var(--gold); text-align: center; }
+.fdr .n { font: 400 .8em var(--mono); color: var(--mint); text-align: right; }
+.fdr button { width: 1.7em; height: 1.7em; display: grid; place-items: center; padding: 0; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: #fff; font: 400 1em var(--mono); cursor: pointer; }
+.fdr button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); }
+.fdr button:disabled { opacity: .3; cursor: not-allowed; }
+
+.fold2 footer { grid-column: 1 / 3; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; gap: .3em .8em; align-items: center; }
+.fd-rules { grid-column: 1; display: flex; flex-wrap: wrap; gap: .3em .9em; font: 400 .72em var(--mono); color: var(--dim); }
+/* A slot the level ladder bought, not the one the Chog was born with — mint because it is earned, plain because it is a number. */
+.fd-rules .lic { margin-left: .2em; color: var(--mint); font-weight: 400; }
+/* The rung still ahead of you, on the strip where the cap is. Quietest thing on the line on
+   purpose: it is a promise about the road, not a second number to check right now. */
+.fd-rules .next { margin-left: .4em; color: var(--faint); font-style: normal; letter-spacing: .04em; }
+.fd-rules .ban { color: var(--rose); }
+.fd-rules .ban svg { width: 1em; height: 1em; vertical-align: -.15em; }
+.fd-msg { grid-column: 1; font: 400 .78em var(--mono); }
+.fd-msg .ok { color: var(--mint); } .fd-msg .warn { color: var(--gold); } .fd-msg .bad { color: var(--rose); }
+.fd-btns { grid-column: 2; grid-row: 1 / 3; display: flex; gap: .4em; }
+.fd-btns button { padding: .5em 1em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--ink); font: 700 .8em var(--ui); cursor: pointer; }
+.fd-btns button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); color: #fff; }
+.fd-btns button:disabled { opacity: .35; cursor: not-allowed; }
+.fd-btns .save { border-color: var(--mint); border-bottom-color: #06301f; background: var(--mint); color: #04170f; }
+
+/* the library */
+.lib { display: flex; flex-direction: column; height: 100%; padding: .7em .9em .8em; gap: .5em; }
+.lib > header { display: flex; align-items: baseline; gap: .8em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.lib > header b { margin-left: auto; font-family: var(--mono); color: var(--gold); }
+.lib .lead { margin: 0; color: var(--dim); font: 400 .78em/1.55 var(--ui); }
+.lib-list { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: .4em; align-content: start; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+.lbr { display: flex; align-items: center; gap: .7em; padding: .4em .7em; border: 1px solid color-mix(in srgb, var(--gold) 42%, var(--edge)); background: color-mix(in srgb, var(--gold) 7%, var(--plate)); }
+.lbr .q { flex: none; width: 1.8em; height: 1.8em; display: grid; place-items: center; background: var(--gold); color: #241a00; font: 400 .9em var(--mono); }
+.lbr b { display: block; font: 700 .86em var(--ui); color: #ffe9a0; }
+.lbr small { display: block; color: var(--dim); font: 400 .7em/1.4 var(--mono); }
+.lbr small i { font-style: normal; color: var(--gold); }
+.lbr.unknown { border-color: var(--edge); background: var(--plate); }
+.lbr.unknown .q { background: var(--plate-up); color: var(--faint); }
+.lbr.unknown b { color: var(--faint); }
+
+/* the career page */
+.career { display: flex; flex-direction: column; height: 100%; padding: .6em .8em .7em; gap: .6em; }
+.cr-head { display: flex; align-items: center; gap: .8em; padding: .4em .8em; border: 1px solid var(--edge); background: var(--plate); }
+.cr-head .lv { font: 400 1.15em var(--mono); color: var(--mint); }
+.cr-head .bar { flex: 1; height: .7em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; }
+.cr-head .bar i { display: block; height: 100%; background: var(--violet); }
+.cr-head .num { font: 400 .8em var(--mono); color: var(--dim); }
+.cr-head .wav { font: 400 .9em var(--mono); color: var(--gold); }
+.cr-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1.25fr 1fr; gap: .6em; }
+.cr-cols > section { display: flex; flex-direction: column; min-height: 0; padding: .5em .6em; border: 1px solid var(--edge); background: var(--recess); }
+.cr-cols h3 { margin: 0 0 .4em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.cr-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .5em; padding-right: .25em; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+/* The ladder's other half — not what is ahead of you, but what the levels already handed over.
+   Dashed rather than solid so it reads as a summary of the rows under it, not as one more rung. */
+.cr-now { display: flex; flex-wrap: wrap; gap: .2em .7em; margin: 0 0 .5em; padding: .35em .5em; border: 1px dashed var(--edge-hi); background: var(--plate); font: 400 .68em var(--mono); font-variant-numeric: tabular-nums; color: var(--dim); }
+.cr-now b { color: var(--faint); font-weight: 400; letter-spacing: .1em; text-transform: uppercase; }
+.act { padding: .45em .6em .5em; border: 1px solid var(--edge); background: var(--plate); }
+.act.open { border-color: var(--edge-hi); }
+.act.done { border-color: var(--mint); }
+.act.locked { opacity: .55; }
+.act .ah { display: flex; align-items: baseline; justify-content: space-between; font: 700 .88em var(--ui); color: #fff; }
+.act.done .ah b { color: var(--mint); } .act .ah .n { font: 400 .85em var(--mono); color: var(--gold); }
+.act .ab { height: .4em; margin: .3em 0; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .act .ab i { display: block; height: 100%; background: var(--mint); }
+.act p { margin: 0 0 .35em; color: var(--dim); font: 400 .74em/1.45 var(--ui); } .act p em { color: var(--gold); font-style: normal; }
+.act ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .15em; }
+.act li { display: flex; gap: .6em; align-items: baseline; padding: .15em .3em; }
+.act li i { flex: none; width: 1.1em; text-align: center; font-style: normal; font: 400 .85em var(--mono); color: var(--faint); }
+.act li span { display: flex; flex-direction: column; min-width: 0; }
+.act li b { font: 700 .84em var(--ui); color: var(--ink); } .act li small { font: 400 .68em/1.4 var(--mono); color: var(--faint); }
+.act li.done i { color: var(--mint); } .act li.done b { color: var(--dim); text-decoration: line-through; text-decoration-color: rgba(154,136,196,.4); }
+.act li.ready { box-shadow: inset 2px 0 0 var(--mint); } .act li.ready i, .act li.ready b { color: var(--mint); }
+.act li.active { box-shadow: inset 2px 0 0 var(--gold); } .act li.active i, .act li.active b { color: var(--gold); } .act li.active small { color: #e6cf86; }
+.act li.next b { color: #fff; } .act li.next i { color: var(--cyan); } .act li.next small { color: var(--cyan); }
+.lr { display: grid; grid-template-columns: 3.4em 1fr 2.6em; gap: .5em; align-items: center; padding: .35em .5em; border: 1px solid var(--edge); background: var(--plate); }
+.lr b { font: 400 .8em var(--mono); color: var(--dim); } .lr span { display: flex; flex-direction: column; font: 700 .84em var(--ui); color: var(--ink); } .lr small { font: 400 .68em/1.4 var(--mono); color: var(--faint); }
+.lr i { font: 400 .75em var(--mono); font-style: normal; text-align: right; color: var(--gold); }
+.lr.done { border-color: color-mix(in srgb, var(--mint) 45%, var(--edge)); } .lr.done b, .lr.done i { color: var(--mint); } .lr.done span { color: var(--dim); }
+.lr.next { border-color: var(--gold); box-shadow: inset 3px 0 0 var(--gold); background: color-mix(in srgb, var(--gold) 8%, var(--plate)); } .lr.next b { color: var(--gold); } .lr.next span { color: #fff; }
+.lr.locked { opacity: .55; }
+.cr-stats { display: flex; flex-wrap: wrap; gap: .3em 1.1em; font: 400 .74em var(--mono); color: var(--dim); } .cr-stats b { color: #fff; }
+
+/* the dungeons page */
+.dgs { display: flex; flex-direction: column; height: 100%; padding: .6em .8em .7em; gap: .5em; }
+.dgs > header { display: flex; align-items: baseline; gap: .7em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.dgs > header b { font: 400 .95em var(--mono); color: var(--gold); }
+.dgs > header small { margin-left: auto; min-width: 0; font: 400 .66em var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dgs > header button { margin-left: auto; padding: .3em .9em; border-radius: var(--r); border: 1px solid color-mix(in srgb, var(--rose) 50%, var(--edge)); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--rose); font: 700 .8em var(--ui); cursor: pointer; }
+.dgs > header button:hover { background: var(--plate); color: #fff; border-color: var(--rose); }
+.dg-cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1.05fr; gap: .6em; }
+.dg-list { min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .3em; padding-right: .25em; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+.dg { --c: var(--violet); display: grid; grid-template-columns: 1.6em minmax(0, 1fr) auto; grid-template-rows: auto auto; gap: .1em .5em; align-items: center; padding: .4em .6em; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--c) 30%, var(--edge)); border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 7%, var(--plate)); }
+.dg:hover { background: color-mix(in srgb, var(--c) 14%, var(--plate)); }
+.dg.sel { border-color: var(--c); background: color-mix(in srgb, var(--c) 20%, var(--plate-up)); }
+.dg .el { grid-row: 1 / 3; display: grid; place-items: center; color: var(--c); }
+.dg .el svg { width: 1.3em; height: 1.3em; }
+.dg .nm { min-width: 0; display: flex; flex-direction: column; }
+.dg .nm b { font: 700 .86em var(--ui); color: #fff; }
+.dg .nm small { font: 400 .66em var(--mono); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dg .meta { font: 400 .66em/1.3 var(--mono); color: var(--dim); text-align: right; }
+.dg i { grid-column: 3; grid-row: 2; font: 400 .62em var(--mono); font-style: normal; text-align: right; white-space: nowrap; }
+.dg i.ok { color: var(--mint); } .dg i.go { color: var(--gold); } .dg i.lock { color: var(--faint); }
+/* dimmed by opacity alone, .6 puts a white name under the legibility floor on a phone screen */
+.dg.locked { opacity: .72; }
+.dg-detail { --c: var(--violet); display: flex; flex-direction: column; min-height: 0; padding: .6em .8em; border: 1px solid color-mix(in srgb, var(--c) 40%, var(--edge)); background: color-mix(in srgb, var(--c) 6%, var(--recess)); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+.dg-detail h3 { display: flex; align-items: center; gap: .5em; margin: 0 0 .3em; font: 800 1.05em var(--ui); letter-spacing: -.01em; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.6); }
+.dg-detail h3 .el { color: var(--c); display: grid; } .dg-detail h3 .el svg { width: 1.3em; height: 1.3em; }
+.dg-detail .blurb { margin: 0 0 .5em; padding-bottom: .4em; border-bottom: 1px solid var(--edge); color: var(--ink); font: 400 .78em/1.55 var(--ui); }
+.dg-detail dl { display: grid; grid-template-columns: auto 1fr; gap: .25em .8em; margin: 0 0 .6em; font: 400 .74em/1.4 var(--mono); }
+.dg-detail dt { color: var(--faint); text-transform: uppercase; letter-spacing: .06em; } .dg-detail dd { margin: 0; color: #fff; }
+.dg-detail dd small { color: var(--dim); } .dg-detail dd em { color: var(--gold); font-style: normal; }
+.dg-detail .boss { color: var(--c); font-weight: 700; }
+/* The pull as a table, not as prose: two hands and four, and the rule that counts people rather
+   than boxes has to be visible to be believed. Numbers are tabular so the columns hold still. */
+.dg-detail dd.pscale { display: flex; flex-direction: column; gap: .28em; font-variant-numeric: tabular-nums; }
+.dg-detail dd.pscale > span { display: flex; align-items: baseline; gap: .5em; color: var(--ink); }
+.dg-detail dd.pscale b { flex: none; width: 4.4em; color: var(--gold); letter-spacing: .06em; }
+.dg-detail dd.pscale small { color: var(--faint); }
+.dg-detail dd.pscale em { color: var(--dim); line-height: 1.45; }
+.dg-go { margin-top: auto; }
+.dg-go .enter { width: 100%; padding: .55em 1em; border-radius: var(--r); border: 1px solid var(--mint); border-bottom: 2px solid #06301f; background: var(--mint); color: #04170f; font: 800 .95em var(--ui); cursor: pointer; }
+.dg-go .enter:hover:not(:disabled) { background: #5cf0ba; }
+.dg-go .enter:disabled { border-color: var(--edge); border-bottom-color: #090613; background: var(--plate-up); color: var(--faint); cursor: not-allowed; }
+.dg-detail .hint { margin: .5em 0 0; color: var(--faint); font: 400 .66em/1.5 var(--mono); }
+.dgs.run .rhead { display: flex; align-items: center; flex-wrap: wrap; gap: .5em .8em; padding: .3em .6em; border: 1px solid var(--edge); background: var(--plate); font: 400 .8em var(--mono); }
+/* Linked hands, as the sheet knows them: a head count and nothing more. The fold reads its pull off
+   whoever is actually standing on the tile, so this never quotes a multiplier it cannot confirm. */
+.dgs.run .hands { padding: .1em .5em; border: 1px solid var(--edge-hi); color: var(--cyan); letter-spacing: .08em; font-size: .78em; }
+.dgs.run .hpwrap { flex: 1; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .dgs.run .hpwrap i { display: block; height: 100%; background: var(--rose); }
+.dgs.run .map { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: .55em; padding: .4em 0; }
+.dgs.run .mrow { display: flex; align-items: center; justify-content: center; gap: .6em; }
+.dgs.run .mrow .rl { width: 3.6em; text-align: right; color: var(--faint); font: 400 .7em var(--mono); }
+.dgs.run .node { width: 2.6em; height: 2.6em; font-size: 1.1em; }
+.dgs.run .node.here { background: color-mix(in srgb, var(--c) 55%, var(--plate)); color: #fff; }
+.dgs.run .node[data-a] { border-color: var(--c); box-shadow: inset 0 0 0 1px var(--c); }
+.dgs.run .legend { display: flex; justify-content: center; gap: 1.1em; color: var(--faint); font: 400 .66em var(--mono); }
+.dgs.run .hint { margin: 0; text-align: center; color: var(--dim); font: 400 .72em var(--mono); }
+
+/* the party page */
+.party { display: flex; flex-direction: column; height: 100%; padding: .6em .8em .7em; gap: .5em; }
+.ph { display: flex; align-items: baseline; gap: .7em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.ph b { font: 400 .95em var(--mono); color: var(--gold); }
+.ph small { margin-left: auto; font: 400 .66em var(--mono); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pinv { display: flex; align-items: center; gap: .6em; padding: .4em .8em; border: 1px solid var(--mint); background: color-mix(in srgb, var(--mint) 8%, var(--plate)); font: 700 .86em var(--ui); }
+.pinv span { flex: 1; } .pinv b { color: #fff; }
+.pinv button, .leave { display: inline-flex; align-items: center; gap: .4em; padding: .3em .9em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--ink); font: 700 .8em var(--ui); cursor: pointer; }
+.pinv button.yes { border-color: var(--mint); border-bottom-color: #06301f; background: var(--mint); color: #04170f; }
+.pinv button:hover, .leave:hover { border-color: var(--edge-hi); background: var(--plate); color: #fff; }
+.pinv button.yes:hover { background: #5cf0ba; color: #04170f; }
+.leave { align-self: flex-start; margin-top: .4em; border-color: color-mix(in srgb, var(--rose) 50%, var(--edge)); color: var(--rose); }
+.pnote { padding: .3em .7em; border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--edge)); background: color-mix(in srgb, var(--gold) 7%, var(--plate)); color: #ffe9a0; font: 400 .76em var(--mono); }
+.pcols { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: .6em; }
+.pl { display: flex; flex-direction: column; min-height: 0; padding: .5em .6em; border: 1px solid var(--edge); background: var(--recess); }
+.pl h3 { margin: 0 0 .4em; padding-bottom: .3em; border-bottom: 1px solid var(--edge); font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); } .pl h3 small { color: var(--gold); font-family: var(--mono); margin-left: .5em; }
+.plist { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: .25em; padding-right: .2em; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+.pm { --c: var(--violet); display: grid; grid-template-columns: 1.4em minmax(0, 1fr) auto auto; align-items: center; gap: .5em; padding: .3em .5em; border: 1px solid color-mix(in srgb, var(--c) 30%, var(--edge)); border-left: 3px solid var(--c); background: color-mix(in srgb, var(--c) 7%, var(--plate)); }
+.pm.talk { border-color: var(--mint); border-left-color: var(--mint); background: color-mix(in srgb, var(--mint) 12%, var(--plate)); }
+.pm .el { display: grid; place-items: center; color: var(--c); } .pm .el svg { width: 1.1em; height: 1.1em; }
+.pm .nm { min-width: 0; display: flex; flex-direction: column; } .pm .nm b { font: 700 .84em var(--ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .pm .nm b em { font-style: normal; color: var(--mint); font: 400 .8em var(--mono); }
+.pm .nm small { font: 400 .66em var(--mono); color: var(--dim); }
+.pm .vs { font: 400 .8em var(--mono); color: var(--mint); }
+.pm button { padding: .2em .7em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--ink); font: 700 .72em var(--ui); cursor: pointer; }
+.pm button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); color: #fff; } .pm button:disabled { opacity: .35; cursor: not-allowed; }
+.pv { padding: .5em .7em; border: 1px solid var(--edge); background: var(--plate); }
+.pv header { display: flex; align-items: baseline; gap: .7em; font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); } .pv header small { font: 400 .82em var(--mono); letter-spacing: 0; color: var(--faint); }
+.pvb { display: flex; flex-wrap: wrap; gap: .4em; margin: .4em 0; }
+.pvb button { padding: .35em .9em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--ink); font: 700 .76em var(--ui); cursor: pointer; }
+.pvb button.on { border-color: var(--mint); border-bottom-color: #06301f; color: #04170f; background: var(--mint); } .pvb button.on.warn { border-color: var(--rose); border-bottom-color: #3a1420; color: #1c070c; background: var(--rose); }
+.pvb button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); color: #fff; } .pvb button.on:hover:not(:disabled) { background: #5cf0ba; color: #04170f; } .pvb button:disabled { opacity: .35; cursor: not-allowed; }
+.pv p { margin: 0; color: var(--dim); font: 400 .68em/1.5 var(--mono); } .pv p.bad { color: var(--rose); }
+
+/* ================================================================ the pages on a phone */
+
+/*
+ * Two columns is a wide-screen idea. A phone gives the lower screen the width of the device, which
+ * is not enough for two columns of anything a finger has to read, and a column you must scroll
+ * inside a column you can already scroll is the one gesture a thumb cannot do reliably. So every
+ * page here becomes a single column that grows past the screen, and `#sheet` — which pans — is the
+ * only scroller left. Buttons go to the size a fingertip actually needs, not the size a mouse can
+ * aim at.
+ */
+#deck.touch .fold2, #deck.touch .lib, #deck.touch .career, #deck.touch .dgs, #deck.touch .party { height: auto; min-height: 100%; }
+#deck.touch .fold2 { grid-template-columns: 1fr; grid-template-rows: auto auto auto; gap: .5em; padding: .55em .6em .6em; }
+#deck.touch .fold2 footer { grid-column: 1; grid-template-columns: 1fr; }
+#deck.touch .lib-list, #deck.touch .cr-cols, #deck.touch .dg-cols, #deck.touch .pcols { grid-template-columns: 1fr; }
+#deck.touch .cr-cols, #deck.touch .dg-cols, #deck.touch .pcols { flex: none; }
+/* nothing clips inside a card any more: the lists give their height back and the sheet scrolls */
+#deck.touch .fd-list, #deck.touch .lib-list, #deck.touch .cr-scroll, #deck.touch .dg-list, #deck.touch .plist,
+#deck.touch .dg-detail { flex: none; max-height: none; min-height: 0; overflow: visible; }
+#deck.touch .dg-detail dl { grid-template-columns: minmax(0, 5.5em) minmax(0, 1fr); }
+
+/*
+ * A folder row carries five facts. Across a phone they fit on two lines: the card's name with the
+ * class it belongs to beside it, its power and how many you own under that, and the button to
+ * take it out on the right, big enough to hit without looking.
+ */
+#deck.touch .fdr { grid-template-columns: 1.4em minmax(0, 1fr) auto 2.6em; grid-template-rows: auto auto; row-gap: .12em; column-gap: .45em; padding: .4em .4em .4em .5em; }
+#deck.touch .fdr .el { grid-row: 1 / 3; }
+#deck.touch .fdr .nm { grid-column: 2; grid-row: 1; font-size: .84em; }
+#deck.touch .fdr .st { grid-column: 2; grid-row: 2; }
+#deck.touch .fdr .kl { grid-column: 3; grid-row: 1; text-align: right; font-size: .62em; }
+#deck.touch .fdr .n { grid-column: 3; grid-row: 2; text-align: right; }
+#deck.touch .fdr button { grid-column: 4; grid-row: 1 / 3; width: 2.5em; height: 2.5em; }
+/* the footer of the Folder has to stay reachable while the pool scrolls under it */
+#deck.touch .fold2 footer { position: sticky; bottom: -.6em; margin: 0 -.6em -.6em; padding: .5em .6em .6em; background: #0d0817; border-top: 1px solid var(--edge); }
+#deck.touch .fd-btns { grid-column: 1; grid-row: auto; justify-content: stretch; }
+#deck.touch .fd-btns button { flex: 1; padding: .85em .6em; font-size: .82em; }
+
+/*
+ * The page header carries level, the bar, the xp, the purse and a note from the shop. That is five
+ * facts and a phone gives it one line of width, so let it break *between* them -- a wrapped "LV / 2"
+ * is the kind of thing that makes a layout look generated rather than drawn.
+ */
+#deck.touch .phead { flex-wrap: wrap; gap: .1em .7em; }
+#deck.touch .phead > * { white-space: nowrap; }
+#deck.touch .phead .xpwrap { flex: 1 1 5em; min-width: 4.5em; }
+#deck.touch .phead .right { flex-basis: 100%; margin-left: 0; }
+
+#deck.touch .lbr { padding: .55em .7em; gap: .6em; }
+#deck.touch .lbr small { white-space: normal; }
+#deck.touch .lr { grid-template-columns: 3.4em minmax(0, 1fr) 3.2em; padding: .5em .5em; }
+#deck.touch .act li { padding: .4em .3em; }
+/* a dungeon's one-line pitch is the reason to pick it; ellipsis it on a phone and the row says nothing */
+#deck.touch .dg { padding: .6em .6em; gap: .2em .55em; }
+#deck.touch .dg .nm small { white-space: normal; line-height: 1.35; }
+#deck.touch .pm { grid-template-columns: 1.4em minmax(0, 1fr) auto auto; padding: .5em .5em; }
+#deck.touch .pm button, #deck.touch .pvb button, #deck.touch .pinv button, #deck.touch .leave { padding: .65em 1em; font-size: .82em; }
+#deck.touch .pvb { gap: .5em; }
+#deck.touch .dg-go .enter { padding: .95em 1em; }
+#deck.touch .dgs.run .node { width: 3.2em; height: 3.2em; font-size: 1.15em; }
+#deck.touch .dgs.run .mrow { gap: .45em; }
+#deck.touch .dgs.run .mrow .rl { width: 3em; }
+

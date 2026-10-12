@@ -1,0 +1,459 @@
+import './picker.css';
+import { GENESIS_SUPPLY, describeBuild, type HolderCard, type HoldingsView } from '@chog/shared';
+import { net } from '../net.ts';
+import { wallet } from '../wallet.ts';
+import { BRAND_CAST, street, wordmark } from './brand.ts';
+
+/**
+ * The gate in front of the world.
+ *
+ * Nothing here computes a Chog. Every card is the server's own `deriveBuild` output,
+ * sent over `/api/auth/holdings` for the address the signature proved — so the grid
+ * cannot show a build the world will not honour, and picking from it is a request,
+ * not a claim. The server still re-checks ownership on the join and can answer `no`;
+ * that answer comes back through `refuse()` and is printed here rather than hidden.
+ *
+ * The Foster Chog button is not a consolation prize. The collection floor is ~5,260
+ * MON, so most people who open this page own nothing in it, and a game that only
+ * plays for holders is a demo of a wallet, not a game.
+ */
+
+export interface Pick {
+  /** The Chog to play, or null for a Foster. */
+  tokenId: number | null;
+  session: string | null;
+  /** The picked token's raw traits, so the model can be mounted from the NFT. */
+  attributes?: Record<string, string>;
+}
+
+const POLL_MS = 3000;
+/** The same six hues the HUD uses; hud.css is not loaded yet when this opens. */
+const ELEMENT_HEX: Record<string, string> = {
+  burn: '#ff7a45',
+  frost: '#7fd8ff',
+  volt: '#ffe066',
+  wave: '#43e2a8',
+  prism: '#cbb2f2',
+  void: '#a874ff',
+};
+
+function h<K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text = ''): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.className = cls;
+  if (text) node.textContent = text;
+  return node;
+}
+
+/** A token id named in the URL. It is a request to preselect, never a way in. */
+function wantedToken(): number | null {
+  const n = Number(new URLSearchParams(location.search).get('chog'));
+  return Number.isInteger(n) && n >= 1 && n <= GENESIS_SUPPLY ? n : null;
+}
+
+function since(ms: number): string {
+  if (!ms) return '';
+  const days = Math.floor((Date.now() - ms) / 86_400_000);
+  if (days < 1) return 'moved today';
+  return `moved ${days}d ago`;
+}
+
+class Picker {
+  private readonly root = h('div', 'chog-pick');
+  private readonly canvas = h('canvas', 'pk-street');
+  private readonly markEl = h('div', 'pk-mark');
+  private readonly chainEl = h('span', 'pk-chain');
+  private readonly walletBtn = h('button', 'pk-wallet-act');
+  private readonly lineEl = h('div', 'pk-line');
+  private readonly gridEl = h('div', 'pk-grid');
+  private readonly detailEl = h('div', 'pk-detail');
+  private readonly enterBtn = h('button', 'pk-enter');
+  private readonly connectBtn = h('button', 'pk-connect');
+  private readonly kickerEl = h('span', 'pk-kicker');
+  /** The painted street, stopped for good when the gate closes. */
+  private backdrop: { stop(): void } | null = null;
+  private resolve: ((p: Pick) => void) | null = null;
+  private view: HoldingsView | null = null;
+  private chosen: HolderCard | null = null;
+  /** `?chog=` for a token this wallet does not hold, tried only without a session. */
+  private ghost: number | null = null;
+  private note = '';
+  /** Whether the line currently showing is something going wrong — it is printed in rose, not gold. */
+  private bad = false;
+  private poll: ReturnType<typeof setTimeout> | null = null;
+  private offChange: (() => void) | null = null;
+  private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+  open(refusal?: string): Promise<Pick> {
+    this.note = refusal ?? '';
+    this.bad = !!refusal;
+    return new Promise<Pick>((resolve) => {
+      this.resolve = resolve;
+      this.build();
+      document.body.appendChild(this.root);
+      this.backdrop = street(this.canvas);
+      this.offChange = wallet.onChange(() => void this.sync());
+      this.keyHandler = (e) => this.onKey(e);
+      addEventListener('keydown', this.keyHandler);
+      void this.sync();
+    });
+  }
+
+  private build(): void {
+    const brand = h('div', 'pk-brand');
+    brand.append(
+      this.markEl,
+      h('span', 'pk-tag', 'online'),
+      h('span', 'pk-supply', `${GENESIS_SUPPLY.toLocaleString()} genesis chogs · monad mainnet`),
+    );
+
+    // Their mark, not a redrawn one: the official lockup, kept small and off to the side.
+    const monad = h('div', 'pk-monad');
+    const seal = document.createElement('img');
+    seal.src = '/brand/monad-lockup.svg';
+    seal.alt = 'Monad';
+    monad.append(seal, h('i', ''), this.chainEl);
+
+    const walletRow = h('div', 'pk-wallet');
+    this.walletBtn.addEventListener('click', () => void this.connect());
+    walletRow.append(monad, this.walletBtn);
+
+    const top = h('header', 'pk-top');
+    top.append(brand, walletRow);
+
+    // ── auth: the pitch, and the door.
+    const title = h('h1', 'pk-h1');
+    title.append(document.createTextNode('Pick the '), h('em', '', 'Chog'), document.createTextNode(' you play as.'));
+    const lede = h('p', 'pk-lede');
+    lede.append(
+      document.createTextNode('There are '),
+      h('b', '', GENESIS_SUPPLY.toLocaleString()),
+      document.createTextNode(' of them, and they live on Monad. Your wallet says which are yours — the world will not let you wear one you do not hold.'),
+    );
+    const steps = h('div', 'pk-steps');
+    for (const [n, label, detail] of [['01', 'SIGN', 'one message, no gas'], ['02', 'PICK', 'a genesis Chog'], ['03', 'PLAY', 'the street, live']] as const) {
+      const step = h('div', n === '01' ? 'pk-step now' : 'pk-step');
+      step.append(h('b', '', `${n} ${label}`), h('span', '', detail));
+      steps.append(step);
+    }
+    const copy = h('section', 'pk-copy');
+    copy.append(title, lede, steps);
+
+    this.connectBtn.addEventListener('click', () => void this.connect());
+    const fine = h('p', 'pk-fine');
+    fine.append(
+      document.createTextNode('Signing proves an '),
+      h('b', '', 'address'),
+      document.createTextNode('. It moves no tokens, costs nothing, and is gone when the tab closes.'),
+    );
+    const act = h('div', 'pk-act');
+    act.append(this.kickerEl, this.connectBtn, this.fosterButton(true), fine);
+
+    const hero = h('section', 'pk-hero');
+    hero.append(copy, act);
+
+    // ── pick: the shelf, and the build the server will run.
+    const shelf = h('div', 'pk-shelf');
+    shelf.append(h('div', 'pk-micro', 'IN THIS WALLET'), this.gridEl);
+    const main = h('section', 'pk-main');
+    main.append(shelf, this.detailEl);
+
+    const foot = h('footer', 'pk-foot');
+    foot.append(this.fosterButton(false), this.enterBtn);
+    this.enterBtn.addEventListener('click', () => this.confirm());
+
+    const cast = h('footer', 'pk-cast');
+    for (const [id, label] of BRAND_CAST) {
+      const bust = h('div', 'pk-bust');
+      bust.style.backgroundImage = `url(/brand/cast/${id}.png)`;
+      bust.style.animationDelay = `${-(id % 5) * 0.5}s`;
+      const cap = h('figcaption', '');
+      cap.append(h('b', '', `#${id}`), document.createTextNode(` ${label}`));
+      const fig = h('figure', 'pk-chog');
+      fig.append(bust, cap);
+      cast.append(fig);
+    }
+
+    this.root.append(this.canvas, top, this.lineEl, hero, main, cast, foot);
+  }
+
+  /** The way in for somebody who owns none of this. Not a consolation prize — the floor prices most people out. */
+  private fosterButton(detailed: boolean): HTMLElement {
+    const btn = h('button', 'pk-foster');
+    btn.append(document.createTextNode(detailed ? 'Walk in as a foster Chog' : 'enter as a foster chog'));
+    if (detailed) btn.append(h('small', '', `you hold none of the ${GENESIS_SUPPLY.toLocaleString()} · a foster is given a token of its own`));
+    btn.addEventListener('click', () => this.close({ tokenId: null, session: wallet.session }));
+    return btn;
+  }
+
+  // ── state ─────────────────────────────────────────────────────────────────────
+
+  /** Where the wallet stands decides what can be shown: nothing is invented while waiting. */
+  private async sync(): Promise<void> {
+    if (!wallet.session) {
+      const back = await wallet.restore().catch(() => null);
+      if (!back) {
+        this.view = null;
+        this.paint();
+        return;
+      }
+    }
+    await this.load();
+  }
+
+  private async load(): Promise<void> {
+    try {
+      this.view = await wallet.holdings();
+    } catch (error) {
+      this.note = (error as Error).message;
+      this.bad = true;
+      this.view = null;
+    }
+    this.paint();
+    // Mid-scan the index genuinely does not know who holds what yet, so an empty grid
+    // is not an answer. Ask again until the server says it has read the chain.
+    if (this.view && !this.view.ready) this.poll = setTimeout(() => void this.load(), POLL_MS);
+  }
+
+  private async connect(): Promise<void> {
+    if (wallet.session) {
+      wallet.signOut();
+      this.view = null;
+      this.chosen = null;
+      this.note = 'signed out';
+      this.bad = false;
+      this.paint();
+      return;
+    }
+    this.note = `signing in — approve the message in ${wallet.label}`;
+    this.bad = false;
+    this.paint();
+    try {
+      await wallet.connect();
+      this.note = '';
+      await this.load();
+    } catch (error) {
+      this.note = (error as Error).message;
+      this.bad = true;
+      this.paint();
+    }
+  }
+
+  // ── painting ──────────────────────────────────────────────────────────────────
+
+  private paint(): void {
+    const view = this.view;
+    const signed = !!wallet.session;
+    this.root.dataset.phase = signed ? 'pick' : 'auth';
+
+    // The ribbon under the name is the gate's lamp: rose for a refusal, gold while the
+    // chain is still being read, mint once it has something to hand over.
+    const ribbon = this.bad ? '#ff5d72' : view && !view.ready ? '#f5c343' : '#43e2a8';
+    this.markEl.innerHTML = wordmark(['CHOG', 'WAVE'], { cell: signed ? 3 : 6, ribbon });
+
+    this.chainEl.textContent = !wallet.address ? 'no session' : wallet.onMonad ? 'chain 143' : 'off Monad';
+    this.chainEl.classList.toggle('on', wallet.onMonad && !!wallet.address);
+    this.chainEl.classList.toggle('bad', !!wallet.address && !wallet.onMonad);
+    this.walletBtn.textContent = signed ? 'sign out' : wallet.available ? `connect ${wallet.label}` : 'no wallet extension';
+    this.walletBtn.disabled = !signed && !wallet.available;
+    this.kickerEl.textContent = signed ? 'session live' : wallet.address ? 'address known, unsigned' : 'no session';
+
+    this.connectBtn.textContent = '';
+    this.connectBtn.disabled = !signed && !wallet.available;
+    const cta = h('span', '');
+    cta.append(
+      document.createTextNode(signed ? 'You are signed in' : wallet.available ? 'Connect wallet' : 'No wallet extension'),
+      h('small', '', signed ? wallet.short : wallet.available ? `${wallet.label} · an EIP-191 message` : 'install one, or walk in as a foster'),
+    );
+    this.connectBtn.append(cta, h('i', '', '›'));
+
+    // A `?chog=` this wallet does hold, or a wallet holding exactly one Chog, has already
+    // answered the question — the gate should not make somebody click it again.
+    if (this.view) this.autoSelect(this.view);
+    const ghost = this.ghostCandidate();
+
+    this.lineEl.textContent = '';
+    this.lineEl.classList.toggle('bad', this.bad && !!this.note);
+    if (this.note) this.lineEl.append(h('span', this.bad ? 'pk-note bad' : 'pk-note', this.note));
+    if (view && !view.ready) {
+      const read = Math.max(view.coverage, view.history);
+      const bar = h('i', 'pk-bar');
+      const fill = h('b', '');
+      fill.style.width = `${Math.min(100, (read / GENESIS_SUPPLY) * 100).toFixed(1)}%`;
+      bar.append(fill);
+      this.lineEl.append(h('span', 'pk-note', `reading the chain — ${read.toLocaleString()} of ${GENESIS_SUPPLY.toLocaleString()} owners known`), bar);
+    }
+
+    this.gridEl.textContent = '';
+    if (!wallet.session) {
+      this.gridEl.append(h('div', 'pk-empty', 'sign in to see the chogs this wallet holds, or walk in as a foster chog.'));
+    } else if (!view) {
+      this.gridEl.append(h('div', 'pk-empty', 'reading your holdings…'));
+    } else if (!view.tokens.length) {
+      this.gridEl.append(h('div', 'pk-empty', `this wallet holds none of the ${GENESIS_SUPPLY.toLocaleString()} genesis chogs.`));
+    } else {
+      for (const card of view.tokens) this.gridEl.append(this.card(card));
+    }
+    // The unsigned `?chog=` candidate sits beside whatever else is on the shelf. It is a
+    // request rather than a claim, so the server's answer is what settles it.
+    this.ghost = ghost;
+    if (ghost !== null) this.gridEl.append(this.ghostCard(ghost));
+
+    this.enterBtn.disabled = this.chosen === null && ghost === null;
+    this.enterBtn.textContent = this.chosen ? `play chog #${this.chosen.tokenId}` : ghost !== null ? `try chog #${ghost} anyway` : 'pick a chog';
+    this.paintDetail();
+  }
+
+  /** `?chog=` preselects a card that exists; one Chog in the wallet needs no picking. */
+  private autoSelect(view: HoldingsView): void {
+    if (this.chosen) return;
+    const wanted = wantedToken();
+    const hit = wanted === null ? null : view.tokens.find((t) => t.tokenId === wanted);
+    if (hit) this.chosen = hit;
+    else if (view.tokens.length === 1) this.chosen = view.tokens[0]!;
+  }
+
+  /** `?chog=` for a token this wallet does not hold, tried only without a session. */
+  private ghostCandidate(): number | null {
+    const wanted = wantedToken();
+    if (wanted === null || this.chosen) return null;
+    if (this.view?.tokens.some((t) => t.tokenId === wanted)) return null;
+    // Signed in and not held is a refusal the server is entitled to make; unsigned, it
+    // is the recorder's lever (DEV_TOKENS) and only the server knows if it is up.
+    return wallet.session ? null : wanted;
+  }
+
+  private card(card: HolderCard): HTMLElement {
+    const node = h('button', 'pk-card');
+    node.style.setProperty('--el', ELEMENT_HEX[card.element] ?? ELEMENT_HEX.prism!);
+    if (card === this.chosen) node.classList.add('sel');
+
+    const art = h('div', 'pk-art');
+    // The atlas is a 6x4 grid of 128px cells and idle is row 0, so the six frames are
+    // the six horizontal positions — no canvas, no decoder, one request per card.
+    if (card.sprite) {
+      const sprite = h('div', 'pk-sprite');
+      sprite.style.backgroundImage = `url(${card.sprite})`;
+      art.append(sprite);
+    } else {
+      art.append(h('span', 'pk-plate', `#${card.tokenId}`));
+    }
+
+    const meta = h('div', 'pk-meta');
+    meta.append(h('span', 'pk-id', `chog #${card.tokenId}`), h('span', 'pk-name', card.callsign), h('span', 'pk-el', `${card.element}${card.tier ? ` · ${card.tier}` : ''}`));
+    const prov = `${card.provenance.transferCount} crossed${card.provenance.daysHeld ? ` · held ${card.provenance.daysHeld}d` : ''}`;
+    meta.append(h('span', 'pk-hist', `${prov}${card.lastSaleTs ? ` · ${since(card.lastSaleTs)}` : ''}`));
+
+    node.append(art, meta);
+    node.addEventListener('click', () => this.select(card));
+    return node;
+  }
+
+  private ghostCard(tokenId: number): HTMLElement {
+    const node = h('button', 'pk-card pk-ghost');
+    const art = h('div', 'pk-art');
+    const meta = h('div', 'pk-meta');
+    art.append(h('span', 'pk-plate', `#${tokenId}`));
+    meta.append(h('span', 'pk-id', `chog #${tokenId}`), h('span', 'pk-name', 'not in this wallet'), h('span', 'pk-el', 'unsigned · the server decides'));
+    if (this.ghost === tokenId) node.classList.add('sel');
+    node.append(art, meta);
+    node.addEventListener('click', () => {
+      this.chosen = null;
+      this.ghost = tokenId;
+      this.paint();
+    });
+    return node;
+  }
+
+  private paintDetail(): void {
+    const card = this.chosen;
+    this.detailEl.textContent = '';
+    this.detailEl.append(h('div', 'pk-micro', 'THE BUILD THE WORLD WILL RUN'));
+    if (!card) {
+      this.detailEl.append(
+        h(
+          'p',
+          'pk-dim',
+          this.ghost !== null
+            ? `Chog #${this.ghost} is not in this wallet. The join only goes through if the server is running unsigned demo tokens.`
+            : 'Pick a chog to see the build the world will run.',
+        ),
+      );
+      return;
+    }
+    const head = h('div', 'pk-dhead');
+    head.style.setProperty('--el', ELEMENT_HEX[card.element] ?? ELEMENT_HEX.prism!);
+    // The readout opens on the face you are about to wear, not on a table of numbers.
+    if (card.sprite) {
+      const art = h('div', 'pk-dart');
+      const sprite = h('div', 'pk-sprite');
+      sprite.style.backgroundImage = `url(${card.sprite})`;
+      art.append(sprite);
+      head.append(art);
+    }
+    head.append(h('b', '', `chog #${card.tokenId}`), h('span', '', card.callsign));
+    this.detailEl.append(head);
+    for (const line of describeBuild(card.build)) this.detailEl.append(h('p', 'pk-dline', line));
+    this.detailEl.append(
+      h('p', 'pk-dline', `traits ${card.traitsSource === 'real' ? 'read off the token metadata' : 'predicted from the token id'} · links ${card.linkSlots}x${card.linkSlots} · provenance ${card.provenance.transferCount} transfers, ${card.provenance.daysHeld}d held`),
+    );
+  }
+
+  private select(card: HolderCard): void {
+    this.chosen = card;
+    this.ghost = null;
+    this.paint();
+  }
+
+  private confirm(): void {
+    const tokenId = this.chosen?.tokenId ?? this.ghost;
+    if (tokenId === null) return;
+    this.close({ tokenId, session: wallet.session, attributes: this.chosen?.attributes });
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    if (e.key === 'Enter' && !this.enterBtn.disabled) this.confirm();
+    const n = Number(e.key);
+    const card = this.view?.tokens[n - 1];
+    if (n >= 1 && n <= 9 && card) this.select(card);
+  }
+
+  private close(pick: Pick): void {
+    const resolve = this.resolve;
+    this.resolve = null;
+    if (this.poll) clearTimeout(this.poll);
+    this.backdrop?.stop();
+    this.offChange?.();
+    if (this.keyHandler) removeEventListener('keydown', this.keyHandler);
+    this.root.remove();
+    resolve?.(pick);
+  }
+}
+
+/**
+ * Show the gate and wait for an answer.
+ *
+ * Resolves once: with a token id, or with null for a Foster Chog. The caller still
+ * has to ask the world for that id — this is a choice, not an admission. A refusal
+ * from that asking comes back as `refusal` the next time round, printed rather than
+ * swallowed.
+ */
+export function pickChog(refusal?: string): Promise<Pick> {
+  return new Picker().open(refusal);
+}
+
+/**
+ * The gate, and the asking that follows it.
+ *
+ * Resolves only when the server has put this Chog in the world. A `no` comes back as the
+ * server's own words printed on the gate, because the reason a join was refused — not
+ * signed in, not held, no such token — exists nowhere else the player can look.
+ */
+export async function pickAndEnter(): Promise<Pick> {
+  let refusal: string | undefined;
+  for (;;) {
+    const pick = await pickChog(refusal);
+    const verdict = await net.enter(pick.tokenId, pick.session);
+    if (verdict.ok) return pick;
+    refusal = verdict.reason;
+  }
+}

@@ -1,0 +1,30 @@
+node_modules/
+dist/
+.data/
+*.log
+.DS_Store
+
+# playtest screenshots, all root-level
+/*.png
+/*.jpg
+
+# generated art bakes and one-off dumps
+outputs/
+vibe_images/
+refs/
+blender/
+three_dbg*.mjs
+o.txt
+
+# other agents' working directories
+.workbuddy-ai/
+
+# stale byte-identical copy of client/public/cards, which is what vite actually serves
+/public/
+
+# server state and credentials
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*

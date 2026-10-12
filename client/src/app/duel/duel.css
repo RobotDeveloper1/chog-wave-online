@@ -1,0 +1,310 @@
+/* The field HUD and automatic Custom Screen share the console's dark, recessed plates. */
+#duel {
+  position: absolute; inset: 0; display: none; pointer-events: none;
+  font-size: clamp(11px, calc(var(--sh) / 50), 28px); color: var(--ink);
+}
+#deck.dueling #duel { display: block; }
+#deck.dueling #hud > *:not(#hud-fade):not(#hud-toasts) { display: none !important; }
+#deck.dueling #tabs, #deck.dueling #status { display: none; }
+#deck.dueling #hud-toasts { z-index: 9; }
+#duel > * { position: absolute; }
+#duel .hit, #duel button, #duel details[open], #duel .d-party { pointer-events: auto; }
+#duel .panel { background: rgba(12, 8, 24, .9); border-color: var(--edge); }
+#duel button, #cs.duel button {
+  border: 1px solid var(--edge-hi); border-bottom: 2px solid #090613; border-radius: 5px;
+  background: var(--plate-up); color: var(--ink); font-family: var(--mono); cursor: pointer;
+}
+#duel button:hover:not(:disabled), #cs.duel button:hover:not(:disabled) { border-color: var(--mint); background: #2a2050; }
+#duel button:disabled, #cs.duel button:disabled { cursor: default; }
+#duel button:focus-visible, #duel summary:focus-visible, #cs.duel button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+#duel button small, #cs.duel button small { display: block; font-size: .72em; font-weight: 400; }
+
+/* The Custom screen is a side panel in this framing, not a lower DS screen: a hinge
+   line across the middle of the field would be a seam between nothing and nothing. */
+#cs.duel {
+  border-top: 8px solid #04020a;
+  box-shadow: 0 -14px 28px -10px rgba(0,0,0,.95), inset 0 4px 0 #2a1f4a, inset 0 -2px 0 #0a0612;
+  border-radius: 8px 8px 0 0;
+}
+
+/* Identity, integrity and the live grade. */
+#duel .d-you, #duel .d-boss { top: .9em; padding: .55em .7em; }
+.d-you { left: 1em; width: 20em; --c: var(--mint); }
+.d-boss { right: 1em; width: 22em; --c: var(--violet); }
+#duel .who { display: flex; align-items: center; gap: .65em; min-width: 0; }
+#duel .who > div { min-width: 0; flex: 1; }
+#duel .who b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 .95em var(--ui); }
+#duel .who small { display: block; margin-top: .2em; color: var(--dim); font: 400 .61em var(--mono); }
+#duel .portrait { flex: none; width: 3.4em; height: 3.4em; object-fit: cover; border: 1px solid var(--c); border-radius: 5px; background: var(--recess); }
+/* The plate carries the token's illustration: one image, filled, centred. */
+#duel .portrait.art { background-size: cover; background-position: center; background-repeat: no-repeat; }
+#duel .glyph, #duel .el { display: grid; place-items: center; color: var(--c); }
+#duel .el { width: 1.8em; height: 1.8em; background: var(--recess); border: 1px solid var(--c); border-radius: 4px; }
+.d-meter { position: relative; height: 1.25em; margin-top: .4em; overflow: hidden; border: 1px solid var(--edge); background: var(--recess); border-radius: 3px; }
+.d-meter i { position: absolute; inset: 0 auto 0 0; background: var(--mint); transition: width .15s linear; }
+.d-meter i::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 1px), rgba(0,0,0,.3) calc(10% - 1px) 10%); }
+.d-meter span { position: absolute; inset: 0; display: grid; place-items: center; font: 400 .65em var(--mono); color: #fff; text-shadow: 0 1px 1px #000; }
+.d-meter.low i { background: var(--rose); }
+.boss-hp i { background: var(--c); }
+#duel .sub { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .2em .7em; margin-top: .45em; font: 400 .58em/1.4 var(--mono); color: var(--dim); }
+.d-boss .wall { margin-top: .4em; padding-top: .3em; border-top: 1px solid var(--edge); font: 400 .6em var(--mono); color: var(--gold); }
+.d-chain { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5em; margin-top: .5em; font: 400 .62em var(--mono); color: var(--dim); }
+.d-chain b { color: var(--ink); font-size: 1.25em; }
+.d-chain > span { color: var(--gold); }
+.d-chain small { margin-left: auto; font-size: .9em; color: var(--c); }
+.d-gauge { left: 50%; top: .9em; width: 36%; transform: translateX(-50%); }
+.d-gauge .bar { position: relative; height: 1.55em; border: 1px solid var(--edge-hi); border-radius: 4px; background: var(--recess); overflow: hidden; }
+.d-gauge i { position: absolute; inset: 0 auto 0 0; background: var(--violet); }
+.d-gauge .label { position: absolute; inset: 0; display: grid; place-items: center; font: 400 .64em var(--mono); letter-spacing: .06em; color: #fff; text-shadow: 0 1px 2px #000; }
+/* The grade is one strip, not a plaque: rank, what feeds it, what it buys, in a single line. */
+#duel .d-grade { left: 50%; top: 3.05em; width: auto; max-width: 46%; transform: translateX(-50%); padding: .2em .8em; display: flex; align-items: baseline; gap: .9em; white-space: nowrap; }
+.d-grade > b { color: var(--gold); font: 800 1.05em var(--ui); }
+.d-grade > span { color: var(--dim); font: 400 .6em var(--mono); letter-spacing: .06em; }
+.d-grade > span.link { color: var(--mint); }
+
+/* Party rows retain NFT identity, panel coordinates and reachable cover holds. */
+.d-party { left: 1em; top: 8.3em; width: 20em; max-height: 12em; overflow: auto; touch-action: pan-y; }
+.party-heading { padding: .35em .4em; color: var(--dim); font: 400 .6em/1.4 var(--mono); background: rgba(12,8,24,.85); }
+.party-heading > span { display: block; font-size: .88em; color: var(--faint); }
+.party-row { display: flex; align-items: center; gap: .5em; margin-top: .25em; padding: .4em; background: rgba(12,8,24,.94); border: 1px solid var(--edge); border-left: 2px solid var(--c); border-radius: 5px; }
+.party-row.down { border-left-color: var(--rose); }
+#duel .party-row .portrait { width: 2.2em; height: 2.2em; }
+.party-info { flex: 1; min-width: 0; }
+.party-info b { display: block; font: 700 .72em var(--ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.party-info > small { display: block; margin-top: .25em; color: var(--dim); font: 400 .53em/1.3 var(--mono); }
+.party-info .d-meter { height: .75em; }
+.party-info .d-meter span { font-size: .45em; }
+#duel .party-row button { min-height: 38px; padding: .5em; font-size: .64em; color: var(--cyan); touch-action: none; }
+.party-row button:disabled { opacity: .45; }
+.d-party .link, .d-party .solo { padding: .4em .5em; font: 400 .6em/1.4 var(--mono); background: rgba(12,8,24,.85); color: var(--dim); }
+.d-party .link { color: var(--gold); }
+
+/* Expandable reference plates do not cover the field until deliberately opened. */
+#duel .d-stats, #duel .d-manual { right: 1em; width: 22em; z-index: 3; padding: .5em .7em; font: 400 1em/1.5 var(--mono); }
+#duel details > div, #duel details summary { font-size: .65em; }
+.d-stats { top: 8.3em; }
+.d-manual { top: 10.5em; }
+#duel details summary { cursor: pointer; color: var(--dim); letter-spacing: .08em; }
+#duel details[open] { width: min(40em, 44%); max-height: 58%; overflow: auto; touch-action: pan-y; }
+#duel details[open] summary { color: var(--mint); }
+#duel .d-stats[open] { z-index: 4; }
+#duel details p { color: var(--dim); margin: .7em 0; }
+#duel dl { display: grid; grid-template-columns: 1fr 1fr; gap: .3em .8em; margin: .7em 0; }
+#duel dl > div { display: flex; justify-content: space-between; gap: .6em; border-bottom: 1px solid var(--edge); padding: .35em 0; }
+#duel dt { color: var(--dim); }
+#duel dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.d-manual ol { padding-left: 1.6em; margin-bottom: .2em; }
+.d-manual li { padding: .4em 0; }
+.d-manual li b { display: block; color: var(--gold); }
+.d-manual li span { display: block; color: var(--dim); }
+
+/* Literal panel maps: danger never spreads beyond the server's file/lane pairs. */
+.field-map { display: grid; grid-template-columns: repeat(var(--files), minmax(0, 1fr)); gap: .22em; }
+.field-panel { min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: .45em .15em; background: var(--recess); border: 1px solid var(--edge); border-radius: 3px; font: 400 .7em var(--mono); color: var(--faint); }
+.field-panel small { margin-top: .18em; font-size: .76em; }
+.field-panel.boss { border-color: var(--violet); color: var(--violet); }
+.field-panel.mine { border-color: var(--mint); color: var(--mint); box-shadow: inset 0 0 0 1px var(--mint); }
+.field-panel.danger { background: repeating-linear-gradient(135deg, rgba(255,65,100,.17) 0 5px, rgba(255,65,100,.07) 5px 10px), var(--recess); border-color: var(--rose); color: #ffb8c6; }
+.field-panel.mine.danger { box-shadow: inset 0 0 0 1px var(--mint); }
+.d-warn { left: 50%; top: 9em; transform: translateX(-50%); width: min(22em, 30%); display: none; padding: .5em .6em; background: rgba(18,7,20,.94); border: 1px solid var(--rose); border-radius: 6px; }
+.d-warn.on { display: grid; grid-template-columns: 1fr auto; gap: .3em; }
+.d-warn > b { font: 800 .85em var(--ui); }
+.d-warn > span, .d-warn > small { font: 400 .62em var(--mono); color: var(--rose); }
+.d-warn > small { grid-column: 1 / -1; }
+.d-warn .field-map { grid-column: 1 / -1; }
+.d-down, .d-cover, .d-ward { display: none; left: 50%; transform: translateX(-50%); width: min(34em, 46%); padding: .55em .8em; border: 1px solid var(--edge-hi); border-radius: 5px; background: rgba(12,8,24,.94); text-align: center; }
+.d-down { bottom: 10em; color: var(--rose); }
+.d-cover { bottom: 14em; color: var(--cyan); }
+.d-ward { bottom: 7.5em; font: 400 .67em/1.45 var(--mono); border-color: var(--violet); }
+.d-down.on, .d-cover.on, .d-ward.on { display: block; }
+.d-down b, .d-cover b { font: 700 .76em var(--mono); }
+.d-down span, .d-cover small { display: block; margin-top: .35em; color: var(--dim); font: 400 .61em/1.4 var(--mono); }
+.d-cover .d-meter i { background: var(--cyan); }
+.d-event { left: 1em; bottom: 10.7em; width: 30em; max-width: 36%; font: 400 1em/1.5 var(--mono); color: var(--dim); }
+.d-event div { padding: .15em .45em; font-size: .62em; background: rgba(12,8,24,.76); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.d-event div:last-child { color: var(--ink); }
+.d-hint { left: 1em; bottom: .8em; width: 80%; font: 400 .61em/1.45 var(--mono); color: var(--dim); text-shadow: 0 1px 2px #000; }
+
+/* Holds use stable pointer capture; browser panning must not steal the Buster or direction pad. */
+.d-controls { left: 1em; bottom: 2.5em; display: flex; align-items: center; gap: .8em; }
+.d-pad { display: grid; grid-template-columns: repeat(3, 4.2em); grid-template-rows: repeat(3, 2.25em); gap: .22em; }
+#duel .d-pad button { padding: .2em; font-size: .65em; touch-action: none; user-select: none; }
+.d-pad .back { grid-column: 2; grid-row: 1; }
+.d-pad .left { grid-column: 1; grid-row: 2; }
+.d-pad .right { grid-column: 3; grid-row: 2; }
+.d-pad .forward { grid-column: 2; grid-row: 3; }
+.d-pad .position { grid-column: 2; grid-row: 2; display: grid; place-items: center; font: 400 .52em var(--mono); color: var(--mint); }
+#duel .d-buster { position: relative; width: 12em; min-height: 5.3em; padding: .75em; overflow: hidden; text-align: left; touch-action: none; user-select: none; }
+.d-buster i { position: absolute; inset: 0 auto 0 0; background: rgba(147,106,255,.22); }
+.d-buster b, .d-buster small, .d-buster span { position: relative; display: block; }
+.d-buster b { font: 800 .86em var(--ui); letter-spacing: .12em; }
+#duel .d-buster small { margin-top: .3em; font-size: .53em; }
+.d-buster span { margin-top: .65em; color: var(--dim); font: 400 .51em var(--mono); }
+#duel .d-buster.ready { border-color: var(--mint); }
+.d-buster.ready i { background: rgba(67,226,168,.25); }
+.d-buster.ready span { color: var(--mint); }
+#duel .d-controls button:disabled { opacity: .35; }
+#deck.dueling.customopen .d-controls { opacity: .35; }
+#deck.dueling.customopen .d-stats[open], #deck.dueling.customopen .d-manual[open] { max-height: 27%; }
+#duel .d-leave { right: 1em; bottom: 1em; padding: .6em 1em; font-size: .67em; color: var(--dim); }
+#duel .d-leave:hover { border-color: var(--rose); }
+/* The button in the middle of the field: the one thing on screen that asks to be pressed. Big,
+   centred under the fight, and it only starts breathing when there is something to fire. */
+#duel .d-bust { left: 50%; bottom: 3.2em; transform: translateX(-50%); z-index: 6;
+  min-width: 9em; padding: .55em 1.4em .5em; border-radius: 999px;
+  border: 1px solid var(--edge-hi); border-bottom: 3px solid #06301f; background: var(--plate);
+  color: var(--dim); font: 800 1.1em var(--ui); letter-spacing: .12em; cursor: pointer; }
+#duel .d-bust small { display: block; font: 400 .55em var(--mono); letter-spacing: .1em; color: var(--faint); }
+#duel .d-bust:disabled { opacity: .5; cursor: default; }
+#duel .d-bust.ready { background: var(--mint); color: #04170f; border-color: var(--mint); animation: bustbeat 1s ease-in-out infinite alternate; }
+#duel .d-bust.ready small { color: #0b3a29; }
+@keyframes bustbeat { from { box-shadow: 0 0 0 0 rgba(92, 240, 186, .5); } to { box-shadow: 0 0 0 .8em rgba(92, 240, 186, 0); } }
+#deck.dueling.customopen .d-event { max-width: 32%; }
+#deck.dueling.customopen .d-down, #deck.dueling.customopen .d-cover, #deck.dueling.customopen .d-ward { left: 1em; transform: none; width: 30%; }
+#deck.dueling.customopen .d-leave { right: auto; left: 1em; bottom: 21em; }
+
+.d-low, .d-flash, .d-floats { inset: 0; pointer-events: none; }
+.d-low { transition: box-shadow .4s; }
+.d-low.on { box-shadow: inset 0 0 8em rgba(255,40,70,.35); }
+.d-flash { background: radial-gradient(ellipse, transparent, rgba(255,40,70,.5)); opacity: 0; }
+.d-flash.on { animation: sf-hurt .45s ease-out; }
+@keyframes sf-hurt { from { opacity: 1; } to { opacity: 0; } }
+.dfloat { position: absolute; transform: translate(-50%, -50%); font: 800 1.7em var(--ui); color: #fff; white-space: nowrap; text-shadow: 0 .08em 0 rgba(0,0,0,.75); }
+.dfloat span { display: block; animation: sf-float 1.1s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes sf-float { 0% { transform: translateY(.5em) scale(.5); opacity: 0; } 14% { transform: translateY(-.3em) scale(1.2); opacity: 1; } 100% { transform: translateY(-3.4em); opacity: 0; } }
+.dfloat.weak { color: var(--volt); font-size: 2.3em; }
+.dfloat.resist { color: var(--faint); font-size: 1.25em; }
+.dfloat.hurt { color: var(--rose); font-size: 2em; }
+.dfloat.dodge { color: var(--cyan); font-size: 1.5em; }
+.dfloat.chain { color: var(--gold); font-size: 1.5em; }
+.dfloat.heal { color: var(--mint); }
+.dfloat.miss { color: var(--violet); font-size: 1.2em; }
+.dfloat.big { font-size: 3em; }
+
+/* Receipt is above both screens, scrollable even on a short viewport. */
+#duel .d-end { inset: 0; z-index: 8; display: none; place-items: center; padding: 1em; background: rgba(4,2,10,.84); pointer-events: auto; }
+#duel .d-end.on { display: grid; }
+.receipt { width: min(40em, 94%); max-height: 100%; overflow: auto; padding: 1.2em 1.5em; text-align: center; --c: var(--mint); touch-action: pan-y; }
+.d-end.lose .receipt { --c: var(--rose); }
+.receipt header { color: var(--dim); font: 400 .62em var(--mono); letter-spacing: .12em; }
+.receipt h2 { margin: .4em 0 .2em; color: var(--c); font: 800 2em var(--ui); }
+.receipt p { color: var(--dim); font: 400 .73em/1.5 var(--mono); }
+.receipt-grade { display: flex; align-items: center; justify-content: center; gap: 1em; margin: .8em 0; }
+.receipt-grade > b { font: 800 2.8em var(--ui); color: var(--gold); }
+.receipt-grade > div { text-align: left; font: 400 .75em var(--mono); }
+.receipt-grade small { display: block; margin-top: .4em; color: var(--dim); font-size: .8em; }
+#duel .receipt dl { grid-template-columns: repeat(3, 1fr); font: 400 .68em var(--mono); }
+#duel .receipt dl > div { flex-direction: column; }
+.receipt .rews { display: flex; flex-wrap: wrap; justify-content: center; gap: .4em; margin: 1em 0; }
+.receipt .rews span { padding: .45em .7em; border: 1px solid var(--edge-hi); border-radius: 4px; background: var(--recess); color: var(--gold); font: 400 .72em var(--mono); }
+#duel .receipt button.primary { width: 100%; min-height: 44px; padding: .65em; background: var(--mint); color: #04170f; border-color: var(--mint); font-weight: 800; }
+#duel .receipt button.primary:hover { background: #5cf0ba; }
+
+/* Automatic Custom: six server-owned candidates, literal field readout, ordered program. */
+#cs.on.duel { display: block; padding: 0; overflow: auto; }
+/* DS bottom screen: the cards ARE the screen. No side readout panel — the field is up top. */
+.sf-custom { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(12em, 1fr) auto; gap: .5em; min-height: 100%; padding: .65em; font-size: clamp(10px, calc(var(--ph) / 34), 16px); }
+.cs-field { display: none; }
+.sf-custom > header, .sf-custom > footer { grid-column: 1 / -1; }
+.sf-custom > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3em; padding-bottom: .4em; border-bottom: 1px solid var(--edge); color: var(--mint); font: 400 .8em var(--mono); }
+.sf-custom > header small { color: var(--dim); font-size: .82em; }
+.sf-custom > section { min-width: 0; padding: .5em; border: 1px solid var(--edge); background: var(--recess); border-radius: 5px; }
+.sf-custom h3 { margin: 0 0 .55em; color: var(--dim); font: 400 .75em var(--mono); letter-spacing: .05em; }
+.sf-custom h3 small { float: right; font-size: .86em; }
+.cs-hand { position: relative; }
+/* Six cards, all of them, at a glance: the art is a thumbnail on the left and the numbers carry the
+   right half, because a hand you have to scroll or squint at is a hand you cannot plan with. */
+.cs-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(3.4em, 1fr)); gap: .4em; height: 100%; }
+#cs.duel .sf-card { --c: var(--violet); display: grid; grid-template-columns: 3.1em minmax(0, 1fr); gap: .45em; align-items: center; min-width: 0; padding: .3em; text-align: left; background: color-mix(in srgb, var(--c) 8%, var(--plate)); border-color: color-mix(in srgb, var(--c) 40%, var(--edge)); font-size: .8em; }
+#cs.duel .sf-card .card-art { width: 3.1em; aspect-ratio: 1; object-fit: cover; display: block; border: 1px solid color-mix(in srgb, var(--c) 45%, #000); border-radius: 3px; }
+#cs.duel .sf-card.held { opacity: .6; filter: saturate(.55); }
+.card-top { display: flex; justify-content: space-between; gap: .25em; color: var(--c); font: 400 .65em var(--mono); }
+.card-top b { font-size: .9em; font-weight: 400; }
+.card-name { font: 800 .9em/1.2 var(--ui); overflow-wrap: anywhere; }
+.card-power { color: var(--ink); font: 400 .88em var(--mono); }
+#cs.duel .card-power small { margin-top: .3em; color: var(--dim); font-size: .64em; line-height: 1.35; }
+.card-state { border-top: 1px solid var(--edge); padding-top: .3em; color: var(--c); font: 400 .62em/1.35 var(--mono); overflow-wrap: anywhere; }
+#cs.duel .sf-card.picked { box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 20%, var(--plate)); }
+#cs.duel .sf-card.locked { background: var(--plate); border-style: dashed; }
+.sf-card.locked .card-state { color: var(--rose); }
+.sf-card.locked .card-name, .sf-card.locked .card-power { color: var(--dim); }
+.sf-card.waiting { opacity: .3; border: 1px dashed var(--edge); color: var(--dim); }
+.cs-charge { position: absolute; inset: .5em; display: grid; place-content: center; gap: .6em; text-align: center; background: rgba(10,6,22,.94); border: 1px solid var(--edge); border-radius: 4px; }
+.cs-charge b { font: 800 1em var(--ui); }
+.cs-charge .time { color: var(--mint); font: 400 1.8em var(--mono); }
+.cs-charge small { font: 400 .7em/1.4 var(--mono); color: var(--dim); }
+.cs-safe { margin-top: .5em; padding: .5em; background: rgba(67,226,168,.06); border: 1px solid var(--edge); color: var(--mint); font: 400 .68em/1.4 var(--mono); }
+.cs-safe.exposed { color: var(--dim); }
+.cs-aim { margin-top: .45em; font: 400 .68em/1.4 var(--mono); }
+.cs-aim > div { padding: .3em 0; border-bottom: 1px solid var(--edge); }
+.cs-aim b, .cs-aim span { display: block; }
+.cs-aim span, .cs-aim p { color: var(--dim); }
+.sf-custom .cs-prog { grid-column: 1 / -1; }
+.cs-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3em; }
+.qcard { display: flex; align-items: center; gap: .5em; min-width: 0; padding: .4em; border: 1px solid var(--edge); border-left: 2px solid var(--c); border-radius: 3px; background: var(--plate); font: 400 .74em var(--mono); }
+.qcard b { color: var(--c); }
+.qcard span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qcard small { color: var(--dim); font-size: .8em; }
+.cs-queue p { grid-column: 1 / -1; margin: .3em 0; font: 400 .75em/1.4 var(--mono); color: var(--dim); }
+.cs-sum { margin: .5em 0; font: 400 .72em/1.5 var(--mono); color: var(--dim); }
+.cs-sum b { color: var(--mint); font-size: 1.5em; }
+.cs-sum small, .cs-sum > span { display: block; }
+.cs-btns { display: grid; grid-template-columns: 1fr 1fr 1.7fr; gap: .35em; }
+#cs.duel .cs-btns button { min-height: 38px; padding: .45em; font-size: .8em; }
+#cs.duel .cs-btns button:disabled { opacity: .4; }
+#cs.duel .cs-btns .exe { background: var(--mint); border-color: var(--mint); color: #04170f; font-weight: 800; }
+#cs.duel .cs-btns .exe:hover { background: #5cf0ba; }
+.cs-wait { padding: .4em; font: 400 .8em/1.5 var(--mono); color: var(--dim); }
+.cs-wait b { color: var(--ink); }
+.sf-custom > footer { color: var(--faint); font: 400 .66em/1.4 var(--mono); }
+
+/* Keep the field legible and holds reachable on small touch screens. */
+#deck.touch #duel { font-size: clamp(11px, calc(min(var(--vw), var(--vh)) / 40), 18px); }
+#deck.touch .d-pad { grid-template-columns: repeat(3, max(3.5em, 44px)); grid-template-rows: repeat(3, max(2.6em, 38px)); }
+#deck.touch .d-buster { min-height: 72px; }
+#deck.touch .d-party button { min-height: 44px; }
+#deck.touch .sf-custom { font-size: 11px; }
+#deck.touch .cs-btns button { min-height: 44px; }
+@media (max-width: 800px) {
+  .d-you { width: 26%; }
+  .d-boss { width: 29%; }
+  #duel .who b { font-size: .78em; }
+  #duel .who small { font-size: .55em; }
+  #duel .d-grade { width: 30%; }
+  .d-party { width: 26%; }
+  #duel .d-stats, #duel .d-manual { width: 29%; }
+  #duel .d-controls { gap: .4em; }
+  #duel .d-buster { width: 10em; }
+  .d-event { bottom: 12em; }
+}
+@media (orientation: portrait) {
+  #deck.touch .d-you, #deck.touch .d-boss { top: .7em; width: calc(50% - 1.4em); }
+  #deck.touch .d-you { left: .7em; }
+  #deck.touch .d-boss { right: .7em; }
+  #deck.touch .d-gauge { top: 8.1em; width: calc(100% - 1.4em); }
+  #deck.touch .d-grade { left: auto; right: .7em; top: 10.4em; width: 43%; max-width: none; transform: none; }
+  #deck.touch .d-party { left: .7em; top: 10.4em; width: 49%; max-height: 13em; }
+  #deck.touch .d-stats, #deck.touch .d-manual { right: .7em; width: 43%; }
+  #deck.touch .d-stats { top: 22.5em; }
+  #deck.touch .d-manual { top: 26em; }
+  #deck.touch details[open] { width: calc(100% - 1.4em); max-height: 42%; }
+  #deck.touch .d-warn { top: 20em; left: .7em; width: 49%; transform: none; }
+  #deck.touch .d-controls { left: .7em; right: .7em; bottom: 3em; justify-content: space-between; }
+  #deck.touch .d-buster { width: 12em; max-width: 40%; }
+  #deck.touch .d-event { left: .7em; bottom: 16em; max-width: none; width: calc(100% - 1.4em); }
+  #deck.touch .d-hint { left: .7em; bottom: .7em; width: 77%; }
+  #deck.touch .d-leave { right: .7em; bottom: .7em; min-height: 44px; }
+  #deck.touch .d-down, #deck.touch .d-cover, #deck.touch .d-ward { left: .7em; transform: none; width: calc(100% - 1.4em); }
+  #deck.touch .d-down { bottom: 22em; }
+  #deck.touch .d-cover { bottom: 25em; }
+  #deck.touch .d-ward { bottom: 31em; }
+  #deck.touch.dueling.customopen .d-controls { bottom: calc(var(--dock) + 1em); }
+  #deck.touch.dueling.customopen .d-event { display: none; }
+  #deck.touch.dueling.customopen .d-hint { bottom: calc(var(--dock) + 13em); }
+  #deck.touch.dueling.customopen .d-leave { left: auto; right: .7em; bottom: calc(var(--dock) + 13em); }
+  #deck.touch.dueling.customopen .d-down, #deck.touch.dueling.customopen .d-cover, #deck.touch.dueling.customopen .d-ward { display: none; }
+  #deck.touch .receipt h2 { font-size: 1.55em; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #duel *, #cs.duel * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}

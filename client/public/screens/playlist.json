@@ -1,0 +1,4 @@
+{
+  "_help": "Coloque seus vídeos nesta pasta e escreva os nomes em \"videos\". Use .webm: é o formato leve para telão. Para converter um GIF ou um MP4 pesado: node tools/screen-encode.cjs arquivo.gif (ou .mp4). Cada telão e cada outdoor toca um da lista, em ordem, e a lista se repete. Sem vídeos, as telas mostram a vinheta padrão. Os vídeos tocam em loop e sem som. Recarregue a página do jogo depois de mudar a lista.",
+  "videos": []
+}

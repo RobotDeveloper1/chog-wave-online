@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>dungeon field debug</title>
+    <style>
+      html, body { margin: 0; height: 100dvh; background: #06040c; overflow: hidden; }
+      #tag { position: fixed; left: 8px; top: 8px; color: #efe; font: 12px monospace; z-index: 9; }
+      canvas { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="tag">booting…</div>
+    <script type="module">
+      import * as THREE from 'three';
+      import { buildDungeonField } from '/src/app/dungeon/field.ts';
+      import { moodFor } from '/src/app/dungeon/themes.ts';
+
+      const element = new URLSearchParams(location.search).get('el') ?? 'burn';
+
+      // A stand-in run: 4 rows, 2-3 lanes, the same shape the server hands over.
+      const kinds = [['gate'], ['wave', 'elite'], ['chest', 'wave', 'shrine'], ['boss']];
+      const nodes = [];
+      kinds.forEach((row, r) => row.forEach((kind, c) => {
+        nodes.push({ id: `n${r}${c}`, kind, row: r, col: c, links: (kinds[r + 1] ?? []).map((_, cc) => `n${r + 1}${cc}`), label: kind });
+      }));
+      const area = { id: 'dbg', name: 'DEBUG FOLD', tier: 2, seed: 1, sector: 'ashflat', nodes, rows: 4, bossId: 'n30', entryId: 'n00', dungeonId: 'd-x' };
+      const run = { areaId: 'dbg', tier: 2, at: 'n10', cleared: ['n00'], hp: 100, maxHp: 100, wav: 0, xp: 0, chips: [] };
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setPixelRatio(1);
+      document.body.append(renderer.domElement);
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 400);
+
+      const mood = moodFor(element);
+      scene.background = new THREE.Color(mood.sky);
+      scene.fog = new THREE.Fog(new THREE.Color(mood.fog).getHex(), mood.fogNear, mood.fogFar);
+      const hemi = new THREE.HemisphereLight(new THREE.Color(mood.hemi), new THREE.Color(mood.bounce), mood.hemiI);
+      scene.add(hemi);
+      const key = new THREE.DirectionalLight(new THREE.Color(mood.key), mood.sunI);
+      key.position.set(20, 34, 18);
+      scene.add(key);
+      const fill = new THREE.DirectionalLight(new THREE.Color(mood.accent), mood.fillI);
+      fill.position.set(-18, 12, -10);
+      scene.add(fill);
+
+      const field = buildDungeonField(area, run, element);
+      scene.add(field.group);
+
+      const camMode = new URLSearchParams(location.search).get('cam') ?? 'top';
+      // top: the whole carved layout. walk: standing in a room, eye level.
+      const wn = field.nodes[1] ?? field.nodes[0];
+      if (camMode === 'walk') {
+        // Stand near the doorway of a non-boss room, look across it to the arch.
+        camera.position.set(wn.x + 2.6, 3.0, wn.z + 5.2);
+        camera.lookAt(wn.x - 0.5, 2.0, wn.z - 4);
+      } else if (camMode === 'close') {
+        camera.position.set(wn.x + 9, 16, wn.z + 18);
+        camera.lookAt(wn.x, 0.6, wn.z);
+      } else {
+        camera.position.set(6, 74, 62);
+        camera.lookAt(0, 0, -26);
+      }
+
+      const tag = document.getElementById('tag');
+      tag.textContent = `element=${element} nodes=${field.nodes.length} solids=${field.solids.length}`;
+      let t = 0;
+      let last = performance.now();
+      const frame = (now) => {
+        const dt = Math.min(0.05, (now - last) / 1000);
+        last = now;
+        t += dt;
+        field.update(t);
+        if (camMode === 'top') {
+          // A slow orbit, so the whole place can be read from every side.
+          const a = t * 0.08;
+          camera.position.set(Math.sin(a) * 78, 74, 46 + Math.cos(a) * 26);
+          camera.lookAt(0, 0, -26);
+        }
+        renderer.render(scene, camera);
+        tag.textContent = `element=${element} cam=${camMode} nodes=${field.nodes.length} solids=${field.solids.length} t=${t.toFixed(1)}`;
+        requestAnimationFrame(frame);
+      };
+      requestAnimationFrame(frame);
+      window.__ready = true;
+    </script>
+  </body>
+</html>

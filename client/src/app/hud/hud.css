@@ -1,0 +1,761 @@
+/*
+ * The HUD and the deck.
+ *
+ * Exploring, the top screen is the whole window and everything else is an overlay on it:
+ * a character card, a minimap, a quest tracker, a log, a hotbar. Opening any menu (or
+ * starting a fight) pulls the DS's lower screen up under it, which is the clamshell, but
+ * only when there is something to put on it.
+ *
+ * The rule for the look is "a tool the player carries", and a tool is plastic and metal, not
+ * glass. So: nothing is translucent over the world except when the world is what you are
+ * reading. A panel is a printed plate -- flat fill, one opaque hairline edge, one hard drop
+ * shadow, one cut corner. Colour is only ever spent on meaning: mint = it works, gold = it
+ * costs, rose = it hurts, violet = the machine itself. Glow is a budget of one element on
+ * screen at a time, never a decoration. Type carries the rest: Oxanium for anything you read
+ * at a glance, Share Tech Mono for anything that is a number, and no letterspaced shout
+ * except on the small caps micro-labels, which are the one place tracking actually helps.
+ *
+ * Sizes are in `em` off one root size, so the whole HUD scales with the window.
+ */
+
+@font-face {
+  font-family: "Oxanium";
+  src: url("/fonts/oxanium-latin.woff2") format("woff2");
+  font-weight: 400 800;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "Share Tech Mono";
+  src: url("/fonts/sharetechmono-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+:root {
+  --ink: #ece6fb;
+  --dim: #a093c2;
+  --faint: #665a8a;
+
+  --mint: #43e2a8;
+  --gold: #f5c343;
+  --rose: #ff5d72;
+  --violet: #9a72ea;
+  --cyan: #6ad2e6;
+
+  /* the material: a plate, the well a plate sits in, and the hairline that ends it */
+  --plate: #171129;
+  --plate-up: #201838;
+  --recess: #0a0716;
+  --edge: #382c58;
+  --edge-hi: #6d56ab;
+
+  /* one corner language: a 45 degree cut on plates, 2px on everything small */
+  --cut: .6em;
+  --r: 2px;
+
+  /* the six waves, and nothing else gets a hue of its own */
+  --burn: #ff7a45;
+  --frost: #7fd8ff;
+  --volt: #ffe066;
+  --wave: #43e2a8;
+  --prism: #cbb2f2;
+  --void: #a874ff;
+
+  --ui: "Oxanium", "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --mono: "Share Tech Mono", ui-monospace, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100dvh; background: #06040c; overflow: hidden; color: var(--ink); font: 13px/1.45 var(--ui); user-select: none; -webkit-text-size-adjust: 100%; }
+button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent; }
+
+/* ---------------------------------------------------------------- deck */
+
+/*
+ * The game is a 16:9 picture, because it is played in a browser window, and the menu is the
+ * DS's lower screen: a 4:3 touch screen in a bezel that slides up over the picture when it is
+ * asked for (Tab) and away again when it is not. The picture is as large as the window allows
+ * without ever being stretched, and everything on it is sized from one number, its height
+ * (`--sh`), so the layout is the same on a laptop and on a TV.
+ */
+#deck {
+  height: 100vh; display: grid; place-items: center; overflow: hidden;
+  background: #050309;
+}
+#console {
+  --sw: min(100vw, calc(100vh * 16 / 9));
+  --sh: calc(var(--sw) * 9 / 16);
+  /* the lower screen: 4:3, and a bit over half the height of the picture */
+  --ph: calc(var(--sh) * 0.6);
+  --pw: calc(var(--ph) * 4 / 3);
+  --bz: calc(var(--sh) * 0.012);
+  position: relative; width: var(--sw); height: var(--sh); overflow: hidden; background: #05030b;
+  box-shadow: 0 0 0 1px var(--edge), 0 1em 3em rgba(0,0,0,.7);
+}
+#top { position: absolute; inset: 0; overflow: hidden; }
+#gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+/* the lower screen, in its bezel: it slides in from the right edge when it is asked for */
+#bottom {
+  position: absolute; right: calc(var(--sh) * 0.016); bottom: calc(var(--sh) * 0.016); z-index: 5;
+  width: calc(var(--pw) + 2 * var(--bz)); padding: var(--bz) var(--bz) calc(var(--bz) * 4); border-radius: calc(var(--bz) * 1.4);
+  background: #1b1631;
+  box-shadow: 0 0 0 1px var(--edge-hi), 0 0 0 3px #08050f, 0 .8em 2.6em rgba(0,0,0,.75), inset 0 -2px 0 rgba(0,0,0,.45);
+  transform: translateX(calc(100% + var(--sh) * 0.08)); opacity: 0; pointer-events: none;
+  transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .22s;
+}
+#deck.menu #bottom, #deck.dueling.customopen #bottom { transform: none; opacity: 1; pointer-events: auto; }
+#lower {
+  position: relative; width: var(--pw); height: var(--ph); overflow: hidden; border-radius: calc(var(--bz) * .6);
+  display: flex; flex-direction: column; container-type: inline-size; font-size: calc(var(--ph) / 34);
+  background: repeating-linear-gradient(0deg, rgba(255,255,255,.018) 0 1px, transparent 1px 3px), #0d0817;
+  box-shadow: 0 0 0 2px #05030a, 0 0 0 3px var(--edge), inset 0 0 2.6em rgba(0,0,0,.55);
+}
+/* the bezel under the screen: the brand, a speaker grille, and the build the player is on */
+#bottom .bz { position: absolute; left: calc(var(--bz) * 2); right: calc(var(--bz) * 2); bottom: calc(var(--bz) * 0.9); height: calc(var(--bz) * 2.4); display: flex; align-items: center; gap: .9em;
+  font: 400 calc(var(--sh) * 0.0105)/1 var(--mono); letter-spacing: .22em; color: #6a5f86; white-space: nowrap; }
+#bottom .bz b { color: var(--mint); font-weight: 400; }
+#bottom .bz em { font-style: normal; color: var(--gold); }
+#bottom .bz i { flex: 1; height: 38%; background: repeating-linear-gradient(90deg, #07040d 0 3px, transparent 3px 8px); opacity: .7; }
+/* with the menu up, what it covers steps aside */
+#deck.menu #hud-quests, #deck.menu #hud-dock { visibility: hidden; }
+
+/* ---------------------------------------------------------------- hud root */
+
+#hud { position: absolute; inset: 0; pointer-events: none; font-size: clamp(9px, calc(var(--sh) / 64), 24px); }
+#hud > * { position: absolute; }
+#hud .hit { pointer-events: auto; }
+
+/*
+ * One plate. Opaque so a HUD over a busy street still reads, a hairline that is a real edge
+ * rather than a glow, and a single hard shadow so it sits *on* the screen instead of floating
+ * above it.
+ */
+.panel {
+  background: var(--plate);
+  border: 1px solid var(--edge);
+  border-radius: var(--r);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .55);
+}
+.chamfer { clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut))); border-radius: 0; }
+.lbl { color: var(--dim); font: 400 .72em var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* a keycap you could press, not a pill */
+.key {
+  display: inline-grid; place-items: center; min-width: 1.7em; height: 1.7em; padding: 0 .35em;
+  background: var(--plate-up); border: 1px solid var(--edge-hi); border-bottom: 2px solid #090613;
+  border-radius: var(--r); font: 400 1em var(--mono); color: #fff;
+}
+
+/* ---------------------------------------------------------------- ticker */
+
+/* A slim line of market fills, not a full-width bar. It used to be an opaque plate across the
+   top of the screen with a brand tag and a build stamp, which was one whole panel of chrome
+   before the game had even asked for attention. */
+#hud-ticker { left: 6em; right: 6em; top: .3em; height: 1.25em; display: flex; align-items: center; overflow: hidden; }
+#hud-ticker .rail { flex: 1; overflow: hidden; white-space: nowrap; mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
+#hud-ticker .run { display: inline-block; padding-left: 100%; animation: scroll 38s linear infinite; font: 400 .84em var(--mono); color: var(--dim); }
+#hud-ticker .run b { color: var(--ink); font-weight: 400; }
+#hud-ticker .run em { color: var(--faint); font-style: normal; }
+#hud-ticker .run .hot { color: var(--gold); }
+#hud-ticker .idle { color: var(--faint); padding-left: 1em; font: 400 .8em var(--mono); }
+@keyframes scroll { to { transform: translateX(-100%); } }
+@keyframes blink { 50% { opacity: .25; } }
+
+/* ---------------------------------------------------------------- player card */
+
+#hud-player { left: 1em; top: 2.4em; display: flex; gap: .8em; align-items: center; padding: .5em 1.2em .5em .5em; min-width: 18em; }
+/* the carrier is a printed card, not a coin: a square with a cut corner and the wave's own
+   colour as its edge, and no light coming out of it */
+.portrait { position: relative; flex: none; width: 5.2em; height: 5.2em; }
+.portrait .ring {
+  position: absolute; inset: 0; border: 2px solid var(--el, var(--violet));
+  background: var(--recess); overflow: hidden;
+  clip-path: polygon(0 0, calc(100% - .8em) 0, 100% .8em, 100% 100%, 0 100%);
+}
+/* The plate carries the collection's own illustration, one image per token: fill the frame, do not
+   crop a turntable cell out of it. */
+.portrait .img { position: absolute; inset: 0; background-repeat: no-repeat; background-size: cover; background-position: center; image-rendering: auto; }
+.portrait .glyph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 2.4em; color: var(--el, var(--violet)); opacity: .9; }
+.portrait .lv {
+  position: absolute; right: -.45em; top: -.45em; min-width: 1.8em; height: 1.5em; padding: 0 .3em; display: grid; place-items: center;
+  font: 400 .82em var(--mono); color: #241a00; background: var(--gold); border: 1px solid #241a00;
+  box-shadow: 0 2px 0 rgba(0,0,0,.55);
+}
+.pinfo { display: flex; flex-direction: column; gap: .35em; min-width: 0; }
+.pname { display: flex; align-items: center; gap: .55em; font-weight: 700; font-size: 1.15em; white-space: nowrap; }
+.pname .el { display: inline-grid; place-items: center; width: 1.45em; height: 1.45em; color: #120a1e; background: var(--el, var(--violet)); font-size: .85em; }
+.psub { font-size: .8em; color: var(--dim); }
+/* a gauge on a tool is a row of cells that light up, not a lake with a highlight on it */
+.meter { position: relative; height: .95em; border-radius: 0; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; }
+.meter > i { position: absolute; inset: 0 auto 0 0; transition: width .35s cubic-bezier(.2,.8,.2,1); }
+.meter > i::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, rgba(0,0,0,0) 0 calc(10% - 2px), rgba(0,0,0,.55) calc(10% - 2px) 10%); }
+.meter .tick { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(0,0,0,.55) calc(10% - 2px) 10%); }
+.meter span { position: absolute; right: .45em; top: 50%; transform: translateY(-50%); font: 400 .78em var(--mono); color: #fff; }
+.meter.hp > i { background: var(--rose); }
+.meter.xp { height: .55em; }
+.meter.xp > i { background: var(--violet); }
+.meter.laser { height: .55em; }
+.meter.laser > i { background: var(--gold); }
+.prow { display: flex; gap: 1em; align-items: center; font-size: .86em; }
+.wav { color: var(--gold); font: 400 .95em var(--mono); display: inline-flex; align-items: center; gap: .35em; }
+
+/* ---------------------------------------------------------------- waves + alert */
+
+#hud-waves { left: 50%; top: 2.2em; transform: translateX(-50%); display: flex; gap: .4em; }
+.wpill { display: flex; align-items: center; gap: .55em; padding: .3em .7em .3em .55em; background: var(--plate); border: 1px solid var(--edge); border-radius: var(--r); font-size: .85em; box-shadow: 0 2px 0 rgba(0,0,0,.55); }
+.wpill b { font-weight: 700; }
+.wpill .dot { width: .7em; height: .7em; background: var(--c, var(--mint)); outline: 1px solid rgba(0,0,0,.6); }
+.wpill .bar { width: 3.6em; height: .4em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; }
+.wpill .bar i { display: block; height: 100%; background: var(--c, var(--mint)); }
+/* the one element allowed to be lit is the wave you are actually carrying */
+.wpill.here { border-color: var(--c, var(--mint)); box-shadow: 0 2px 0 rgba(0,0,0,.55), inset 3px 0 0 var(--c, var(--mint)); }
+.wpill.hot { animation: hot 1.1s ease-in-out infinite alternate; }
+@keyframes hot { from { opacity: .75; } to { opacity: 1; } }
+
+#hud-alert { left: 50%; top: 5.4em; transform: translate(-50%, -.6em); opacity: 0; padding: .4em 1.2em; display: flex; gap: .8em; align-items: center;
+  background: var(--plate); border: 1px solid var(--rose); border-left: 3px solid var(--rose); transition: opacity .3s, transform .3s; font-weight: 700; }
+#hud-alert.on { opacity: 1; transform: translate(-50%, 0); }
+#hud-alert .key { background: #3a1420; border-color: var(--rose); }
+
+/* ---------------------------------------------------------------- the guide */
+
+#hud-next { left: 50%; top: 5.3em; transform: translate(-50%, -.6em); opacity: 0; display: none; align-items: stretch; gap: 0; max-width: min(46em, 60%); transition: opacity .25s, transform .25s; cursor: default; }
+#hud-next.on { display: flex; opacity: 1; transform: translate(-50%, 0); }
+#hud-next .tag { display: grid; place-items: center; padding: 0 .85em; background: var(--gold); color: #241a00; font: 400 .8em var(--mono); letter-spacing: .05em; }
+#hud-next.ready .tag { background: var(--mint); color: #06180f; }
+#hud-next .body { display: flex; flex-direction: column; padding: .3em 1em .35em .8em; min-width: 0; background: var(--plate); border: 1px solid var(--edge); border-left: 0; box-shadow: 0 2px 0 rgba(0,0,0,.55); }
+#hud-next .act { font: 400 .66em var(--mono); letter-spacing: .1em; color: var(--faint); }
+#hud-next b { font: 700 1.05em var(--ui); color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-next .do { font: 400 .85em var(--ui); color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-next .where { align-self: center; margin-left: .7em; padding: .12em .55em; background: var(--recess); border: 1px solid var(--cyan); color: var(--cyan); font: 400 .8em var(--mono); white-space: nowrap; }
+/* it arrives once; it does not breathe at you */
+#hud-next.on .tag { animation: tagin .3s cubic-bezier(.2,1.5,.4,1) both; }
+@keyframes tagin { from { transform: scaleX(.4); opacity: .2; } }
+/* the rift alert lives at the bottom centre, above the interact prompt. It used to share the
+   top column with the guide, and two plates in one column covered each other — the single
+   most "broken HUD" thing on the screen. One column, one job. */
+#hud-alert { top: auto; bottom: 12.5em; transform: translate(-50%, .6em); white-space: nowrap; }
+#hud-alert.on { transform: translate(-50%, 0); }
+
+/* ---------------------------------------------------------------- party, invitation, bubbles */
+
+#hud-party { left: 1em; top: 11em; width: 15.5em; display: none; flex-direction: column; gap: .25em; }
+#hud-party.on { display: flex; }
+#hud-party .ph { font: 400 .72em var(--mono); letter-spacing: .1em; color: var(--faint); padding: 0 .3em; }
+#hud-party .ph b { color: var(--gold); float: right; letter-spacing: 0; }
+#hud-party .pm { --c: #9a72ea; display: flex; align-items: center; gap: .5em; padding: .3em .6em; border-radius: var(--r); border: 1px solid var(--edge); background: var(--plate); box-shadow: 0 2px 0 rgba(0,0,0,.5); transition: border-color .12s; }
+#hud-party .pm .el { display: grid; place-items: center; color: var(--c); } #hud-party .pm .el svg { width: 1.1em; height: 1.1em; }
+#hud-party .pm .nm { flex: 1; min-width: 0; font: 700 .85em var(--ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-party .pm .lv { font: 400 .75em var(--mono); color: var(--gold); }
+#hud-party .pm.talk { border-color: var(--c); box-shadow: inset 3px 0 0 var(--mint), 0 2px 0 rgba(0,0,0,.5); }
+
+#hud-invite { left: 50%; top: 24%; transform: translate(-50%, -.6em); opacity: 0; display: none; flex-direction: column; align-items: center; gap: .15em; padding: .7em 1.6em .8em; border-color: var(--mint); }
+#hud-invite.on { display: flex; opacity: 1; transform: translate(-50%, 0); animation: lvin .25s ease both; }
+#hud-invite small { font: 400 .74em var(--mono); letter-spacing: .12em; color: var(--mint); }
+#hud-invite b { font: 700 1.4em var(--ui); color: #fff; }
+#hud-invite span { color: var(--dim); font: 400 .9em var(--ui); }
+#hud-invite .btns { display: flex; gap: .6em; margin-top: .5em; }
+#hud-invite button { display: inline-flex; align-items: center; gap: .5em; padding: .4em 1.1em; border-radius: var(--r); border: 1px solid var(--edge-hi); background: var(--plate-up); color: var(--ink); font: 700 .9em var(--ui); cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+#hud-invite button:first-child { border-color: var(--mint); background: var(--mint); color: #06180f; }
+#hud-invite button:hover { border-color: #fff; }
+
+#hud-bubbles { inset: 0; overflow: hidden; }
+.bubble { position: absolute; left: 0; top: 0; max-width: 16em; padding: .3em .7em; border-radius: var(--r); background: var(--plate); border: 1px solid var(--edge-hi); color: var(--ink); font: 400 .9em/1.35 var(--ui); text-align: center; box-shadow: 0 2px 0 rgba(0,0,0,.55); will-change: transform; }
+.bubble::after { content: ""; position: absolute; left: 50%; bottom: -.35em; width: .6em; height: .6em; background: inherit; border-right: 1px solid var(--edge-hi); border-bottom: 1px solid var(--edge-hi); transform: translateX(-50%) rotate(45deg); }
+.bubble.party { border-color: var(--mint); } .bubble.party::after { border-color: var(--mint); }
+.bubble.whisper { border-color: var(--violet); font-style: italic; } .bubble.whisper::after { border-color: var(--violet); }
+
+/* ---------------------------------------------------------------- level up */
+
+#hud-levelup { inset: 0; display: none; place-items: center; background: rgba(6,4,12,.72); pointer-events: auto; cursor: pointer; }
+#hud-levelup.on { display: grid; animation: lvin .35s ease both; }
+@keyframes lvin { from { opacity: 0; } }
+#hud-levelup .card { width: min(26em, 80%); padding: 1.1em 1.6em 1.2em; text-align: center; border-color: var(--gold); border-width: 2px; }
+#hud-levelup small { font: 400 .8em var(--mono); letter-spacing: .14em; color: var(--faint); }
+#hud-levelup h2 { margin: .1em 0 .3em; font: 800 2.6em/1 var(--ui); letter-spacing: -.01em; color: var(--gold); text-shadow: 0 3px 0 #4a3300; padding-left: .05em; animation: lvpop .5s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes lvpop { from { transform: scale(.5); opacity: 0; } }
+#hud-levelup ul { list-style: none; margin: .4em 0; padding: 0; display: flex; flex-direction: column; gap: .3em; }
+#hud-levelup li { padding: .3em .8em; background: var(--recess); border: 1px solid var(--mint); color: var(--mint); font: 400 .95em var(--mono); text-align: left; }
+#hud-levelup li::before { content: "+ "; }
+#hud-levelup p { margin: .5em 0; color: var(--dim); font: 400 .9em var(--ui); }
+#hud-levelup .next { color: var(--ink); font: 400 .82em var(--mono); }
+#hud-levelup .hint { display: inline-block; margin-top: .4em; color: var(--faint); font: 400 .78em var(--mono); }
+
+/* ---------------------------------------------------------------- banner */
+
+#hud-banner { left: 50%; top: 22%; transform: translateX(-50%); text-align: center; opacity: 0; }
+#hud-banner.show { animation: banner 3.8s ease both; }
+#hud-banner .zone { font: 800 2.6em/1.05 var(--ui); letter-spacing: -.01em; color: #fff; text-shadow: 0 4px 0 rgba(6,4,12,.9), 0 0 1px #000; }
+#hud-banner .area { display: inline-flex; align-items: center; gap: .9em; margin-top: .3em; font: 400 1em var(--mono); letter-spacing: .14em; color: var(--mint); text-transform: uppercase; }
+#hud-banner .area::before, #hud-banner .area::after { content: ""; width: 4em; height: 1px; background: var(--mint); opacity: .5; }
+#hud-banner .area::after { transform: scaleX(-1); }
+#hud-banner .tag { margin-top: .3em; font-size: .85em; color: var(--dim); }
+@keyframes banner { 0% { opacity: 0; transform: translate(-50%, 1em) scale(.96); } 12% { opacity: 1; transform: translate(-50%, 0) scale(1); } 78% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -.6em); } }
+
+/* ---------------------------------------------------------------- minimap */
+
+/* The radar is a disc, so the plate is a disc. It used to be a chamfered square holding a
+   circular canvas, and the four corners where the circle did not reach stayed near-black —
+   the "black square" in the corner of the screen. */
+#hud-map { right: 1em; top: 2.2em; width: 12.2em; text-align: center; }
+#hud-map .disc { position: relative; width: 12.2em; height: 12.2em; border: 1px solid var(--edge); background: var(--recess); overflow: hidden; border-radius: 50%;
+  box-shadow: 0 2px 0 rgba(0,0,0,.55); }
+#hud-map canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hud-map .n { position: absolute; left: 50%; top: .15em; transform: translateX(-50%); font: 400 .85em var(--mono); color: var(--rose); }
+/* The place name is a caption under the disc, not a second plate stacked below it. */
+#hud-map .where { margin-top: .35em; padding: 0; font: 400 .88em var(--mono); letter-spacing: .08em; color: var(--mint); }
+#hud-map .where small { display: block; color: var(--dim); font-weight: 400; letter-spacing: 0; }
+
+/* ---------------------------------------------------------------- toasts */
+
+#hud-toasts { left: 50%; top: 9.5em; transform: translateX(-50%); display: flex; flex-direction: column; gap: .4em; align-items: center; width: 28em; }
+.toast { display: flex; align-items: center; gap: .8em; padding: .45em 1.1em .45em .5em; min-width: 14em; border-radius: var(--r); background: var(--plate); border: 1px solid var(--edge-hi); border-left: 3px solid var(--c, var(--violet)); box-shadow: 0 2px 0 rgba(0,0,0,.55); animation: toast 4.4s ease both; }
+.toast .ico { display: grid; place-items: center; width: 2em; height: 2em; background: var(--c, var(--violet)); color: #100a1c; font-size: 1.1em; }
+.toast b { display: block; font-weight: 700; } .toast small { color: var(--dim); }
+.toast.big { padding: .65em 1.6em .65em .5em; border-color: var(--gold); border-left-color: var(--gold); }
+.toast.big b { font-size: 1.3em; color: var(--gold); }
+@keyframes toast { 0% { opacity: 0; transform: translateY(-.8em) scale(.96); } 8% { opacity: 1; transform: none; } 82% { opacity: 1; } 100% { opacity: 0; transform: translateY(-.4em); } }
+
+/* ---------------------------------------------------------------- prompt */
+
+#hud-prompt { left: 50%; bottom: 7.4em; transform: translate(-50%, .6em); opacity: 0; display: flex; gap: .8em; align-items: center; padding: .45em 1.3em .45em .5em; transition: opacity .15s, transform .15s; }
+#hud-prompt.on { opacity: 1; transform: translate(-50%, 0); }
+#hud-prompt .key { background: var(--mint); border-color: #06180f; color: #06180f; font-size: 1.05em; }
+#hud-prompt .what { display: flex; flex-direction: column; }
+#hud-prompt .what b { font-weight: 700; font-size: 1.05em; }
+#hud-prompt .what small { color: var(--dim); }
+#hud-prompt .ic { color: var(--c, var(--mint)); font-size: 1.6em; display: grid; place-items: center; }
+
+/* ---------------------------------------------------------------- log / chat */
+
+#hud-log { left: 1em; bottom: 1em; width: 28em; max-width: 42vw; }
+#hud-log .lines { display: flex; flex-direction: column; gap: .12em; max-height: 11em; overflow: hidden; mask-image: linear-gradient(0deg, #000 60%, transparent); padding-bottom: .3em; }
+#hud-log .ln { padding: .15em .6em; border-left: 2px solid var(--edge); background: rgba(8,5,16,.78); font-size: .88em; width: fit-content; max-width: 100%; animation: ln .25s ease; }
+#hud-log .ln .who { color: var(--cyan); font-weight: 700; margin-right: .5em; }
+#hud-log .ln .tag { display: inline-block; margin-right: .5em; padding: 0 .45em; font: 400 .72em var(--mono); letter-spacing: .06em; vertical-align: .06em; background: var(--plate-up); color: var(--ink); }
+#hud-log .ln.chan-party { border-left-color: var(--mint); } #hud-log .ln.chan-party .tag { background: var(--mint); color: #06180f; }
+#hud-log .ln.chan-whisper { border-left-color: var(--violet); font-style: italic; } #hud-log .ln.chan-whisper .tag { background: var(--violet); color: #fff; }
+#hud-log .ln.chan-system { color: var(--dim); }
+#hud-log .ln.old { opacity: 0; }
+#hud-log.typing .ln.old { opacity: 1; transition: none; }
+#hud-log.typing .lines { max-height: 16em; overflow-y: auto; mask-image: none; pointer-events: auto; scrollbar-width: thin; scrollbar-color: var(--edge-hi) transparent; }
+#hud-log .ln.t-glitch { color: #8ad2a0; } #hud-log .ln.t-anomaly { color: #f0c060; } #hud-log .ln.t-storm { color: var(--rose); }
+#hud-log .ln.sys { color: var(--dim); }
+#hud-log input { width: 100%; margin-top: .3em; padding: .5em .8em; background: var(--recess); border: 1px solid var(--edge-hi); border-radius: 0; color: var(--ink); font: inherit; outline: none; display: none; pointer-events: auto; }
+#hud-log.typing input { display: block; }
+@keyframes ln { from { opacity: 0; transform: translateX(-.6em); } }
+
+/* ---------------------------------------------------------------- dock */
+
+#hud-dock { right: 1em; bottom: 1em; display: flex; gap: .55em; align-items: flex-end; }
+.slots { display: flex; gap: .35em; padding: .4em; }
+.slot { position: relative; width: 3.1em; height: 3.1em; display: grid; place-items: center; border-radius: var(--r); background: var(--recess); border: 1px solid var(--edge); font-size: 1.1em; color: var(--dim); cursor: pointer; transition: transform .1s, border-color .1s; }
+.slot:hover { border-color: var(--edge-hi); transform: translateY(-.1em); color: #fff; }
+.slot .kc { position: absolute; left: .25em; top: .1em; font: 400 .6em var(--mono); color: var(--faint); }
+.slot .ct { position: absolute; right: .25em; bottom: .05em; font: 400 .7em var(--mono); color: var(--gold); }
+.slot.empty { opacity: .35; }
+.slot.on { border-color: var(--mint); color: var(--mint); box-shadow: inset 0 0 0 1px var(--mint); }
+.tools { display: flex; gap: .3em; }
+.tool { position: relative; width: 3.3em; height: 3.3em; display: grid; place-items: center; font-size: 1.1em; border-radius: var(--r); background: var(--plate); border: 1px solid var(--edge); border-bottom: 2px solid #090613; cursor: pointer; box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+.tool:hover { border-color: var(--edge-hi); color: #fff; }
+.tool .kc { position: absolute; right: .2em; bottom: .05em; font: 400 .6em var(--mono); color: var(--dim); }
+.tool.dot::after { content: "!"; position: absolute; right: -.3em; top: -.3em; width: 1.2em; height: 1.2em; display: grid; place-items: center; background: var(--rose); color: #fff; font: 400 .75em var(--mono); border: 1px solid #2a0710; }
+
+/* ---------------------------------------------------------------- dialogue */
+
+#hud-dialogue { left: 50%; bottom: 1.2em; transform: translate(-50%, 1.4em); width: min(54em, 94%); opacity: 0; pointer-events: none; display: flex; gap: 1em; padding: .9em 1.2em .9em .9em; transition: opacity .18s, transform .22s; }
+#hud-dialogue.on { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+#hud-dialogue .face { flex: none; width: 6.4em; height: 6.4em; display: grid; place-items: center; font-size: 3.2em; color: var(--c, var(--violet)); background: var(--recess); border: 2px solid var(--c, var(--violet)); clip-path: polygon(0 0, calc(100% - .8em) 0, 100% .8em, 100% 100%, 0 100%); }
+#hud-dialogue .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: .4em; }
+#hud-dialogue .who { display: flex; align-items: baseline; gap: .8em; }
+#hud-dialogue .who b { font-size: 1.25em; font-weight: 700; color: var(--c, var(--mint)); }
+#hud-dialogue .who small { color: var(--dim); font: 400 .8em var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+#hud-dialogue .say { font-size: 1.12em; line-height: 1.55; min-height: 3.1em; color: var(--ink); }
+#hud-dialogue .rew { display: flex; gap: .7em; flex-wrap: wrap; font-size: .88em; color: var(--gold); font-family: var(--mono); }
+#hud-dialogue .rew span { padding: .1em .55em; background: var(--recess); border: 1px solid var(--gold); }
+#hud-dialogue .opts { display: flex; gap: .6em; flex-wrap: wrap; margin-top: .2em; }
+#hud-dialogue .opt { display: inline-flex; gap: .6em; align-items: center; padding: .4em 1em .4em .5em; background: var(--plate-up); border: 1px solid var(--edge); border-radius: var(--r); cursor: pointer; font-weight: 700; box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+#hud-dialogue .opt:hover { border-color: var(--edge-hi); background: #2b2049; }
+#hud-dialogue .opt.primary { border-color: var(--mint); color: var(--mint); }
+#hud-dialogue .more { position: absolute; right: 1.2em; bottom: .6em; color: var(--dim); font: .85em var(--mono); animation: blink 1s infinite; }
+
+/* ---------------------------------------------------------------- overlays */
+
+#hud-vignette { inset: 0; background: radial-gradient(ellipse at center, transparent 66%, rgba(5,2,12,.3) 100%); }
+#hud-fade { inset: 0; background: #05020b; opacity: 0; transition: opacity .22s; }
+#hud-fade.on { opacity: 1; }
+#hud-viz { inset: 0; opacity: 0; transition: opacity .25s; background:
+  repeating-linear-gradient(0deg, rgba(106,210,230,.06) 0 2px, transparent 2px 5px),
+  radial-gradient(ellipse at center, rgba(40,120,160,.1), rgba(10,60,100,.34)); mix-blend-mode: screen; }
+#hud.viz #hud-viz { opacity: 1; }
+#hud-vizlabel { left: 50%; bottom: 5.2em; transform: translateX(-50%); opacity: 0; font: 400 .85em var(--mono); letter-spacing: .2em; color: var(--cyan); }
+#hud.viz #hud-vizlabel { opacity: 1; }
+
+/* ---------------------------------------------------------------- the lower screen */
+
+/* the page header: where you are, a way back, and the shoulder buttons */
+#tabs { flex: none; display: flex; align-items: center; gap: .5em; padding: .45em .7em; border-bottom: 1px solid var(--edge); background: var(--plate); }
+#tabs button { display: inline-flex; align-items: center; gap: .45em; padding: .3em .8em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--dim); cursor: pointer; font: 700 .8em var(--ui); }
+#tabs button:hover { color: #fff; border-color: var(--edge-hi); }
+#tabs .title { flex: 1; display: flex; align-items: center; gap: .55em; font: 800 1.02em var(--ui); letter-spacing: -.005em; color: #fff; min-width: 0; }
+#tabs .title svg { width: 1.35em; height: 1.35em; color: var(--mint); flex: none; }
+#tabs .me { flex: 1; display: flex; align-items: baseline; gap: .8em; min-width: 0; font: 700 .95em var(--ui); white-space: nowrap; overflow: hidden; }
+#tabs .me .lv { color: var(--mint); font: 400 .95em var(--mono); } #tabs .me .wav { color: var(--gold); font: 400 .85em var(--mono); } #tabs .me small { color: var(--dim); font-weight: 400; font-size: .82em; overflow: hidden; text-overflow: ellipsis; }
+#tabs .key { font-size: .85em; }
+/* the page arrows are the only part of this header a thumb uses, so they are not the key's size */
+#tabs .pg { font: 400 1.5em/1 var(--mono); font-style: normal; }
+
+/* home: the grid of big buttons the DS's touch menu opens on */
+.home { display: grid; grid-template-columns: repeat(4, 1fr); gap: .6em; padding: .8em .8em .4em; align-content: start; }
+.hbtn { position: relative; aspect-ratio: 1.3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .45em; padding: 0;
+  background: var(--plate); border: 1px solid var(--edge); border-bottom: 2px solid #090613; color: var(--ink); font: 700 .76em var(--ui); cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, var(--cut) 100%, 0 calc(100% - var(--cut)));
+  transition: transform .1s, background .12s, border-color .12s; }
+.hbtn svg { width: 2.9em; height: 2.9em; color: var(--c, var(--mint)); }
+.hbtn:hover { background: var(--plate-up); border-color: var(--edge-hi); transform: translateY(-.1em); color: #fff; }
+.hbtn .badge { position: absolute; right: .45em; top: .4em; min-width: 1.6em; height: 1.6em; padding: 0 .35em; background: var(--rose); color: #fff; font: 400 .85em var(--mono); display: grid; place-items: center; font-style: normal; }
+.hbtn .kc { position: absolute; left: .55em; bottom: .4em; font: 400 .75em var(--mono); color: var(--faint); font-style: normal; }
+.homefoot { padding: .45em 1em .6em; color: var(--faint); font: 400 .78em var(--mono); text-align: center; }
+.homefoot .key { font-size: .85em; }
+
+#cs { display: none; flex: 1; min-height: 0; } #cs.on { display: block; }
+.cs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .6em; height: 100%; padding: .6em; }
+.cand { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: repeat(3, 1fr); gap: .35em; }
+.card { position: relative; border: 1px solid var(--edge); background: var(--plate); color: var(--ink); text-align: left; padding: .3em .55em; cursor: pointer; display: flex; flex-direction: column; justify-content: center; }
+.card b { font-size: 1em; } .card span { color: var(--dim); font-size: .78em; }
+.card i { position: absolute; right: .4em; top: .3em; font-style: normal; font-size: .7em; color: var(--rose); }
+.card:disabled { opacity: .38; cursor: default; } .card.queued { border-color: var(--violet); background: var(--plate-up); } .card.white { border-color: var(--gold); background: #1f1a0e; }
+.body { display: grid; grid-template-columns: repeat(var(--n), 1fr); gap: .25em; align-content: center; }
+.cell { aspect-ratio: 1; border: 1px solid var(--edge); background: var(--recess); display: flex; align-items: center; justify-content: center; font-size: .78em; color: #0b0714; cursor: pointer; }
+.cell.el-burn { background: var(--burn); } .cell.el-frost { background: var(--frost); } .cell.el-volt { background: var(--volt); }
+.cell.el-wave { background: var(--wave); } .cell.el-prism { background: var(--prism); } .cell.el-void { background: var(--void); }
+.side { display: flex; flex-direction: column; gap: .35em; } .queue { display: flex; flex-wrap: wrap; gap: .25em; }
+.q { background: var(--plate-up); border: 1px solid var(--edge-hi); padding: .1em .45em; font-size: .78em; }
+.exe { margin-top: auto; background: var(--mint); border: 1px solid var(--mint); border-bottom: 2px solid #06301f; color: #04170f; padding: .6em; font-weight: 800; cursor: pointer; }
+.exe:disabled { opacity: .4; cursor: default; }
+.gauge { height: .5em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .gauge > i { display: block; height: 100%; background: var(--mint); }
+
+#sheet { display: none; flex: 1; min-height: 0; padding: .6em .9em; overflow: auto; } #sheet.on { display: block; }
+.phead { display: flex; align-items: center; gap: .8em; border-bottom: 1px solid var(--edge); padding-bottom: .35em; }
+.phead .lv { color: var(--mint); font: 400 1.05em var(--mono); }
+.phead .right { margin-left: auto; color: var(--dim); font-size: .85em; }
+.xpwrap { width: 8em; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .xpwrap i { display: block; height: 100%; background: var(--violet); }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+.line { display: flex; gap: .55em; align-items: baseline; border-bottom: 1px dotted var(--edge); padding: .15em 0; }
+.line .x { color: var(--mint); } .line .d { color: var(--dim); flex: 1; font-size: .85em; }
+.line button, .quest button { padding: .12em .6em; font-size: .85em; background: var(--plate-up); border: 1px solid var(--edge); border-bottom: 2px solid #090613; border-radius: var(--r); cursor: pointer; }
+.line button:hover, .quest button:hover { border-color: var(--edge-hi); color: #fff; }
+.line button:disabled { opacity: .35; cursor: default; }
+.chips { display: flex; flex-wrap: wrap; gap: .3em; } .chip { background: var(--plate); border: 1px solid var(--edge); padding: .1em .45em; font-size: .85em; }
+.chip.sig { border-color: var(--gold); color: #f0e6c8; } .chip em { color: var(--mint); font-style: normal; cursor: pointer; }
+.idle { color: var(--faint); font-size: .9em; } .flags { color: var(--gold); font-size: .85em; margin-top: .3em; }
+.stats { color: var(--dim); font-size: .85em; margin-top: .4em; border-top: 1px solid var(--edge); padding-top: .3em; } .hint { color: var(--faint); font-size: .85em; margin-top: .4em; }
+.quest { border: 1px solid var(--edge); padding: .3em .6em; margin: .3em 0; background: var(--plate); }
+.quest.ready { border-color: var(--mint); } .quest.tracked { border-left: 3px solid var(--gold); }
+.qh { display: flex; gap: .5em; align-items: baseline; } .qh .stars { color: var(--gold); } .qh .giver { color: var(--dim); font-size: .85em; } .qh button { margin-left: auto; }
+.qt { color: var(--ink); font-size: .88em; } .obj { font-size: .86em; } .obj.done { color: var(--mint); } .obj .x { color: var(--dim); float: right; }
+.big { font-size: 1.4em; color: #fff; margin: .1em 0; }
+.arow, .wrow { display: flex; align-items: center; gap: .5em; font-size: .88em; }
+.abar { flex: 1; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .abar i { display: block; height: 100%; background: var(--mint); }
+.wrow.lead .tn { color: var(--gold); } .wrow .rk { width: 1.2em; color: var(--dim); } .wrow .tn { width: 9em; } .wrow .mb { color: var(--dim); width: 2.5em; } .wrow .hold { color: var(--mint); width: 7em; }
+.rhead { display: flex; gap: .7em; align-items: center; font-size: .88em; }
+.hpwrap { width: 7em; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .hpwrap i { display: block; height: 100%; background: var(--rose); }
+.map { margin: .4em 0; } .mrow { display: flex; align-items: center; gap: .35em; margin: .2em 0; } .mrow .rl { color: var(--faint); width: 1.8em; font-size: .8em; }
+.lnk { color: var(--edge); }
+.node { width: 2em; height: 2em; border: 1px solid var(--edge); background: var(--plate); display: inline-flex; align-items: center; justify-content: center; font-size: 1.1em; color: var(--faint); }
+.node[data-a] { border-color: var(--edge-hi); color: var(--ink); cursor: pointer; } .node.here { background: var(--violet); color: #10061f; } .node.off { opacity: .3; }
+.node.k-boss { color: var(--rose); } .node.k-chest { color: var(--gold); } .node.k-shrine { color: var(--mint); }
+.tiers { display: flex; gap: .45em; margin-top: .45em; }
+.worldmap { display: grid; grid-template-columns: 1.35fr 1fr; gap: 1em; height: 100%; }
+.worldmap canvas { width: 100%; height: 100%; border: 1px solid var(--edge); background: var(--recess); }
+.dist { display: flex; flex-direction: column; gap: .4em; }
+/* The map page is a map and a reading of it, side by side: the canvas draws the district, the
+   column says what the dots mean and where the folds are. */
+.worldmap { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: .9em; align-items: start; }
+.worldmap canvas.wm { width: 100%; height: 26em; background: var(--recess); border: 1px solid var(--edge); border-radius: var(--r); }
+.worldmap .legend { display: flex; flex-wrap: wrap; gap: .3em .8em; padding: .4em .6em; border: 1px solid var(--edge); background: var(--plate); font: 400 .68em var(--mono); color: var(--dim); }
+.worldmap .legend i { display: inline-block; width: .7em; height: .7em; border-radius: 50%; margin-right: .35em; vertical-align: -1px; }
+.dist .d { display: flex; align-items: center; gap: .7em; padding: .4em .7em; border: 1px solid var(--edge); background: var(--plate); }
+.dist .d.here { border-color: var(--edge-hi); box-shadow: inset 3px 0 0 var(--mint); }
+.dist .d b { width: 6.5em; } .dist .d .bar { flex: 1; height: .55em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .dist .d .bar i { display: block; height: 100%; }
+.dist .d button { padding: .15em .7em; border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); border-radius: var(--r); cursor: pointer; }
+.dist .d button:hover { border-color: var(--edge-hi); color: #fff; }
+.dist .d button:disabled { opacity: .35; cursor: default; }
+/*
+ * The way down is not another sector row -- it is a door in the floor of the map. So it is sunk
+ * rather than raised, and the dashed line after the label is the gap the door opens into.
+ */
+.godown { display: flex; align-items: center; gap: .7em; margin-top: .2em; padding: .45em .7em; border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--recess); color: var(--violet); font: 700 .84em var(--ui); cursor: pointer; }
+.godown::after { content: ''; flex: 1; border-top: 1px dashed var(--edge); }
+.godown:hover { border-color: var(--edge-hi); background: var(--plate-up); color: #fff; }
+.godown:hover::after { border-top-color: var(--edge-hi); }
+
+/* ---------------------------------------------------------------- touch and the phone */
+
+/*
+ * A phone is not a DS, and pretending it is one costs you the picture. A 390x844 screen is
+ * barely half as wide as it is tall, so a 16:9 window stacked over a 4:3 slate leaves a fifth
+ * of it black and shrinks the street to a letter slot. Instead the deck stops being a device in
+ * a window and becomes the window: the picture is the whole screen, and the lower screen is a
+ * dock that rises over the bottom of it when a menu or the Custom Screen is asked for -- which
+ * is exactly what the desktop does, so the renderer's size never changes and a phone is not
+ * asked to re-make its framebuffers every time you open a bag.
+ *
+ * The thumb sets the sizes here, not the eye. A control you press with a key may be small; one
+ * you have to hit with a finger may not. And the keycaps themselves have no business on a
+ * screen with no keys -- they go, and the two dock tools that duplicated them go with them.
+ */
+#deck.touch {
+  --vw: calc(100vw - env(safe-area-inset-left) - env(safe-area-inset-right));
+  --vh: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  height: 100dvh;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+#deck.touch #console { --sw: var(--vw); --sh: var(--vh); width: var(--vw); height: var(--vh); box-shadow: none; }
+#deck.touch #top { touch-action: none; }
+#deck.touch .key, #deck.touch .kc { display: none !important; }
+/* copy that names a key has to say the other thing a finger does instead */
+.only-touch { display: none; }
+#deck.touch .only-touch { display: inline; }
+#deck.touch .only-keys { display: none; }
+/* the lower screen scales off its own height, but never below what a finger can read */
+#deck.touch #lower { font-size: clamp(11px, calc(var(--ph) / 32), 15px); }
+#deck.touch #hud-log .lines, #deck.touch #sheet, #deck.touch #cs { touch-action: pan-y; }
+#deck.touch #tabs { padding: .55em .7em; gap: .4em; }
+#deck.touch #tabs button { padding: .6em .95em; }
+#deck.touch #tabs .title { font-size: .95em; }
+/* the home tiles are the phone's app grid: three across a portrait slate, four when the
+   slate is lying on its side and there is room but no height */
+#deck.touch .home { gap: .45em; padding: .7em .7em .4em; grid-template-columns: repeat(3, 1fr); }
+#deck.touch .hbtn { font-size: .8em; padding: .5em .2em; }
+#deck.touch .hbtn svg { width: 2.4em; height: 2.4em; }
+#deck.touch .godown { padding: .8em .7em; margin-top: .4em; }
+@media (orientation: landscape) {
+  #deck.touch .home { grid-template-columns: repeat(4, 1fr); }
+}
+
+/* portrait: the slate is as wide as the phone and takes the bottom of it */
+@media (orientation: portrait) {
+  #deck.touch #console {
+    /* a page of Chog to pick from needs real height, and the slate is an overlay, not a
+       viewport -- the picture above it never resizes, so nothing recomputes when it slides */
+    --ph: min(58dvh, calc(var(--vw) * 1.32));
+    --pw: var(--vw);
+    --bz: calc(var(--vw) * .012);
+    /* the slate's own padding is asymmetric (a fat bottom lip for the chin), so the dock height
+       is the panel plus four of those gaps, not two -- measured at 262px on a 390x844 screen. */
+    --dock: calc(var(--ph) + var(--bz) * 4.4);
+  }
+  #deck.touch #hud { font-size: clamp(10px, calc(var(--vw) / 34), 15px); }
+  #deck.touch #bottom {
+    left: 0; right: 0; bottom: 0; width: auto;
+    padding: var(--bz) var(--bz) calc(var(--bz) * 3.4);
+    border-radius: calc(var(--bz) * 1.6) calc(var(--bz) * 1.6) 0 0;
+    transform: translateY(calc(100% + var(--bz)));
+  }
+  #deck.touch.menu #bottom, #deck.touch.dueling.customopen #bottom { transform: none; }
+  #deck.touch #lower { width: 100%; }
+  /* one column, because a phone has no spare width to make two thin ones out of */
+  #deck.touch .cols, #deck.touch .worldmap { grid-template-columns: 1fr; }
+  #deck.touch .worldmap canvas { height: 13em; }
+}
+
+/* landscape: the picture fills the wide screen and the slate stays in the corner over it */
+@media (orientation: landscape) {
+  #deck.touch #console { --bz: calc(var(--vh) * .016); }
+  #deck.touch #hud { font-size: clamp(10px, calc(var(--vh) / 39), 15px); }
+}
+
+/* ---------------------------------------------------------------- the plates on a phone */
+
+/*
+ * The desktop floats nine plates over a 16:9 picture with room to spare. Over a portrait picture
+ * there is one column of room on each side and a lot of height, so the same plates are pushed
+ * into those two gutters and the centre is left to the street.
+ */
+@media (orientation: portrait) {
+  #deck.touch #hud-player { left: .55em; top: 2.1em; min-width: 0; max-width: 18em; padding: .4em .7em .4em .4em; gap: .6em; }
+  #deck.touch #hud-player .pname { overflow: hidden; }
+  #deck.touch #hud-waves { left: .55em; top: 9.6em; transform: none; max-width: 19em; flex-wrap: wrap; }
+  #deck.touch #hud-party { left: .55em; top: 13.6em; width: 13.5em; }
+  #deck.touch #hud-next { left: .55em; top: 18.6em; transform: translateY(-.6em); max-width: calc(100% - 1.1em); }
+  #deck.touch #hud-next.on { transform: none; }
+  #deck.touch #hud-alert { top: 14.6em; }
+  #deck.touch #hud-map { right: .55em; top: 2.1em; width: 7.6em; }
+  #deck.touch #hud-map .disc { width: 7.6em; height: 7.6em; }
+  #deck.touch #hud-map .where { font-size: .82em; letter-spacing: .04em; }
+  #deck.touch #hud-quests { right: .55em; top: 12.6em; width: 12.6em; max-height: 26%; }
+  #deck.touch #hud-toasts { top: 30%; width: 24em; }
+  #deck.touch #hud-log { left: .55em; bottom: 5.4em; width: 20em; max-width: 62%; }
+  #deck.touch #hud-log .lines { max-height: 7em; }
+  #deck.touch #hud-prompt { bottom: 12.4em; }
+  #deck.touch #hud-dialogue { left: .55em; right: .55em; width: auto; transform: translateY(1.4em); bottom: .55em; }
+  #deck.touch #hud-dialogue.on { transform: none; }
+  #deck.touch #hud-dialogue .face { width: 4.2em; height: 4.2em; font-size: 2.4em; }
+  /*
+   * Bottom-left, not centred: the right-hand corner of the same row is the verb cluster, and on a
+   * 390px screen a centred hotbar runs straight into the act button.
+   */
+  #deck.touch #hud-dock { left: .55em; right: auto; bottom: .55em; transform: none; }
+  #deck.touch #hud-dock .tools { display: none; }
+  #deck.touch .slots { gap: .3em; padding: .3em .35em; }
+  #deck.touch .slot { width: clamp(42px, 12vw, 54px); height: clamp(42px, 12vw, 54px); font-size: 1.3em; }
+  #deck.touch .slot .ct { font-size: .8em; }
+  /* the alert is a sentence, not a chip: centred on a phone it inherits half the screen's width
+     from its own `left: 50%`, wraps into three lines and drops the last one. Span the gutters. */
+  #deck.touch #hud-alert { left: .55em; right: .55em; top: 14.6em; width: auto; transform: translateY(-.6em); }
+  #deck.touch #hud-alert.on { transform: none; }
+  /* an incoming rift outranks the quest list, and the two share this corner */
+  #deck.touch #hud-alert.on ~ #hud-quests { opacity: 0; pointer-events: none; }
+  /*
+   * With the slate up you are reading the lower screen, not the street, and the portrait picture
+   * is only ~350px tall -- every plate left on it eats a third of what you came to look at. The
+   * slate's own header carries level, name and WAV, so the street keeps only its bearings.
+   */
+  #deck.touch.menu #hud-player, #deck.touch.menu #hud-waves, #deck.touch.menu #hud-next,
+  #deck.touch.menu #hud-party, #deck.touch.menu #hud-alert, #deck.touch.menu #hud-banner,
+  #deck.touch.menu #hud-quests, #deck.touch.menu #hud-toasts, #deck.touch.menu #hud-log,
+  #deck.touch.menu #hud-dock, #deck.touch.menu #hud-prompt, #deck.touch.menu #hud-dialogue,
+  #deck.touch.menu #touch { visibility: hidden; opacity: 0; }
+  #deck.touch.menu #touch, #deck.touch.menu #touch .hit { pointer-events: none; }
+}
+
+/* ---------------------------------------------------------------- the fingers */
+
+#touch { inset: 0; pointer-events: none; transition: opacity .16s; }
+#touch.off { opacity: 0; }
+/* faded out must mean unreachable, or a duel hides a button you can still press blind */
+#touch.off, #touch.off .hit { pointer-events: none; }
+
+/*
+ * The stick has no fixed home: it appears under the thumb that asked for it, which is the only
+ * way a portrait screen can give you both a full picture and a control. So it is a well sunk
+ * into the screen rather than a plate on top of it -- translucent because the street behind it
+ * is what you are steering through, but flat, with tick marks instead of a gradient.
+ */
+.tstick { position: absolute; width: 0; height: 0; }
+.tstick .ring {
+  position: absolute; left: -58px; top: -58px; width: 116px; height: 116px; border-radius: 50%;
+  border: 2px solid var(--edge); background:
+    linear-gradient(var(--edge-hi), var(--edge-hi)) 50% 4px/2px 9px no-repeat,
+    linear-gradient(var(--edge-hi), var(--edge-hi)) 50% calc(100% - 4px)/2px 9px no-repeat,
+    linear-gradient(var(--edge-hi), var(--edge-hi)) 4px 50%/9px 2px no-repeat,
+    linear-gradient(var(--edge-hi), var(--edge-hi)) calc(100% - 4px) 50%/9px 2px no-repeat,
+    rgba(10, 7, 22, .62);
+  opacity: 0; transition: opacity .12s;
+}
+.tstick.on .ring { opacity: 1; }
+/* the knob is the cut corner of the rest of the tool, not a glass pill */
+.tstick .knob {
+  position: absolute; left: 0; top: 0; width: 46px; height: 46px; transform: translate(-50%, -50%);
+  background: var(--plate-up); border: 2px solid var(--edge-hi);
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+}
+.tstick .knob::after { content: ""; position: absolute; inset: 4px; background: repeating-linear-gradient(90deg, transparent 0 6px, rgba(0,0,0,.4) 6px 8px); }
+
+.tverbs { position: absolute; right: .7em; bottom: .7em; display: flex; align-items: flex-end; gap: .45em; }
+.tstack { display: flex; flex-direction: column; gap: .35em; }
+.tside {
+  width: 46px; height: 38px; display: grid; place-items: center; font-size: 17px;
+  background: var(--plate); border: 1px solid var(--edge); border-bottom: 2px solid #090613;
+  color: var(--dim); cursor: pointer;
+  clip-path: polygon(0 0, calc(100% - 7px) 0, 100% 7px, 100% 100%, 7px 100%, 0 calc(100% - 7px));
+}
+.tside:active { background: var(--plate-up); border-color: var(--edge-hi); color: #fff; }
+/* the one verb that matters gets the size a thumb actually needs, and its edge does the talking */
+.tact {
+  position: relative; width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 26px; background: var(--recess); border: 2px solid var(--edge-hi); color: var(--ink);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, .55); cursor: pointer;
+}
+.tact:active { background: var(--plate-up); transform: translateY(2px); box-shadow: 0 1px 0 rgba(0,0,0,.55); }
+.tact.ready { border-color: var(--mint); color: var(--mint); }
+.tact.ready::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 1px solid var(--mint); }
+
+/* ================================================================ HUD v2
+ *
+ * The plate language is retired. Opaque chamfered plates, one per fact, all the same visual
+ * weight, made the screen read as a stack of crashes: nothing was more important than
+ * anything else, so nothing was legible and everything was clutter.
+ *
+ * The new rules:
+ *   - glass, not plastic: the two permanent panels (vitals, minimap) are translucent with a
+ *     blur, so the world shows through and a panel reads as an instrument over the picture;
+ *   - scrims, not boxes: the top and bottom of the screen carry a soft veil, and bare text
+ *     sits on the veil. A box is earned only by something you can press or read at length;
+ *   - one column, one job: the top centre is the objective and nothing else; the wave meters
+ *     live under the minimap; the alert lives above the prompt;
+ *   - hierarchy by weight and size, never by another plate.
+ */
+
+.panel {
+  background: rgba(12, 8, 24, .68);
+  border: 1px solid rgba(236, 230, 251, .10);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .38);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.chamfer { clip-path: none; border-radius: 10px; }
+.key { background: rgba(236, 230, 251, .10); border: 1px solid rgba(236, 230, 251, .18); border-bottom-width: 1px; border-radius: 5px; }
+
+/* the veils */
+#hud::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 7.5em; pointer-events: none;
+  background: linear-gradient(180deg, rgba(5, 3, 11, .60), rgba(5, 3, 11, 0)); }
+#hud::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 8.5em; pointer-events: none;
+  background: linear-gradient(0deg, rgba(5, 3, 11, .62), rgba(5, 3, 11, 0)); }
+
+/* vitals: one compact glass card, top-left */
+#hud-player { left: 1.1em; top: 1.1em; min-width: 0; max-width: 21em; padding: .5em .9em .55em .5em; gap: .7em; }
+#hud-player .portrait { width: 3.4em; height: 3.4em; }
+#hud-player .portrait .ring { width: 3.4em; height: 3.4em; }
+#hud-player .pname { font-size: .95em; font-weight: 700; }
+#hud-player .psub { font-size: .68em; color: var(--faint); }
+#hud-player .meter { height: .42em; border-radius: 999px; }
+#hud-player .meter i { border-radius: 999px; }
+
+/* the objective: one line, top-centre, and nothing else shares that column */
+#hud-next { top: 1.15em; left: 50%; max-width: min(52em, 62%); align-items: center; gap: .7em;
+  padding: .38em 1em .38em .45em; border-radius: 999px; background: rgba(12, 8, 24, .68);
+  border: 1px solid rgba(236, 230, 251, .10); box-shadow: 0 6px 22px rgba(0, 0, 0, .38);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+#hud-next .tag { border-radius: 999px; padding: .18em .7em; font-size: .72em; }
+#hud-next .body { flex-direction: row; align-items: baseline; gap: .6em; padding: 0; background: none; border: 0; box-shadow: none; min-width: 0; }
+#hud-next .act { display: none; }
+#hud-next b { font-size: .95em; white-space: nowrap; }
+#hud-next .do { font-size: .82em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#hud-next .where { margin-left: 0; }
+
+/* wave meters hang under the minimap, right-aligned and small: world state, not a headline */
+#hud-waves { left: auto; right: 1.1em; top: 16.4em; transform: none; flex-direction: column; align-items: flex-end; gap: .3em; }
+.wpill { background: rgba(12, 8, 24, .6); border: 1px solid rgba(236, 230, 251, .10); border-radius: 999px;
+  box-shadow: none; font-size: .74em; padding: .2em .7em .2em .5em; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+
+/* toasts fall under the objective, never over it */
+#hud-toasts { top: 4.4em; }
+
+/* the log is bare type on the bottom veil: the last few lines, older ones fading into the veil */
+#hud-log { left: 1.2em; bottom: 1.1em; width: 26em; max-width: 40vw; }
+#hud-log .lines { display: flex; flex-direction: column; justify-content: flex-end; max-height: 5.4em; overflow: hidden;
+  background: none; border: 0; box-shadow: none; padding: 0;
+  mask-image: linear-gradient(0deg, #000 55%, transparent); -webkit-mask-image: linear-gradient(0deg, #000 55%, transparent); }
+#hud-log .ln { background: none; border: 0; box-shadow: none; padding: 0 .1em; text-shadow: 0 1px 2px rgba(0, 0, 0, .85); }
+
+/* the dock is one bar, not a row of loose tiles */
+#hud-dock { right: 1.1em; bottom: 1.1em; padding: .45em .55em; gap: .4em; background: rgba(12, 8, 24, .68);
+  border: 1px solid rgba(236, 230, 251, .10); border-radius: 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .38); }
+#hud-dock .slots { background: none; border: 0; box-shadow: none; }
+
+/* prompt and dialogue sit on the same glass as everything else */
+#hud-prompt { border-radius: 999px; }
+#hud-dialogue { border-radius: 14px; }
+/* the face is a portrait chip, not an empty well: it was a 6.4em dark square holding one glyph,
+   which stole a third of the box from the words. */
+#hud-dialogue .face { width: 4.4em; height: 4.4em; font-size: 2.2em; border-width: 1px; border-radius: 10px; clip-path: none; background: rgba(236, 230, 251, .06); }
+
+/* the minimap caption is bare type, right-aligned under the disc */
+#hud-map .where { text-align: right; text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
