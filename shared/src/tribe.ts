@@ -1,6 +1,6 @@
 import type { Element } from './types.ts';
 import type { SectorId } from './wave.ts';
-import { ELEMENTS } from './chips.ts';
+import { ELEMENTS } from './cards.ts';
 
 /**
  * The Tribe War.

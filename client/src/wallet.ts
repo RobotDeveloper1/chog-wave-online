@@ -1,37 +1,25 @@
-import { MONAD_CHAIN_ID, MONAD_CHAIN_ID_HEX, isAddress, monadChainParams, type HoldingsView } from '@chog/shared';
+import Privy from '@privy-io/js-sdk-core';
+import { defineChain } from 'viem';
+import { MONAD_TESTNET_CHAIN_ID, MONAD_TESTNET_EXPLORER_URL, MONAD_TESTNET_RPC_URL, isAddress, type HoldingsView } from '@chog/shared';
 import { SERVER_HTTP } from './config.ts';
 
 /**
- * The wallet sign-in, from the browser's side.
+ * Sign-in, Privy only.
  *
- * There is no SDK here and no hosted auth service, because the game needs exactly
- * one thing from the wallet: an EIP-191 signature over a challenge the server
- * issued. Every injected provider (EIP-1193) can do that, and adding Privy or
- * WalletConnect would mean an app id that has to be registered by somebody before
- * this builds — which is a dependency, not a security improvement.
+ * There is no injected provider here and no EIP-191 challenge: the player logs
+ * in with Privy (email code today, whatever the dashboard enables tomorrow),
+ * Privy hands them an embedded wallet, and the server verifies both Privy
+ * tokens itself before issuing a game session. The address the game plays as
+ * is the embedded wallet's — everybody gets one, holder or not, which is
+ * exactly what keeps the foster path alive: no Chogs on it just means the
+ * shelf is empty, not that the door is shut.
  *
- * Nothing about the wallet is trusted downstream. The signature is re-verified on
- * the server, and the Chogs this address holds are read from the chain by the
- * server's own index (`/api/auth/holdings`), not told to it by whoever is typing.
+ * The shape is the old wallet's on purpose (`session`, `restore`,
+ * `holdings`, `signOut`), so the picker keeps asking the same questions and
+ * only the answers change owners.
  */
 
-interface RpcProvider {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-  on?(event: string, handler: (arg: unknown) => void): void;
-  removeListener?(event: string, handler: (arg: unknown) => void): void;
-  /** EIP-6921: several injected wallets on one page arrive as a list. */
-  providers?: RpcProvider[];
-  isMetaMask?: boolean;
-  isCoinbaseWallet?: boolean;
-  isRabby?: boolean;
-}
-
-declare global {
-  interface Window {
-    ethereum?: RpcProvider;
-  }
-}
-
+const APP_ID = import.meta.env.VITE_PRIVY_APP_ID ?? '';
 const SESSION_KEY = 'chog.session';
 
 export interface SignIn {
@@ -39,50 +27,37 @@ export interface SignIn {
   session: string;
 }
 
-/** A wallet's chain id, however it chose to hand it over: `0x8f`, `143`, or 143. */
-function chainIdOf(value: unknown): number {
-  if (typeof value === 'number') return value;
-  const text = String(value ?? '');
-  return text.startsWith('0x') ? parseInt(text, 16) : Number(text);
+interface LinkedWallet {
+  type?: string;
+  address?: string;
+  chainType?: string;
 }
 
-/** Providers disagree on whether a rejection is a code or a message. */
-function codeOf(error: unknown): number {
-  const code = (error as { code?: unknown } | null)?.code;
-  return typeof code === 'number' ? code : Number(String(code ?? ''));
-}
-
-function pickProvider(): RpcProvider | null {
-  const injected = typeof window === 'undefined' ? undefined : window.ethereum;
-  if (!injected) return null;
-  // The list is ordered by the user's own default, so the first entry is the wallet
-  // they would expect a signature request to come from.
-  return injected.providers?.length ? injected.providers[0]! : injected;
-}
-
-function labelOf(provider: RpcProvider): string {
-  if (provider.isMetaMask) return 'MetaMask';
-  if (provider.isCoinbaseWallet) return 'Coinbase Wallet';
-  if (provider.isRabby) return 'Rabby';
-  return 'injected wallet';
+function embeddedAddressOf(accounts: LinkedWallet[] | undefined): string | null {
+  for (const a of accounts ?? []) {
+    if (a?.type === 'wallet' && isAddress(a.address) && (!a.chainType || a.chainType === 'ethereum')) {
+      return a.address!.toLowerCase();
+    }
+  }
+  return null;
 }
 
 export class Wallet {
   address: string | null = null;
   session: string | null = null;
-  /** False when the connected chain is not Monad — which still proves the address, so it is a badge, not a block. */
+  /** Privy wallets are chain-agnostic: once logged in, the badge is lit. */
   onMonad = false;
+  readonly chainId = MONAD_TESTNET_CHAIN_ID;
 
-  private listening = false;
+  private privy: Privy | null = null;
   private watchers = new Set<() => void>();
 
   get available(): boolean {
-    return pickProvider() !== null;
+    return APP_ID !== '';
   }
 
   get label(): string {
-    const p = pickProvider();
-    return p ? labelOf(p) : 'no wallet extension found';
+    return 'Privy';
   }
 
   /** The short form a nameplate needs: 0x1234…abcd. */
@@ -90,7 +65,6 @@ export class Wallet {
     return this.address ? `${this.address.slice(0, 6)}…${this.address.slice(38, 42)}` : '';
   }
 
-  /** A provider that moved out from under us has to re-sign; the picker is the only listener. */
   onChange(fn: () => void): () => void {
     this.watchers.add(fn);
     return () => this.watchers.delete(fn);
@@ -100,106 +74,77 @@ export class Wallet {
     for (const fn of this.watchers) fn();
   }
 
-  private requireProvider(): RpcProvider {
-    const p = pickProvider();
-    if (!p) throw new Error('no wallet extension in this browser');
-    return p;
+  private requirePrivy(): Privy {
+    if (!APP_ID) throw new Error('no privy app id (VITE_PRIVY_APP_ID)');
+    if (!this.privy) {
+      // The embedded wallet defaults to the first supported chain, so Monad
+      // testnet goes first: fresh wallets are born where the replica lives.
+      const monadTestnet = defineChain({
+        id: MONAD_TESTNET_CHAIN_ID,
+        name: 'Monad Testnet',
+        nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
+        rpcUrls: { default: { http: [MONAD_TESTNET_RPC_URL] } },
+        blockExplorers: { default: { name: 'MonadExplorer', url: MONAD_TESTNET_EXPLORER_URL } },
+      });
+      // Privy's storage speaks JSON values, localStorage speaks strings: translate.
+      const storage = {
+        get: (key: string): unknown => {
+          const raw = localStorage.getItem(`privy:${key}`);
+          if (raw === null) return undefined;
+          try {
+            return JSON.parse(raw) as unknown;
+          } catch {
+            return raw;
+          }
+        },
+        put: (key: string, value: unknown): void => {
+          localStorage.setItem(`privy:${key}`, JSON.stringify(value));
+        },
+        del: (key: string): void => {
+          localStorage.removeItem(`privy:${key}`);
+        },
+        getKeys: (): string[] => {
+          const out: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (k?.startsWith('privy:')) out.push(k.slice('privy:'.length));
+          }
+          return out;
+        },
+      };
+      this.privy = new Privy({ appId: APP_ID, storage, supportedChains: [monadTestnet] });
+    }
+    return this.privy;
   }
 
-  /**
-   * Ask the wallet to switch to Monad, and if it has never heard of the chain, teach it.
-   *
-   * A refusal is not fatal. The sign-in proves an address with a message signature,
-   * which works from any chain, so somebody who declines the switch still gets their
-   * Chogs — the badge just says the wallet is sitting somewhere else.
-   */
-  private async ensureChain(provider: RpcProvider): Promise<void> {
+  /** Step one of the email login: Privy sends the code, we wait for it. */
+  async requestCode(email: string): Promise<void> {
+    const clean = email.trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) throw new Error('that email does not look like one');
     try {
-      await provider.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: MONAD_CHAIN_ID_HEX }] });
+      await this.requirePrivy().auth.email.sendCode(clean);
     } catch (error) {
-      // 4902: "unrecognized chain". Anything else — 4001 above all — is the user
-      // saying no, and the answer to that is to carry on and not to nag.
-      if (codeOf(error) === 4902) {
-        await provider.request({ method: 'wallet_addEthereumChain', params: [monadChainParams()] });
-      }
-    }
-    try {
-      this.onMonad = chainIdOf(await provider.request({ method: 'eth_chainId' })) === MONAD_CHAIN_ID;
-    } catch {
-      this.onMonad = false;
-    }
-  }
-
-  private listen(provider: RpcProvider): void {
-    if (this.listening || !provider.on) return;
-    this.listening = true;
-    provider.on('accountsChanged', () => this.notify());
-    provider.on('chainChanged', () => {
-      void provider.request({ method: 'eth_chainId' }).then((v) => {
-        this.onMonad = chainIdOf(v) === MONAD_CHAIN_ID;
-        this.notify();
-      }, () => this.notify());
-    });
-  }
-
-  /** The connected account, without opening a popup. */
-  async connected(): Promise<string | null> {
-    const p = pickProvider();
-    if (!p) return null;
-    try {
-      const accounts = (await p.request({ method: 'eth_accounts' })) as string[];
-      return isAddress(accounts[0]) ? accounts[0]!.toLowerCase() : null;
-    } catch {
-      return null;
+      throw new Error(why(error, 'privy would not send a code'));
     }
   }
 
   /**
-   * Connect, sign, verify.
-   *
-   * The order matters: the challenge is issued for one address, so signing has to
-   * happen after the account is known, and the session only exists once the server
-   * has recovered the signer itself.
+   * Step two: the code becomes a Privy user, the user gets an embedded wallet
+   * if they have none, and both Privy tokens buy a game session from the
+   * server — which verifies them itself before believing a word.
    */
-  async connect(): Promise<SignIn> {
-    const provider = this.requireProvider();
-    const accounts = (await provider.request({ method: 'eth_requestAccounts' })) as string[];
-    if (!isAddress(accounts[0])) throw new Error('the wallet returned no address');
-    this.address = accounts[0]!.toLowerCase();
-    await this.ensureChain(provider);
-    this.listen(provider);
-
-    const issued = await post('/api/auth/nonce', { address: this.address });
-    if (!issued.ok || typeof issued.message !== 'string') {
-      throw new Error(why(issued, 'the server would not issue a challenge'));
-    }
-
-    let signature: unknown;
+  async confirmCode(email: string, code: string): Promise<SignIn> {
+    const privy = this.requirePrivy();
+    const clean = email.trim().toLowerCase();
     try {
-      signature = await provider.request({ method: 'personal_sign', params: [issued.message, this.address] });
+      await privy.auth.email.loginWithCode(clean, code.trim(), 'login-or-sign-up');
     } catch (error) {
-      if (codeOf(error) === 4001) throw new Error('signature declined in the wallet');
-      throw new Error('this wallet refused to sign a message');
+      throw new Error(why(error, 'that code did not work'));
     }
-    if (typeof signature !== 'string') throw new Error('the wallet returned no signature');
-
-    const verified = await post('/api/auth/verify', { address: this.address, signature });
-    if (!verified.ok || typeof verified.session !== 'string') {
-      throw new Error(why(verified, 'the signature did not verify'));
-    }
-    this.session = verified.session;
-    this.address = String(verified.address ?? this.address);
-    localStorage.setItem(SESSION_KEY, JSON.stringify({ session: this.session, address: this.address }));
-    return { address: this.address, session: this.session };
+    return this.finishSignIn(privy);
   }
 
-  /**
-   * A session from an earlier visit, if it still means what it meant then.
-   *
-   * Both halves are checked: the server has to still know the token, and the wallet
-   * still has to be connected to the address that signed for it. A stored token for
-   * an account that has since been swapped out is not a login, it is somebody else's.
-   */
+  /** A session from an earlier visit, if Privy still knows us and so does the server. */
   async restore(): Promise<SignIn | null> {
     let stored: { session?: string; address?: string } | null = null;
     try {
@@ -207,25 +152,67 @@ export class Wallet {
     } catch {
       stored = null;
     }
-    if (!stored?.session) return null;
-    const here = await this.connected();
-    if (!here || here !== stored.address?.toLowerCase()) {
+    if (!stored?.session || !APP_ID) return null;
+    const privy = this.requirePrivy();
+    let live: string | null = null;
+    try {
+      live = await privy.getAccessToken();
+    } catch {
+      live = null;
+    }
+    if (!live) {
       this.signOut();
       return null;
     }
-    const r = await get('/api/auth/session', stored.session);
-    if (!r.ok || String(r.address ?? '').toLowerCase() !== here) {
+    try {
+      return await this.finishSignIn(privy, stored.address ?? undefined);
+    } catch {
       this.signOut();
       return null;
     }
-    this.address = here;
-    this.session = stored.session;
-    const provider = pickProvider();
-    if (provider) {
-      await this.ensureChain(provider);
-      this.listen(provider);
+  }
+
+  private async finishSignIn(privy: Privy, expectAddress?: string): Promise<SignIn> {
+    let accounts: LinkedWallet[] | undefined;
+    try {
+      const { user } = await privy.user.get();
+      accounts = (user as { linkedAccounts?: LinkedWallet[] }).linkedAccounts;
+    } catch (error) {
+      throw new Error(why(error, 'privy would not say who that is'));
     }
-    return { address: here, session: this.session };
+    let address = embeddedAddressOf(accounts);
+    if (!address) {
+      try {
+        const updated = await privy.embeddedWallet.create({});
+        accounts = (updated as unknown as { linkedAccounts?: LinkedWallet[] }).linkedAccounts ?? accounts;
+        address = embeddedAddressOf(accounts);
+      } catch (error) {
+        throw new Error(why(error, 'no wallet came with that login'));
+      }
+    }
+    if (!address) throw new Error('that login has no wallet to play as');
+    if (expectAddress && address !== expectAddress.toLowerCase()) {
+      this.signOut();
+      throw new Error('a different privy user is signed in now');
+    }
+    let accessToken: string | null = null;
+    let idToken: string | null = null;
+    try {
+      accessToken = await privy.getAccessToken();
+      idToken = await privy.getIdentityToken();
+    } catch (error) {
+      throw new Error(why(error, 'privy went quiet after the login'));
+    }
+    const verified = await post('/api/auth/privy', { accessToken, idToken });
+    if (!verified.ok || typeof verified.session !== 'string') {
+      throw new Error(why(verified, 'the server would not take that login'));
+    }
+    this.address = String(verified.address ?? address);
+    this.session = verified.session;
+    this.onMonad = true;
+    localStorage.setItem(SESSION_KEY, JSON.stringify({ session: this.session, address: this.address }));
+    this.notify();
+    return { address: this.address, session: this.session };
   }
 
   async holdings(): Promise<HoldingsView> {
@@ -235,10 +222,17 @@ export class Wallet {
     return r as unknown as HoldingsView;
   }
 
-  /** The server forgets the session and the browser forgets the token. */
+  /** The server forgets the session, Privy forgets the login, the browser forgets the token. */
   signOut(): void {
     if (this.session) void post('/api/auth/signout', {}, this.session).catch(() => undefined);
     this.session = null;
+    this.address = null;
+    this.onMonad = false;
+    try {
+      void this.privy?.auth.logout();
+    } catch {
+      /* already out */
+    }
     localStorage.removeItem(SESSION_KEY);
     this.notify();
   }
@@ -260,9 +254,12 @@ async function get(path: string, bearer?: string): Promise<Record<string, unknow
   return (await r.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-/** A refusal in the server's own words, since what it will not do is its policy, not ours. */
-function why(reply: Record<string, unknown>, fallback: string): string {
-  return typeof reply.reason === 'string' && reply.reason ? reply.reason : fallback;
+/** A refusal in the server's (or Privy's) own words. */
+function why(reply: unknown, fallback: string): string {
+  if (typeof reply === 'string' && reply) return reply;
+  const reason = (reply as { reason?: unknown; message?: unknown } | null)?.reason
+    ?? (reply as { message?: unknown } | null)?.message;
+  return typeof reason === 'string' && reason ? reason : fallback;
 }
 
 export const wallet = new Wallet();

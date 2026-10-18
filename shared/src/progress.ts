@@ -1,4 +1,5 @@
 import type { Element } from './types.ts';
+import { CARD_BY_ID } from './cards.ts';
 import { DUNGEONS } from './dungeonData.ts';
 
 /**
@@ -12,13 +13,13 @@ import { DUNGEONS } from './dungeonData.ts';
  * only grinds boss damage.
  *
  * Levels buy *room*, not raw numbers: extra queue slots, deeper Data Areas, a second laser
- * charge, and from level 22 onward a licence for one more Mega or Giga card in the Folder. The
+ * charge, and from level 22 onward a licence for one more Mega or Giga card in the Deck. The
  * six attributes stay exactly what the build formula decided, so the NFT still owns the Chog's
- * ceiling — a low-level token holder can out-damage a level 40 foster player. But the folder is
+ * ceiling — a low-level token holder can out-damage a level 40 foster player. But the deck is
  * what turns those attributes into damage per program, and that is what the ladder hands out.
  *
  * The rule the ladder obeys: every rung has to be felt as a different fight, not a bigger number.
- * A licence is felt because the best cards in the collection suddenly fit; a faster gauge is felt
+ * A licence is felt because the best cards in the collection suddenly fit; a faster charge is felt
  * because more programs land inside the same volley. Nothing a level buys stops being true at 20 —
  * which is the hole this file used to have, and why the curve below runs to the cap.
  */
@@ -68,7 +69,7 @@ export function progressOf(xp: number): LevelProgress {
 
 export type ClearTier = 'glitch' | 'anomaly' | 'storm' | 'ambient';
 
-/** Per-tier bands. Damage only tips the scale inside a band, so chip-spam cannot farm. */
+/** Per-tier bands. Damage only tips the scale inside a band, so card-spam cannot farm. */
 const CLEAR_BASE: Record<ClearTier, number> = { ambient: 6, glitch: 26, anomaly: 55, storm: 96 };
 
 /** `scale` is the party's own multiplier (`partyRewardScale`); the alt-split tax lives there now. */
@@ -100,7 +101,7 @@ export function xpForSighting(rare: boolean): number {
 // ---------------------------------------------------------------------------
 
 export interface Unlocks {
-  /** Custom Screen queue length — how much program you can bank before firing. */
+  /** Hand queue length — how much program you can bank before firing. */
   queueSlots: number;
   /** Highest Data Area tier you may enter. */
   areaTier: number;
@@ -108,11 +109,11 @@ export interface Unlocks {
   laserCharges: number;
   /** Cards the bag can hold. */
   bagCap: number;
-  /** Gauge cooldown multiplier, applied to GAUGE_MS. */
-  gaugeScale: number;
+  /** Charge cooldown multiplier, applied to CHARGE_MS. */
+  chargeScale: number;
   /** Battle field hit points. */
   fieldHp: number;
-  /** Extra Mega slots on top of the folder shape the Chog was born with. */
+  /** Extra Mega slots on top of the deck shape the Chog was born with. */
   megaSlots: number;
   /** Extra Giga slots, same. */
   gigaSlots: number;
@@ -122,14 +123,14 @@ export interface Unlocks {
   next: string | null;
 }
 
-/** The folder licences progression hands out, in the shape `folder.ts` adds them on in. */
-export interface FolderLicence {
+/** The deck licences progression hands out, in the shape `deck.ts` adds them on in. */
+export interface DeckLicence {
   mega: number;
   giga: number;
   fused: number;
 }
 
-export type UnlockKind = 'custom' | 'dungeon' | 'laser' | 'gauge' | 'bag' | 'build';
+export type UnlockKind = 'hand' | 'dungeon' | 'laser' | 'charge' | 'bag' | 'build';
 
 export interface Gate {
   at: number;
@@ -147,28 +148,28 @@ export interface Gate {
  * and the early ones come fast: the first three arrive inside the first hour, the first
  * district gate at level 4.
  *
- * The hand stops growing at 14: the Custom Screen is a 3x2 panel, so six cards is the whole
+ * The hand stops growing at 14: the Hand is a 3x2 panel, so six cards is the whole
  * panel and `QUEUE_MAX` is the ceiling, not a progression dial. From there the ladder moves to
- * the two levers that still change a fight — how often the gauge lets you fire, and how many of
- * your strongest cards the folder may hold — so the curve keeps climbing to the cap instead of
+ * the two levers that still change a fight — how often the charge lets you fire, and how many of
+ * your strongest cards the deck may hold — so the curve keeps climbing to the cap instead of
  * flatlining at 20 the way the first version of this file did.
  * Sorted so `next` can be read off the first entry above the level.
  */
 const UPGRADES: Gate[] = [
-  { at: 2, kind: 'custom', label: 'Custom Screen: 4-card programs', detail: 'one more card in every program you fire', apply: (u) => { u.queueSlots += 1; } },
-  { at: 6, kind: 'custom', label: 'Custom Screen: 5-card programs', detail: 'longer programs, bigger fusions', apply: (u) => { u.queueSlots += 1; } },
+  { at: 2, kind: 'hand', label: 'Hand: 4-card programs', detail: 'one more card in every program you fire', apply: (u) => { u.queueSlots += 1; } },
+  { at: 6, kind: 'hand', label: 'Hand: 5-card programs', detail: 'longer programs, bigger fusions', apply: (u) => { u.queueSlots += 1; } },
   { at: 10, kind: 'laser', label: 'Second laser charge', detail: 'store two laser-eyes beams', apply: (u) => { u.laserCharges = 2; } },
   { at: 12, kind: 'bag', label: 'Bigger bag (40)', detail: 'room for eight more cards', apply: (u) => { u.bagCap = 40; } },
-  { at: 14, kind: 'custom', label: 'Custom Screen: 6-card programs', detail: 'the whole panel in one program', apply: (u) => { u.queueSlots += 1; } },
-  { at: 20, kind: 'gauge', label: 'Faster Custom gauge', detail: 'the gauge fills 12% sooner', apply: (u) => { u.gaugeScale = 0.88; } },
-  { at: 22, kind: 'build', label: 'Mega licence', detail: 'one more Mega card in the folder', apply: (u) => { u.megaSlots += 1; } },
+  { at: 14, kind: 'hand', label: 'Hand: 6-card programs', detail: 'the whole panel in one program', apply: (u) => { u.queueSlots += 1; } },
+  { at: 20, kind: 'charge', label: 'Faster Hand charge', detail: 'the charge fills 12% sooner', apply: (u) => { u.chargeScale = 0.88; } },
+  { at: 22, kind: 'build', label: 'Mega licence', detail: 'one more Mega card in the deck', apply: (u) => { u.megaSlots += 1; } },
   { at: 24, kind: 'bag', label: 'Bigger bag (48)', detail: 'room for eight more cards', apply: (u) => { u.bagCap = 48; } },
-  { at: 26, kind: 'gauge', label: 'Custom gauge: 20% sooner', detail: 'the second rung — another program per fight', apply: (u) => { u.gaugeScale = 0.80; } },
-  { at: 28, kind: 'build', label: 'Giga licence', detail: 'one more Giga card in the folder', apply: (u) => { u.gigaSlots += 1; } },
-  { at: 32, kind: 'build', label: 'Fusion licence', detail: 'one more fused GA card in the folder', apply: (u) => { u.fusedSlots += 1; } },
+  { at: 26, kind: 'charge', label: 'Hand charge: 20% sooner', detail: 'the second rung — another program per fight', apply: (u) => { u.chargeScale = 0.80; } },
+  { at: 28, kind: 'build', label: 'Giga licence', detail: 'one more Giga card in the deck', apply: (u) => { u.gigaSlots += 1; } },
+  { at: 32, kind: 'build', label: 'Fusion licence', detail: 'one more fused GA card in the deck', apply: (u) => { u.fusedSlots += 1; } },
   { at: 36, kind: 'laser', label: 'Third laser charge', detail: 'store three laser-eyes beams', apply: (u) => { u.laserCharges = 3; } },
-  { at: 38, kind: 'gauge', label: 'Custom gauge: 28% sooner', detail: 'the third rung — the clock from level 20 again', apply: (u) => { u.gaugeScale = 0.72; } },
-  { at: 44, kind: 'build', label: 'Second Mega licence', detail: 'a fourth Mega slot over the born folder', apply: (u) => { u.megaSlots += 1; } },
+  { at: 38, kind: 'charge', label: 'Hand charge: 28% sooner', detail: 'the third rung — the clock from level 20 again', apply: (u) => { u.chargeScale = 0.72; } },
+  { at: 44, kind: 'build', label: 'Second Mega licence', detail: 'a fourth Mega slot over the born deck', apply: (u) => { u.megaSlots += 1; } },
   { at: 48, kind: 'laser', label: 'Fourth laser charge', detail: 'store four laser-eyes beams', apply: (u) => { u.laserCharges = 4; } },
 ];
 
@@ -177,7 +178,10 @@ const DUNGEON_RUNGS: Gate[] = DUNGEONS.map((x) => ({
   at: x.level,
   kind: 'dungeon' as const,
   label: `Dungeon: ${x.name}`,
-  detail: x.tagline,
+  // A rung used to say only where the place is (`tagline`). The point of a fixed unlock list is that
+  // a player can aim at a card, and they cannot aim at a card nobody named — so the rung says which
+  // ones this map hands over, before they go in, exactly as the ladder says what a level gives.
+  detail: `${x.tagline} → unlocks ${x.unlocks.map((id) => CARD_BY_ID.get(id)?.name ?? id).join(', ')}`,
   apply: (u: Unlocks) => {
     u.areaTier = Math.max(u.areaTier, x.tier);
   },
@@ -190,7 +194,7 @@ const BASE: Unlocks = {
   areaTier: 0,
   laserCharges: 1,
   bagCap: 32,
-  gaugeScale: 1,
+  chargeScale: 1,
   fieldHp: 100,
   megaSlots: 0,
   gigaSlots: 0,
@@ -207,8 +211,8 @@ export function unlocksAt(level: number): Unlocks {
   return u;
 }
 
-/** The folder licences this level has bought, in the shape `folderRules` adds on. */
-export function folderLicenceAt(level: number): FolderLicence {
+/** The deck licences this level has bought, in the shape `deckRules` adds on. */
+export function deckLicenceAt(level: number): DeckLicence {
   const u = unlocksAt(level);
   return { mega: u.megaSlots, giga: u.gigaSlots, fused: u.fusedSlots };
 }
@@ -226,11 +230,11 @@ export function xpForRun(tier: number, flawless: boolean): number {
 /**
  * The one place the six attributes and progression meet: level multiplies *nothing*
  * that the formula already decided. It widens what you can do with them — a faster
- * gauge, a longer queue, one more slot for the strongest card the folder can hold —
+ * charge, a longer queue, one more slot for the strongest card the deck can hold —
  * and never the power behind a card the Chog was not born with. A designer note more
  * than code, but it is the rule the rest of this file obeys.
  */
-export const LEVEL_AFFECTS: readonly string[] = ['queueSlots', 'areaTier', 'laserCharges', 'bagCap', 'gaugeScale', 'fieldHp', 'megaSlots', 'gigaSlots', 'fusedSlots'];
+export const LEVEL_AFFECTS: readonly string[] = ['queueSlots', 'areaTier', 'laserCharges', 'bagCap', 'chargeScale', 'fieldHp', 'megaSlots', 'gigaSlots', 'fusedSlots'];
 
 /** Element affinity carried by progression: nothing, by design. */
 export function elementBias(_level: number): Partial<Record<Element, number>> {

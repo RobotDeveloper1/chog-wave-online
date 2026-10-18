@@ -105,10 +105,10 @@ Three.js dual-screen build that everything in sections 9–11 belongs to. They s
 | `folder.ts` | the deck a Chog fights with: slots and shape from the NFT, contents from the bag |
 | `traits.ts` | all 272 trait values → meaning; `loadoutOf()`, element ring, `affinityKeys()`, the cascades |
 | `formula.ts` | `profileOf`, `allocate`, `provenance`, budget constants |
-| `custom.ts` | 3×2 Custom Screen, selection locks, queue, gauge |
+| `custom.ts` | 3×2 Custom Screen, selection locks, queue, charge |
 | `fusion.ts` | 9 GA cards, 9 recipes, `resolveTurn()` |
 | `field.ts` | 3×5 lane field, coverage, chain, boss drift, mirror attack |
-| `duel.ts` | the duel's numbers: `telegraphMs`/`volleyGapMs`/`gaugeMsFor`, `volleyDamage`/`volleyAnchor` bands, the seven archetypes, `validateProgram`, `autoPlace`, `planProgram` |
+| `duel.ts` | the duel's numbers: `telegraphMs`/`volleyGapMs`/`chargeMsFor`, `volleyDamage`/`volleyAnchor` bands, the seven archetypes, `validateProgram`, `autoPlace`, `planProgram` |
 | `draft.ts` | the immutable pick/place/lift draft and its live `preview()` — the client's Custom Screen is this file, not a copy of the rules |
 | `party.ts` | every party number (§7.5): HP/power/reward scaling, formation, cross-link, pincer, revive |
 | `loop.ts` | the loop **measured**: `dpsProfile`/`expectedDps` per band and level, `attritionFor`, `nodeBudget`, `FUN` time windows, `duelTierOf` — what `dungeon.ts` budgets against and `tools/pacing-report.mjs` prints |
@@ -246,7 +246,7 @@ duplicates, which is how a silent trait collision would be caught.
 ## 7. Combat
 
 ### 7.1 Custom Screen (`custom.ts`)
-3 rows × 2 cols, `QUEUE_MAX = 6`, `GAUGE_MS = 9000`. Selecting a card **locks** its row
+3 rows × 2 cols, `QUEUE_MAX = 6`, `CHARGE_MS = 9000`. Selecting a card **locks** its row
 and column; `canSelect()` returns the reason (`duplicate|column|row|full|already|empty`).
 `buriedCells()` implements physical coverage — a big card buries smaller ones, which is
 what makes Support/Single-use decisions matter.
@@ -369,10 +369,10 @@ sighting. **The party scale is decided once**, at `world.ts:1745`, from `ownersO
 `profiles.onClear({…, scale})` → `warPoints` → `pointsForClear(tier, scale)`. There is no
 separate "split penalty" step any more — the alt tax lives inside `partyRewardScale`, because
 two caps on the same number drift apart. **Levels buy breadth, never height** — `LEVEL_AFFECTS` lists the only fields that
-may move (`queueSlots, areaTier, laserCharges, bagCap, gaugeScale, fieldHp`) and a test
+may move (`queueSlots, areaTier, laserCharges, bagCap, chargeScale, fieldHp`) and a test
 asserts nothing else changes. A level-1 token holder can still out-damage a level-40
 foster player. Gates: lv3 Delta · lv6 +queue · lv8 Sigma · lv12 2nd laser · lv16 Omega ·
-lv20 gauge −12% · lv24 bag 48 · lv30 Storm Core · lv36 3rd laser · lv42 +queue.
+lv20 charge −12% · lv24 bag 48 · lv30 Storm Core · lv36 3rd laser · lv42 +queue.
 
 ### 9.2 Economy (`economy.ts`)
 Currency **WAV**. Items: `med, repair, amp, ward, scan, pack`. `amp` = +25% next program,
@@ -568,7 +568,7 @@ files. The rules exist so the next screen does not invent a second language.
   are rate-limited and one returns HTTP 200 with an HTML challenge (check the RIFF magic).
 - `tools/pixellab.mjs` — raw MCP-over-HTTP client for the PixelLab server, with `@path`
   refs expanded to base64 so large PNGs never hit the Windows command-line limit.
-- `tools/chog-matte.py` — background keying; proved the official art is a **bust crop**,
+- `tools/chog-matte.py` — background keying; proved the official art is a **fire crop**,
   not a full-body sprite.
 - `tools/verify-seaport.mjs`, `tools/dump-receipt.mjs` — decode a real sale end to end.
 

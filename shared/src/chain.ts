@@ -17,6 +17,12 @@ export const MONAD_CURRENCY = 'MON';
 export const MONAD_RPC_URL = 'https://rpc2.monad.xyz';
 export const MONAD_EXPLORER_URL = 'https://monadscan.com';
 
+/** Monad testnet (chain 10143): where the replica collection lives. */
+export const MONAD_TESTNET_CHAIN_ID = 10143;
+export const MONAD_TESTNET_CHAIN_ID_HEX = '0x279f';
+export const MONAD_TESTNET_RPC_URL = 'https://testnet-rpc.monad.xyz';
+export const MONAD_TESTNET_EXPLORER_URL = 'https://testnet.monadexplorer.com';
+
 /** Chog Genesis ERC-721. It does not implement ERC721Enumerable. */
 export const CHOG_GENESIS_ADDRESS = '0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763';
 /** Wrapped MON, the token every priced Seaport fill settles in. Read off a real

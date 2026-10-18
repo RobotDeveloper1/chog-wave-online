@@ -1,6 +1,7 @@
 import './pages.css';
-import { DUNGEON_BY_ID, DUNGEONS, ITEMS, partyHpScale, partyRewardScale, type DungeonDef, type DungeonView } from '@chog/shared';
+import { CARD_BY_ID, DUNGEON_BY_ID, DUNGEONS, ITEMS, SECTOR_NAME, partyHpScale, partyRewardScale, type AreaRun, type DungeonDef, type DungeonView, type ProfileView, type SectorId, type SectorState } from '@chog/shared';
 import { ELEMENT_COLOUR, ELEMENT_ICON } from './hud/icons.ts';
+import { cardImg } from './cardArt.ts';
 import { social } from './partyPage.ts';
 import type { AreaView } from './sheet.ts';
 
@@ -63,7 +64,16 @@ function card(def: DungeonDef, view: DungeonView, sel: boolean): string {
   </div>`;
 }
 
-function listPage(area: AreaView): string {
+/** The world today, on the dungeon door: wave, tier, anomaly. Display only —
+ *  folds pay what they pay regardless of the street weather. */
+function macroLine(world: { sector: SectorId; sectors: SectorState[] } | null | undefined): string {
+  const st = world?.sectors.find((x) => x.sector === world.sector);
+  if (!st) return '';
+    const boss = st.boss ? ` · ANOMALY ${esc(st.boss.tier.toUpperCase())}${st.boss.archetype ? ` ${esc(st.boss.archetype.toUpperCase())}` : ''}` : '';
+  return `<p class="macro">WORLD TODAY · ${esc(SECTOR_NAME[st.sector] ?? st.sector)} WAVE ${Math.round(st.wave)} · ${esc(st.tier.toUpperCase())}${boss}</p>`;
+}
+
+function listPage(area: AreaView, world: { sector: SectorId; sectors: SectorState[] } | null | undefined): string {
   const views = area.dungeons;
   const def = pick(views);
   const v = stateOf(views, def.id);
@@ -75,6 +85,7 @@ function listPage(area: AreaView): string {
   const cleared = views.filter((x) => x.state === 'cleared').length;
   return `<div class="dgs">
     <header><span>DUNGEONS</span><b>${cleared}/${DUNGEONS.length}</b><small>one for each element — clear them in order</small></header>
+    ${macroLine(world)}
     <div class="dg-cols">
       <div class="dg-list">${DUNGEONS.map((d) => card(d, stateOf(views, d.id), d.id === def.id)).join('')}</div>
       <section class="dg-detail" style="--c:${col}">
@@ -94,6 +105,16 @@ function listPage(area: AreaView): string {
   </div>`;
 }
 
+/** What a node is worth, on the map itself: the choice has to read, not hide in a tooltip. */
+function nodeTag(kind: string): string {
+  return kind === 'boss' ? 'BOSS · CARDS' : kind === 'elite' ? 'RISK · CARD' : kind === 'chest' ? 'CARD' : kind === 'shrine' ? 'HEAL · BUFF' : kind === 'gate' ? 'MOUTH' : 'FIGHT';
+}
+
+/** The same payoff as a sentence, for the tooltip. */
+function nodePayoff(kind: string): string {
+  return kind === 'boss' ? 'the core: pays cards and a draft pick' : kind === 'elite' ? 'a tough fight: pays a card and a draft pick' : kind === 'chest' ? 'a cache: pays cards on the step' : kind === 'shrine' ? 'a relay: heals, buffs, thins one card' : kind === 'gate' ? 'the mouth: no fight' : 'a fight: a draft pick after';
+}
+
 function glyph(kind: string): string {
   return kind === 'boss' ? '◈' : kind === 'elite' ? '◆' : kind === 'chest' ? '▣' : kind === 'shrine' ? '✚' : kind === 'gate' ? '◉' : '●';
 }
@@ -105,8 +126,39 @@ function hands(): string {
   return `<span class="hands" title="a tile scales with the bodies standing on it; the fight strip shows the pull">${n} HANDS LINKED</span>`;
 }
 
-function runPage(area: AreaView): string {
+/** The 1-of-3 the last combat node dealt, waiting for the pick. Dealt and validated server-side. */
+function draftPanel(run: AreaRun): string {
+  const draft = run.draft;
+  if (!draft) return '';
+  const opts = draft.options
+    .map((id) => {
+      const c = CARD_BY_ID.get(id);
+      return `<button class="draft-pick" data-a="draft" data-id="${id}" title="take ${esc(c?.name ?? id)}">` +
+        `${cardImg(id, c?.element ?? null, 'draft-art')}<b>${esc(c?.name ?? id)}</b><small>${esc(c?.element ?? '')}${c?.klass ? ` · ${esc(c.klass)}` : ''}</small></button>`;
+    })
+    .join('');
+  return `<div class="draft"><header><span>DRAFT — TAKE 1 OF 3</span></header><div class="draft-opts">${opts}</div></div>`;
+}
+
+/** The shrine rest: thin one held card, never a signature. Validated server-side. */
+function shrinePanel(run: AreaRun, p: ProfileView | null): string {
+  if (!run.shrine || !p) return '';
+  const rows = p.cards
+    .map((id) => {
+      const c = CARD_BY_ID.get(id);
+      const locked = p.signatureIds.includes(id);
+      const act = locked
+        ? '<i>signature stays</i>'
+        : `<button data-a="shrine" data-id="${id}" title="remove ${esc(c?.name ?? id)} from the collection">THIN</button>`;
+      return `<span class="thin-line">${cardImg(id, c?.element ?? null, 'thin-art')}<b>${esc(c?.name ?? id)}</b>${act}</span>`;
+    })
+    .join('');
+  return `<div class="shrine"><header><span>SHRINE REST \u2014 THIN 1 CARD</span><small>the rest already healed you</small></header><div class="thin-list">${rows || '<i>no cards held</i>'}</div></div>`;
+}
+
+function runPage(area: AreaView, p: ProfileView | null): string {
   const run = area.run!;
+  const prof = p;
   const nodes = area.area?.nodes ?? [];
   const def = area.area?.dungeonId ? DUNGEON_BY_ID.get(area.area.dungeonId) : undefined;
   const rows = new Map<number, string[]>();
@@ -117,7 +169,7 @@ function runPage(area: AreaView): string {
     const cleared = run.cleared.includes(n.id);
     const reachable = !!from?.links.includes(n.id) && !cleared && !run.done && !run.failed;
     row.push(
-      `<span class="node k-${n.kind} ${cleared ? 'off' : ''} ${run.at === n.id ? 'here' : ''}" title="${esc(n.label)}${n.enemy ? ` — ${esc(n.enemy.name)}` : ''}"${reachable ? ` data-a="step" data-id="${n.id}"` : ''}>${glyph(n.kind)}</span>`,
+      `<span class="node k-${n.kind} ${cleared ? 'off' : ''} ${run.at === n.id ? 'here' : ''}" title="${esc(n.label)}${n.enemy ? ` — ${esc(n.enemy.name)}` : ''} · ${esc(nodePayoff(n.kind))}"${reachable ? ` data-a="step" data-id="${n.id}"` : ''}>${glyph(n.kind)}${cleared ? '' : `<small class="nt">${nodeTag(n.kind)}</small>`}</span>`,
     );
   }
   const map = [...rows.entries()]
@@ -131,18 +183,21 @@ function runPage(area: AreaView): string {
     <div class="rhead">
       <span class="hpwrap"><i style="width:${pct(run.hp / Math.max(1, run.maxHp))}"></i></span>
       <span class="x">${run.hp}/${run.maxHp} integrity</span>
-      <span class="wav">+${run.wav} WAV · ${run.xp} XP · ${run.chips.length} cards</span>
+      <span class="wav">+${run.wav} WAV · ${run.xp} XP · ${run.cards.length} cards</span>
       ${hands()}
+      ${run.buffs.damage > 0 || run.buffs.guard > 0 ? `<span class="build">BUILD +${Math.round(run.buffs.damage * 100)}% DMG +${Math.round(run.buffs.guard * 100)}% GUARD</span>` : ''}
     </div>
+    ${draftPanel(run)}
+    ${shrinePanel(run, prof)}
     <div class="map">${map}</div>
-    <div class="legend"><span>◉ mouth</span><span>● room</span><span>◆ elite</span><span>▣ cache</span><span>✚ relay</span><span>◈ boss</span></div>
+    <div class="legend"><span>◉ mouth</span><span>●  fight · draft</span><span>◆  elite · risk + card</span><span>▣  cache · cards</span><span>✚  relay · heal + thin</span><span>◈  boss · cards</span></div>
     <p class="hint">${run.done ? 'The core is closed — leave to bank it.' : run.failed ? 'The fold collapsed. Leave and go in again.' : 'Tap a node linked from where you stand. Rooms with something in them open a fight; caches and relays resolve on the step.'}</p>
   </div>`;
 }
 
-export function renderDungeons(area: AreaView | null): string {
+export function renderDungeons(area: AreaView | null, p: ProfileView | null, world: { sector: SectorId; sectors: SectorState[] } | null | undefined): string {
   if (!area) return `<div class="dgs"><header><span>DUNGEONS</span></header><div class="idle">asking the Fold Gate…</div></div>`;
-  return area.run ? runPage(area) : listPage(area);
+  return area.run ? runPage(area, p) : listPage(area, world);
 }
 
 /** Selecting a dungeon in the list. Entering and stepping go through the sheet's own buttons. */

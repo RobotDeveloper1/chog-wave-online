@@ -25,6 +25,10 @@ export const CFG = {
    * which would quietly downgrade every player to predicted traits.
    */
   metaDir: process.env.META_DIR ?? '.data/metadata',
+  artTestnetDir: process.env.ART_TESTNET_DIR ?? '.data/art-testnet',
+  /** Traits for the testnet replica's ids — a separate map, so testnet #1 never
+   *  steals mainnet #1's face (both indexes key by the real id in `name`). */
+  metaTestnetDir: process.env.META_TESTNET_DIR ?? '.data/metadata-testnet',
   /** Baked per-token atlases. Served on demand so any of the 1969 works without
    *  shipping 280MB of PNGs to every visitor. */
   spritesDir: process.env.SPRITES_DIR ?? '.data/sprites',

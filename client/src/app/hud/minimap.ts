@@ -18,6 +18,8 @@ export interface MapMarker {
   x: number;
   z: number;
   kind: MarkerKind;
+  /** The tracked quest's current objective — the one the edge arrow points at. */
+  main?: boolean;
   label?: string;
 }
 
@@ -110,6 +112,24 @@ export class Minimap {
       g.fillRect(X(lm.x - lm.w / 2), Z(lm.z - lm.d / 2), lm.w * PX, lm.d * PX);
     }
     void art;
+    this.layer = c;
+  }
+
+  /**
+   * Show a fold's node map instead of the city: a near-empty floor over the dungeon's own
+   * bounds, so `draw` blits the right window and the nodes (passed as markers each frame)
+   * land where they belong. Undone by the next `setCity`.
+   */
+  setDungeon(bounds: Rect): void {
+    this.extent = bounds;
+    const w = Math.max(1, Math.ceil((bounds.x1 - bounds.x0) * PX));
+    const h = Math.max(1, Math.ceil((bounds.z1 - bounds.z0) * PX));
+    const c = document.createElement('canvas');
+    c.width = w;
+    c.height = h;
+    const g = c.getContext('2d')!;
+    g.fillStyle = '#0a0612';
+    g.fillRect(0, 0, w, h);
     this.layer = c;
   }
 
@@ -243,7 +263,7 @@ export class Minimap {
     }
     // The tracked quest gets an arrow on the edge of the map, so "where do I go" has an answer
     // even when the target is behind you or off the page.
-    const quest = markers.find((m) => m.kind === 'quest' || m.kind === 'turnin');
+    const quest = markers.find((m) => m.main) ?? markers.find((m) => m.kind === 'quest' || m.kind === 'turnin');
     if (quest) {
       const [tx, ty] = at(quest.x, quest.z);
       const [mx, my] = at(px, pz);

@@ -79,25 +79,6 @@ const SKY_FRAG = /* glsl */ `
     gl_FragColor = vec4(col * 0.72, 1.0);
   }`;
 
-const STRIKE_VERT = /* glsl */ `
-  varying vec2 vUv;
-  void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
-
-// A bar of light that runs from the boss's end of the file to yours, brightest at its head and
-// thin on the floor — so it reads as a hit coming down a lane, not as a wall in front of the lens.
-const STRIKE_FRAG = /* glsl */ `
-  uniform vec3 uColor; uniform float uLife; uniform float uSweep; uniform float uFlat;
-  varying vec2 vUv;
-  void main() {
-    float s = 1.0 - vUv.x;
-    float behind = uSweep - s;
-    if (behind < 0.0) discard;
-    float tail = exp(-behind * 2.2);
-    float shape = uFlat > 0.5 ? 1.0 - smoothstep(0.28, 0.5, abs(vUv.y - 0.5)) : pow(1.0 - vUv.y, 1.8);
-    float head = smoothstep(0.0, 0.06, behind);
-    vec3 col = mix(uColor, vec3(1.0, 0.85, 0.75), tail * 0.5);
-    gl_FragColor = vec4(col, shape * head * (0.3 + 0.7 * tail) * uLife);
-  }`;
 
 const STREAM_VERT = /* glsl */ `
   attribute float aPhase; attribute float aSpeed;
@@ -134,8 +115,6 @@ export class Arena {
   private readonly skyMat: THREE.ShaderMaterial;
   private readonly streamMat: THREE.ShaderMaterial;
   private readonly bigRings: THREE.Mesh[] = [];
-  private readonly beams: { group: THREE.Group; mats: THREE.ShaderMaterial[]; t: number }[] = [];
-  private readonly strikeGeo: { wall: THREE.PlaneGeometry; floor: THREE.PlaneGeometry };
   private readonly disposables: { dispose(): void }[] = [];
   private telegraph: { panels: Set<number>; p: number } | null = null;
   private wall: number | null = null;
@@ -298,16 +277,6 @@ export class Arena {
       this.group.add(ring);
     }
 
-    // the two shapes every strike is made of: a low wall of light and a strip on the floor,
-    // both with their length along z and uv.x running from your end to the boss's
-    const len = PANEL;
-    const wall = track(new THREE.PlaneGeometry(len, 1.7));
-    wall.translate(0, 0.85, 0);
-    wall.rotateY(Math.PI / 2);
-    const floor = track(new THREE.PlaneGeometry(len, PANEL * 0.9));
-    floor.rotateX(-Math.PI / 2);
-    floor.rotateY(Math.PI / 2);
-    this.strikeGeo = { wall, floor };
 
     this.group.add(this.particles.points, this.rings.group);
     this.shots = new Shots(this.particles, this.rings);
@@ -394,33 +363,6 @@ export class Arena {
     this.pulses[i] = Math.max(this.pulses[i]!, strength);
   }
 
-  /** A strike lights only the panel the server actually hit. */
-  strike(panel: SF.Panel, colour = new THREE.Color(1, 0.18, 0.22)): void {
-    const group = new THREE.Group();
-    const mats: THREE.ShaderMaterial[] = [];
-    for (const [geo, flat, y] of [
-      [this.strikeGeo.wall, 0, 0.12],
-      [this.strikeGeo.floor, 1, 0.16],
-    ] as const) {
-      const mat = new THREE.ShaderMaterial({
-        transparent: true,
-        depthWrite: false,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        uniforms: { uColor: { value: colour.clone() }, uLife: { value: 1 }, uSweep: { value: 0 }, uFlat: { value: flat } },
-        vertexShader: STRIKE_VERT,
-        fragmentShader: STRIKE_FRAG,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = y;
-      group.add(mesh);
-      mats.push(mat);
-    }
-    group.position.copy(this.panelAt(panel.file, panel.lane, 0));
-    this.group.add(group);
-    this.beams.push({ group, mats, t: 0 });
-    this.flash(panel.file, panel.lane, 0.6);
-  }
 
   private applyStates(): void {
     const s = this.state.array as Float32Array;
@@ -465,22 +407,6 @@ export class Arena {
     this.bigRings.forEach((r, i) => {
       r.rotation.z += dt * (0.05 + i * 0.03) * (i % 2 ? -1 : 1);
     });
-    for (let i = this.beams.length - 1; i >= 0; i--) {
-      const b = this.beams[i]!;
-      b.t += dt;
-      // the head runs the length of the file in 0.16s, then the whole bar fades out
-      const sweep = Math.min(1.25, b.t / 0.16);
-      const life = 1 - Math.min(1, Math.max(0, (b.t - 0.16) / 0.34));
-      for (const m of b.mats) {
-        m.uniforms.uSweep!.value = sweep;
-        m.uniforms.uLife!.value = life;
-      }
-      if (life <= 0) {
-        this.group.remove(b.group);
-        for (const m of b.mats) m.dispose();
-        this.beams.splice(i, 1);
-      }
-    }
     // drifting motes, so the air is never still
     if (Math.random() < 0.55) {
       this.particles.emit(new THREE.Vector3((Math.random() - 0.5) * 22, Math.random() * 8 - 1, laneZ(2) + (Math.random() - 0.5) * 22), new THREE.Color(this.palette.accent).multiplyScalar(0.9), {
@@ -508,9 +434,7 @@ export class Arena {
     for (const material of shotMaterials) material.dispose();
     this.particles.dispose();
     this.rings.dispose();
-    for (const b of this.beams) for (const m of b.mats) m.dispose();
     for (const d of this.disposables) d.dispose();
-    this.beams.length = 0;
     this.disposables.length = 0;
     this.telegraph = null;
     this.allies.clear();

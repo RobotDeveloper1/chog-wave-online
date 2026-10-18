@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#0a0612" />
+    <title>CHOG — BRAWL (Babylon slice)</title>
+    <style>
+      html, body { margin:0; height:100dvh; background:#0a0612; overflow:hidden; font-family:'Share Tech Mono', ui-monospace, monospace; color:#e8e0ff; }
+      #render { position:fixed; inset:0; width:100dvw; height:100dvh; outline:none; touch-action:none; display:block; }
+      #hud { position:fixed; inset:0; pointer-events:none; }
+      .bar { width:240px; max-width:42vw; height:16px; background:#1c1430; border:1px solid #3a2c5e; border-radius:8px; overflow:hidden; }
+      .bar > i { display:block; height:100%; transition:width .12s linear; }
+      #php > i { background:linear-gradient(90deg,#39d98a,#9bff6b); }
+      #ehp > i { background:linear-gradient(90deg,#ff5a5a,#ff9a3c); }
+      .label { font-size:11px; letter-spacing:1px; opacity:.8; margin:6px 0 2px; text-transform:uppercase; }
+      #top { position:absolute; top:12px; left:12px; }
+      #log { position:absolute; top:12px; right:12px; width:230px; max-width:52vw; text-align:right; font-size:12px; line-height:1.5; }
+      #log div { opacity:.9; }
+      #joy { position:absolute; left:18px; bottom:18px; width:120px; height:120px; border-radius:50%; background:rgba(40,28,70,.35); border:1px solid #4a3780; pointer-events:auto; touch-action:none; }
+      #stick { position:absolute; left:35px; top:35px; width:50px; height:50px; border-radius:50%; background:rgba(155,120,255,.7); }
+      #atk { position:absolute; right:18px; bottom:24px; width:88px; height:88px; border-radius:50%; background:rgba(255,90,60,.25); border:1px solid #ff6a3c; color:#ffd0c0; font-size:13px; letter-spacing:1px; pointer-events:auto; }
+      #float { position:absolute; font-weight:700; font-size:18px; text-shadow:0 1px 3px #000; pointer-events:none; }
+    </style>
+  </head>
+  <body>
+    <canvas id="render"></canvas>
+    <div id="hud">
+      <div id="top">
+        <div class="label">Chog</div><div class="bar" id="php"><i style="width:100%"></i></div>
+        <div class="label">Inimigo</div><div class="bar" id="ehp"><i style="width:100%"></i></div>
+      </div>
+      <div id="log"></div>
+      <div id="joy"><div id="stick"></div></div>
+      <button id="atk">ATACAR</button>
+    </div>
+    <script type="module" src="/src/app/brawl/main.ts"></script>
+  </body>
+</html>

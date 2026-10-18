@@ -1,6 +1,7 @@
 import './pages.css';
 import type { PartyMsg, RemotePlayer } from '@chog/shared';
 import { ELEMENT_COLOUR, ELEMENT_ICON } from './hud/icons.ts';
+import { friends } from './friends.ts';
 import type { Voice } from './voice.ts';
 
 /**
@@ -16,13 +17,19 @@ export interface PartyStore {
   me: string | null;
   party: PartyMsg | null;
   invite: { from: string; name: string; at: number } | null;
+  /** A brawl challenge waiting on an answer, like an invitation. Zero is honor. */
+  brawl: { from: string; name: string; wager: number; at: number } | null;
+  /** A trade offer waiting on an answer: what they give, what they want. */
+  trade: { tradeId: string; from: string; name: string; giving: string[]; wanting: string[]; givingItems: string[]; wantingItems: string[]; at: number } | null;
+  /** Which ask the invite box is showing, so one box can serve all three. */
+  asking: 'party' | 'brawl' | 'trade' | null;
   nearby: RemotePlayer[];
   voice: Voice | null;
   /** The last line the server sent about the party (sent, declined, refused). */
   notice: string;
 }
 
-export const social: PartyStore = { me: null, party: null, invite: null, nearby: [], voice: null, notice: '' };
+export const social: PartyStore = { me: null, party: null, invite: null, brawl: null, trade: null, asking: null, nearby: [], voice: null, notice: '' };
 
 export interface PartyApi {
   invite(id: string): void;
@@ -73,7 +80,7 @@ export function renderParty(): string {
       const inMine = taken.has(p.id);
       return `<div class="pm near" style="--c:${col}">
         <span class="el">${ELEMENT_ICON[p.tribe ?? ''] ?? ''}</span>
-        <span class="nm"><b>${esc(p.name ?? `CHOG #${p.tokenId}`)}</b><small>LV ${p.level ?? 1} · #${p.tokenId}</small></span>
+        <span class="nm"><b>${friends.has(p.tokenId) ? '<em class="fr" title="on your list">★</em> ' : ''}${esc(p.name ?? `CHOG #${p.tokenId}`)}</b><small>LV ${p.level ?? 1} · #${p.tokenId}</small></span>
         <button data-p="whisper" data-id="${p.tokenId}" title="whisper to them">✉</button>
         ${inMine ? '<span class="vs">in party</span>' : `<button data-p="invite" data-id="${esc(p.id)}" ${can ? '' : 'disabled'} title="${can ? 'ask them to join' : iLead ? 'the party is full' : 'only the leader invites'}">INVITE</button>`}
       </div>`;

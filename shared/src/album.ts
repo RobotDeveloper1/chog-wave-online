@@ -165,7 +165,7 @@ export function emptyAlbum(): AlbumState {
 
 export interface Completion {
   category: string;
-  chip: string | null;
+  card: string | null;
   wav: number;
 }
 
@@ -174,7 +174,7 @@ export function pendingCompletions(state: AlbumState): Completion[] {
   const stat = albumStat(state.seen);
   return stat.categories
     .filter((c) => c.complete && !state.claimed.includes(c.category))
-    .map((c) => ({ category: c.category, chip: categoryPrize(c.category), wav: 120 + c.need * 6 }));
+    .map((c) => ({ category: c.category, card: categoryPrize(c.category), wav: 120 + c.need * 6 }));
 }
 
 export function markClaimed(state: AlbumState, categories: string[]): AlbumState {

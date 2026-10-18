@@ -1,0 +1,17 @@
+{
+  "name": "@chog/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "compile": "node scripts/compile.mjs",
+    "meta": "node scripts/replica-meta.mjs",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.57.4"
+  },
+  "devDependencies": {
+    "solc": "^0.8.37"
+  }
+}

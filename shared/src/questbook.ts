@@ -89,11 +89,11 @@ export const SIDE: QuestDef[] = [
     giver: 'a-scrapper',
     kind: 'side',
     sector: 'ashflat',
-    text: 'I buy static and sell cards. Go to the Chip Shop, sell one of yours and show me you can trade — I do not deal with people who just hoard.',
-    doing: 'Chip Shop, Market Row. Sell a card across the counter.',
+    text: 'I buy static and sell cards. Go to the Card Shop, sell one of yours and show me you can trade — I do not deal with people who just hoard.',
+    doing: 'Card Shop, Market Row. Sell a card across the counter.',
     thanks: 'A trader. Now we can do business.',
     stars: 1,
-    objectives: [O('enter', 1, { target: 'shop' }), O('sellChip', 1)],
+    objectives: [O('enter', 1, { target: 'shop' }), O('sellCard', 1)],
     reward: { wav: 90, items: { scan: 1 } },
   },
   {
@@ -240,8 +240,10 @@ export function trackTargets(log: QuestLog, defs: readonly QuestDef[] = ALL_QUES
       continue;
     }
     q.objectives.forEach((o, i) => {
-      if ((st.progress[i] ?? 0) >= o.need || !o.target) return;
-      if (o.kind === 'talk') out.push({ quest: q.id, kind: 'npc', id: o.target });
+      if ((st.progress[i] ?? 0) >= o.need) return;
+      if (o.kind === 'dungeonClear') out.push({ quest: q.id, kind: 'door', id: 'dungeon' });
+      else if (!o.target) return;
+      else if (o.kind === 'talk') out.push({ quest: q.id, kind: 'npc', id: o.target });
       else if (o.kind === 'reach') out.push({ quest: q.id, kind: 'poi', id: o.target });
       else if (o.kind === 'enter') out.push({ quest: q.id, kind: 'door', id: o.target });
     });

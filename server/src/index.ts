@@ -3,11 +3,12 @@ import { performance } from 'node:perf_hooks';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { BUILD_VERSION, GAME_NAME, GENESIS_SUPPLY, SECTORS, isAddress, warmDps, type ChogSource, type DuelMsg, type Placement, type SectorId } from '@chog/shared';
+import { BUILD_TAG, BUILD_VERSION, CHOG_GENESIS_ADDRESS, GAME_NAME, GENESIS_SUPPLY, SECTORS, isAddress, warmDps, type ChogSource, type DuelMsg, type Placement, type SectorId } from '@chog/shared';
 import { CFG, chainConfigured } from './config.ts';
 import { Auth } from './auth.ts';
 import { ledger } from './ledger.ts';
 import { ownership } from './owners.ts';
+import { verifyPrivyLogin } from './privy.ts';
 import { holdingsView, sourceFor } from './wallet.ts';
 import { World, fosterSource, type Player } from './world.ts';
 
@@ -84,7 +85,7 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   }
 
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, game: GAME_NAME, build: BUILD_VERSION, feed: world.feedMode, describe: world.snapshot().feed.describe });
+    return json(res, 200, { ok: true, game: GAME_NAME, build: BUILD_VERSION, tag: BUILD_TAG, feed: world.feedMode, describe: world.snapshot().feed.describe });
   }
   if (url.pathname === '/api/world') return json(res, 200, world.snapshot());
   if (url.pathname === '/api/leaderboard') return json(res, 200, world.saves.leaderboard());
@@ -124,6 +125,19 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
     return r.ok
       ? json(res, 200, { ok: true, session: r.token, address: r.address })
       : json(res, 401, { ok: false, reason: r.reason });
+  }
+
+  // ── privy sign-in ───────────────────────────────────────────────────────────
+  // The only login. The client sends both Privy tokens; the address the session
+  // is issued for comes out of Privy's verified user object, never the body.
+  if (url.pathname === '/api/auth/privy' && req.method === 'POST') {
+    const body = await bodyOf(req);
+    if (!body || typeof body.accessToken !== 'string' || typeof body.idToken !== 'string') {
+      return json(res, 400, { ok: false, reason: 'need privy access and identity tokens' });
+    }
+    const r = await verifyPrivyLogin(body.accessToken, body.idToken);
+    if (!r.ok) return json(res, 401, { ok: false, reason: r.reason });
+    return json(res, 200, { ok: true, session: auth.adoptPrivy(r.address), address: r.address });
   }
 
   if (url.pathname === '/api/auth/session' && req.method === 'GET') {
@@ -187,7 +201,10 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   // id is matched against ^\d+$ and the extension is whitelisted before it touches the filesystem.
   const art = url.pathname.match(/^\/art\/(\d{1,4})\.(png|webp)$/);
   if (art) {
-    const file = join(process.cwd(), '.data', 'art', `${art[1]}.${art[2]}`);
+    // On the replica, /art/<N> is testnet #N's face (copied from the mainnet id
+    // it replicates by replica-meta.mjs), not mainnet #N's.
+    const artBase = CFG.chogGenesis.toLowerCase() !== CHOG_GENESIS_ADDRESS.toLowerCase() ? CFG.artTestnetDir : join('.data', 'art');
+    const file = join(process.cwd(), artBase, `${art[1]}.${art[2]}`);
     if (!existsSync(file)) return json(res, 404, { error: 'no art' });
     res.writeHead(200, {
       'content-type': art[2] === 'webp' ? 'image/webp' : 'image/png',
@@ -293,6 +310,8 @@ wss.on('connection', (sock) => {
       with?: string;
       giving?: string[];
       wanting?: string[];
+      givingItems?: string[];
+      wantingItems?: string[];
       tradeId?: string;
     };
     try {
@@ -389,7 +408,7 @@ wss.on('connection', (sock) => {
 
     if (msg.t === 'move') {
       const m = JSON.parse(String(raw));
-      world.move(me, { x: m.x, y: m.y, vx: m.vx, facing: m.facing, heading: m.heading, anim: m.anim, hp: m.hp, place: m.place === 'room' ? 'room' : m.place === 'street' ? 'street' : undefined });
+      world.move(me, { x: m.x, y: m.y, vx: m.vx, facing: m.facing, heading: m.heading, anim: m.anim, hp: m.hp, place: m.place === 'room' || m.place === 'street' || m.place === 'line' ? m.place : undefined });
     } else if (msg.t === 'switch') {
       // Sector change without rebuilding the player, so progression and the
       // laser charge survive the trip.
@@ -447,6 +466,9 @@ wss.on('connection', (sock) => {
       // "link" is the old name for asking someone to join; both go through the invitation
       const m = JSON.parse(String(raw)) as { action?: string; with?: string };
       world.partyAction(me, msg.t === 'link' ? { action: 'invite', with: String(msg.with ?? '') } : m);
+    } else if (msg.t === 'pvp') {
+      const m = JSON.parse(String(raw)) as { action?: string; with?: string; wager?: number };
+      world.pvpAction(me, m);
     } else if (msg.t === 'unlink') {
       world.leaveParty(me);
     } else if (msg.t === 'rtc') {
@@ -455,19 +477,23 @@ wss.on('connection', (sock) => {
     } else if (msg.t === 'trade') {
       const t = msg;
       if (t.action === 'offer' && t.with) {
-        const offer = world.social.offer(me, t.with, t.giving ?? [], t.wanting ?? []);
-        sendTo(t.with, { t: 'trade', action: 'incoming', tradeId: offer.id, from: me, to: t.with, giving: offer.giving, wanting: offer.wanting });
-      } else if (t.action === 'accept' && t.tradeId) {
-        const holdings = Object.fromEntries([...world.players.values()].map((pl) => [pl.id, pl.save.chips]));
-        const r = world.social.accept(t.tradeId, me, holdings);
-        if (!r.ok) {
-          sendTo(me, { t: 'trade', action: 'refused', tradeId: t.tradeId, from: me, to: '', giving: [], wanting: [], reason: r.reason });
+        const r = world.tradeOffer(me, t.with, t.giving ?? [], t.wanting ?? [], t.givingItems ?? [], t.wantingItems ?? []);
+        if (!r.ok || !r.offer) {
+          sendTo(me, { t: 'trade', action: 'refused', tradeId: '', from: me, to: t.with, giving: [], wanting: [], givingItems: [], wantingItems: [], reason: r.reason });
         } else {
-          world.swapCards(r.swap.to, me, r.swap.give, r.swap.take);
-          sendTo(r.swap.to, { t: 'trade', action: 'accepted', tradeId: t.tradeId, from: me, to: r.swap.to, giving: r.swap.take, wanting: r.swap.give });
+          sendTo(t.with, { t: 'trade', action: 'incoming', tradeId: r.offer.id, from: me, to: t.with, giving: r.offer.giving, wanting: r.offer.wanting, givingItems: r.offer.givingItems, wantingItems: r.offer.wantingItems });
+        }
+      } else if (t.action === 'accept' && t.tradeId) {
+        const r = world.tradeAccept(me, t.tradeId);
+        if (!r.ok || !r.swap) {
+          sendTo(me, { t: 'trade', action: 'refused', tradeId: t.tradeId, from: me, to: '', giving: [], wanting: [], givingItems: [], wantingItems: [], reason: r.reason });
+        } else {
+          sendTo(r.swap.to, { t: 'trade', action: 'accepted', tradeId: t.tradeId, from: me, to: r.swap.to, giving: r.swap.take, wanting: r.swap.give, givingItems: r.swap.takeItems, wantingItems: r.swap.giveItems });
+          sendTo(me, { t: 'trade', action: 'accepted', tradeId: t.tradeId, from: r.swap.to, to: me, giving: r.swap.give, wanting: r.swap.take, givingItems: r.swap.giveItems, wantingItems: r.swap.takeItems });
         }
       } else if (t.action === 'cancel' && t.tradeId) {
         const offer = world.social.trades.get(t.tradeId);
+        if (!offer || (offer.from !== me && offer.to !== me)) return;
         world.social.cancel(t.tradeId);
         if (offer) sendTo(offer.from === me ? offer.to : offer.from, { t: 'trade', action: 'cancelled', tradeId: t.tradeId, from: me, to: '', giving: [], wanting: [] });
       }
@@ -514,7 +540,7 @@ for (const p of priced) (byBand[p.band] ??= []).push(`lv${p.level}:${p.dps}`);
 console.log(`difficulty priced in ${Math.round(performance.now() - pricedAt)}ms — ` + Object.entries(byBand).map(([b, v]) => `${b} dps ${v.join(' ')}`).join('  |  '));
 
 server.listen(CFG.port, () => {
-  console.log(`chog-wave server :${CFG.port}  build ${BUILD_VERSION}  feed=${world.feedMode}`);  const r = world.start();
+  console.log(`chog-wave server :${CFG.port}  build ${BUILD_VERSION} (${BUILD_TAG})  feed=${world.feedMode}`);  const r = world.start();
   if (r instanceof Promise) r.catch((e) => console.error('feed start failed:', (e as Error).message));
 
   /**

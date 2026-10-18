@@ -1,19 +1,20 @@
 import './pages.css';
-import { GATES, anyChip, canAdd, checkFolder, type Chip, type ProfileView } from '@chog/shared';
+import { GATES, anyCard, canAdd, checkDeck, type Card, type ProfileView } from '@chog/shared';
 import { ELEMENT_COLOUR, ELEMENT_ICON } from './hud/icons.ts';
+import { cardImg } from './cardArt.ts';
 
 /**
- * The two pages that make the cards matter: the FOLDER, where the deck a Chog fights with is
+ * The two pages that make the cards matter: the DECK, where the deck a Chog fights with is
  * built from everything it owns, and the LIBRARY, the fusion book.
  *
- * Both are renderers plus a little local state. The rules come from `shared/src/folder.ts`
- * (the same functions the server refuses a bad folder with, so a button is disabled for the
+ * Both are renderers plus a little local state. The rules come from `shared/src/deck.ts`
+ * (the same functions the server refuses a bad deck with, so a button is disabled for the
  * very reason the server would give); nothing here decides what a card does.
  */
 
 const esc = (s: string): string => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c] ?? c);
 
-export interface FolderApi {
+export interface DeckApi {
   save(cards: string[]): void;
   auto(): void;
   reset(): void;
@@ -22,20 +23,20 @@ export interface FolderApi {
 }
 
 // ---------------------------------------------------------------------------
-// The folder being edited lives here, not in the profile: a player may change it a dozen times
+// The deck being edited lives here, not in the profile: a player may change it a dozen times
 // before saving, and the profile is pushed (and the page repainted) every few seconds.
 // ---------------------------------------------------------------------------
 
 let draft: string[] | null = null;
 let basedOn = '';
-/** The folder card picked to be swapped out when the folder is full. */
+/** The deck card picked to be swapped out when the deck is full. */
 let selected: string | null = null;
 let notice = '';
 
 function sync(p: ProfileView): string[] {
-  const key = p.folder.cards.join(',');
+  const key = p.deck.cards.join(',');
   if (draft === null || basedOn !== key) {
-    draft = [...p.folder.cards];
+    draft = [...p.deck.cards];
     basedOn = key;
     selected = null;
     notice = '';
@@ -44,9 +45,9 @@ function sync(p: ProfileView): string[] {
 }
 
 const KLASS: Record<string, string> = { S: '', M: 'MEGA', G: 'GIGA', F: 'FUSED' };
-const klassOf = (c: Chip): string => (c.id.startsWith('ga_') ? 'F' : (c.klass ?? 'S'));
+const klassOf = (c: Card): string => (c.id.startsWith('ga_') ? 'F' : (c.klass ?? 'S'));
 
-const order = (a: Chip, b: Chip): number =>
+const order = (a: Card, b: Card): number =>
   a.element.localeCompare(b.element) || b.power * b.hits - a.power * a.hits || a.name.localeCompare(b.name);
 
 function counts(ids: readonly string[]): Map<string, number> {
@@ -72,11 +73,11 @@ function nextLicence(word: string, level: number): string {
   return g ? `<i class="next">licence LV ${g.at}</i>` : '';
 }
 
-function row(c: Chip, extra: { n?: number; sig?: boolean; sel?: boolean; btn: string; why?: string; dim?: boolean }): string {
+function row(c: Card, extra: { n?: number; sig?: boolean; sel?: boolean; btn: string; why?: string; dim?: boolean }): string {
   const col = ELEMENT_COLOUR[c.element] ?? 'var(--violet)';
   const k = klassOf(c);
   return `<div class="fdr ${extra.sel ? 'sel' : ''} ${extra.dim ? 'dim' : ''}" data-id="${esc(c.id)}" style="--c:${col}" title="${esc(c.name)} — ${esc(c.effect)}${extra.why ? ` · ${esc(extra.why)}` : ''}">
-    <span class="el">${ELEMENT_ICON[c.element] ?? ''}</span>
+    <span class="el">${cardImg(c.id, c.element, 'card-art')}</span>
     <span class="nm">${extra.sig ? '<i class="sig" title="your Chog\'s signature card">◆</i>' : ''}${esc(c.name)}</span>
     <span class="st"><b>${c.power}</b>×${c.hits}</span>
     <span class="kl">${KLASS[k] ?? ''}</span>
@@ -85,19 +86,19 @@ function row(c: Chip, extra: { n?: number; sig?: boolean; sel?: boolean; btn: st
   </div>`;
 }
 
-export function renderFolder(p: ProfileView): string {
+export function renderDeck(p: ProfileView): string {
   const d = sync(p);
-  const rules = p.folder.rules;
-  const pool = new Set(p.folder.pool);
-  const check = checkFolder(rules, d, pool);
+  const rules = p.deck.rules;
+  const pool = new Set(p.deck.pool);
+  const check = checkDeck(rules, d, pool);
   const have = counts(d);
-  const dirty = d.join(',') !== p.folder.cards.join(',');
+  const dirty = d.join(',') !== p.deck.cards.join(',');
   const full = d.length >= rules.size;
 
   // the deck: one row per distinct card, with how many copies
   const deckRows = [...have.keys()]
-    .map((id) => anyChip(id))
-    .filter((c): c is Chip => !!c)
+    .map((id) => anyCard(id))
+    .filter((c): c is Card => !!c)
     .sort(order)
     .map((c) => {
       const sig = c.id === rules.signature;
@@ -111,27 +112,27 @@ export function renderFolder(p: ProfileView): string {
     .join('');
 
   // the collection: everything the Chog may field, with what stops one more going in
-  const poolRows = p.folder.pool
-    .map((id) => anyChip(id))
-    .filter((c): c is Chip => !!c)
+  const poolRows = p.deck.pool
+    .map((id) => anyCard(id))
+    .filter((c): c is Card => !!c)
     .sort(order)
     .map((c) => {
       const inDeck = have.get(c.id) ?? 0;
       // Judge the add as if the selected card were already out, so a swap is never refused for being full.
       const base = full && selected ? removeOne(d, selected) : d;
       const fits = base.length < rules.size && canAdd(rules, base, c.id, pool);
-      const why = base.length >= rules.size ? 'the folder is full — pick a card in it to swap out' : fits ? '' : whyNot(rules, base, c, inDeck);
+      const why = base.length >= rules.size ? 'the deck is full — pick a card in it to swap out' : fits ? '' : whyNot(rules, base, c, inDeck);
       return row(c, {
         n: inDeck,
         sig: c.id === rules.signature,
         dim: !fits,
         why,
-        btn: `<button class="add" data-add="${esc(c.id)}" ${fits ? '' : 'disabled'} title="${esc(why || 'put one in the folder')}">+</button>`,
+        btn: `<button class="add" data-add="${esc(c.id)}" ${fits ? '' : 'disabled'} title="${esc(why || 'put one in the deck')}">+</button>`,
       });
     })
     .join('');
 
-  const errs = check.errors.filter((e) => !e.startsWith('a folder holds exactly'));
+  const errs = check.errors.filter((e) => !e.startsWith('a deck holds exactly'));
   const status = check.ok
     ? dirty
       ? '<span class="warn">● unsaved changes</span>'
@@ -140,12 +141,12 @@ export function renderFolder(p: ProfileView): string {
 
   return `<div class="fold2">
     <section class="fd-col">
-      <header>FOLDER <b class="${d.length === rules.size ? 'ok' : 'bad'}">${d.length}/${rules.size}</b>
+      <header>DECK <b class="${d.length === rules.size ? 'ok' : 'bad'}">${d.length}/${rules.size}</b>
         <small>${full ? 'tap a card here, then<span class="only-keys"> + on the right</span><span class="only-touch"> + in the collection</span> to swap' : 'six are dealt to you at a time'}</small></header>
       <div class="fd-list">${deckRows || '<div class="idle">empty — press AUTO</div>'}</div>
     </section>
     <section class="fd-col">
-      <header>COLLECTION <b>${p.folder.pool.length}</b><small>born cards, loot, shop buys, fusions</small></header>
+      <header>COLLECTION <b>${p.deck.pool.length}</b><small>born cards, loot, shop buys, fusions</small></header>
       <div class="fd-list">${poolRows}</div>
     </section>
     <footer>
@@ -158,8 +159,8 @@ export function renderFolder(p: ProfileView): string {
       </div>
       <div class="fd-msg">${notice ? `<span class="warn">${esc(notice)}</span>` : status}</div>
       <div class="fd-btns">
-        <button data-act="auto" title="fill the folder with your strongest cards">AUTO</button>
-        <button data-act="reset" title="back to the folder this Chog was born with">BORN</button>
+        <button data-act="auto" title="fill the deck with your strongest cards">AUTO</button>
+        <button data-act="reset" title="back to the deck this Chog was born with">BORN</button>
         <button class="save" data-act="save" ${check.ok && dirty ? '' : 'disabled'}>SAVE</button>
       </div>
     </footer>
@@ -171,8 +172,8 @@ function removeOne(list: readonly string[], id: string): string[] {
   return i < 0 ? [...list] : [...list.slice(0, i), ...list.slice(i + 1)];
 }
 
-/** Why one more copy of a card would not fit, in the words the folder rules use. */
-function whyNot(rules: ProfileView['folder']['rules'], list: readonly string[], c: Chip, inDeck: number): string {
+/** Why one more copy of a card would not fit, in the words the deck rules use. */
+function whyNot(rules: ProfileView['deck']['rules'], list: readonly string[], c: Card, inDeck: number): string {
   const k = klassOf(c);
   if (c.id !== rules.signature && c.element === rules.banned) return `your Chog cannot field ${rules.banned}`;
   const limit = k === 'F' ? 1 : rules.copies;
@@ -184,17 +185,17 @@ function whyNot(rules: ProfileView['folder']['rules'], list: readonly string[], 
   return 'not allowed';
 }
 
-export function bindFolder(el: HTMLElement, p: ProfileView, api: FolderApi): void {
+export function bindDeck(el: HTMLElement, p: ProfileView, api: DeckApi): void {
   const d = sync(p);
-  const rules = p.folder.rules;
-  const pool = new Set(p.folder.pool);
+  const rules = p.deck.rules;
+  const pool = new Set(p.deck.pool);
   el.querySelectorAll<HTMLElement>('[data-add]').forEach((b) =>
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       const id = b.dataset.add!;
       const full = d.length >= rules.size;
       if (full && !selected) {
-        notice = 'the folder is full — click a card in it to swap that one out';
+        notice = 'the deck is full — click a card in it to swap that one out';
         return api.repaint();
       }
       if (full && selected) {
@@ -203,7 +204,7 @@ export function bindFolder(el: HTMLElement, p: ProfileView, api: FolderApi): voi
         selected = null;
       }
       if (!canAdd(rules, d, id, pool)) {
-        notice = 'that card does not fit the folder rules';
+        notice = 'that card does not fit the deck rules';
         return api.repaint();
       }
       d.push(id);
@@ -221,7 +222,7 @@ export function bindFolder(el: HTMLElement, p: ProfileView, api: FolderApi): voi
       api.repaint();
     }),
   );
-  // a folder row is picked to be swapped for something from the collection
+  // a deck row is picked to be swapped for something from the collection
   el.querySelectorAll<HTMLElement>('.fd-col:first-child .fdr').forEach((r) =>
     r.addEventListener('click', () => {
       selected = selected === r.dataset.id ? null : r.dataset.id!;
@@ -250,19 +251,23 @@ export function bindFolder(el: HTMLElement, p: ProfileView, api: FolderApi): voi
 
 export function renderLibrary(p: ProfileView): string {
   const lib = p.library;
-  const name = (id: string): string => anyChip(id)?.name ?? id;
+  const name = (id: string): string => anyCard(id)?.name ?? id;
+  const icon = (id: string): string => {
+    const c = anyCard(id);
+    return c ? cardImg(c.id, c.element, 'lib-art') : '';
+  };
   const rows = lib.recipes
     .map((r) => {
       if (!r.known) {
         return `<div class="lbr unknown"><span class="q">?</span><div><b>unknown fusion</b><small>${esc(r.hint)}</small></div></div>`;
       }
       return `<div class="lbr"><span class="q">★</span><div><b>${esc(r.name ?? '???')}</b>
-        <small>${(r.needs ?? []).map((id) => esc(name(id))).join(' + ')} <i>→</i> ${esc(name(r.result ?? ''))}</small></div></div>`;
+        <small>${(r.needs ?? []).map((id) => `${icon(id)}${esc(name(id))}`).join()} <i>→</i> ${icon(r.result ?? '')}${esc(name(r.result ?? ''))}</small></div></div>`;
     })
     .join('');
   return `<div class="lib">
     <header><span>FUSION LIBRARY</span><b>${lib.discovered}/${lib.total}</b></header>
-    <p class="lead">Pick three cards in a line on the Custom Screen. When they spell a recipe they collapse into one stronger card — and it joins your collection for good. Recipes stay hidden until you fire them; each shows only a hint.</p>
+    <p class="lead">Pick three cards in a line on the Hand. When they spell a recipe they collapse into one stronger card — and it joins your collection for good. Recipes stay hidden until you fire them; each shows only a hint.</p>
     <div class="lib-list">${rows || '<div class="idle">no recipes yet</div>'}</div>
   </div>`;
 }

@@ -48,7 +48,16 @@ export interface PartyInvite {
   at: number;
 }
 
+/** An open brawl challenge: the challenger wants to fight the addressee’s shadow. */
+export interface BrawlChallenge {
+  from: string;
+  at: number;
+  /** Matched $CHOG stake. Zero is an honor brawl, as before. */
+  wager: number;
+}
+
 export const INVITE_TTL_MS = 45_000;
+export const CHALLENGE_TTL_MS = 60_000;
 
 export interface TradeOffer {
   id: string;
@@ -56,6 +65,9 @@ export interface TradeOffer {
   to: string;
   giving: string[];
   wanting: string[];
+  /** Item ids, one entry per unit: two meds is listed twice. */
+  givingItems: string[];
+  wantingItems: string[];
   /** Cards are held out but not transferred until both sides confirm. */
   accepted: boolean;
   made: number;
@@ -71,6 +83,8 @@ export class Social {
   trades = new Map<string, TradeOffer>();
   /** playerId -> the invitation waiting for them (one at a time) */
   invites = new Map<string, PartyInvite>();
+  /** playerId -> the brawl challenge waiting for them (one at a time) */
+  challenges = new Map<string, BrawlChallenge>();
   /** playerId -> pending offers addressed to them */
   private inbox = new Map<string, Set<string>>();
 
@@ -128,6 +142,8 @@ export class Social {
   unlink(id: string): void {
     this.invites.delete(id);
     for (const [to, inv] of this.invites) if (inv.from === id) this.invites.delete(to);
+    this.challenges.delete(id);
+    for (const [to, ch] of this.challenges) if (ch.from === id) this.challenges.delete(to);
     const party = this.partyOf(id);
     if (!party) return;
     party.members = party.members.filter((m) => m !== id);
@@ -187,6 +203,41 @@ export class Social {
     return inv?.from ?? null;
   }
 
+  /**
+   * Challenge someone to a brawl: if they accept, the challenger fights their shadow.
+   * One challenge at a time per addressee, like an invitation.
+   */
+  challenge(from: string, to: string, wager = 0, now = Date.now()): { ok: boolean; reason?: string } {
+    if (from === to) return { ok: false, reason: 'you cannot fight your own shadow' };
+    this.challenges.set(to, { from, at: now, wager: Math.max(0, Math.floor(wager)) });
+    return { ok: true };
+  }
+
+  /** The challenge waiting for `to`, unless it has run out. */
+  challengeFor(to: string, now = Date.now()): BrawlChallenge | null {
+    const ch = this.challenges.get(to);
+    if (!ch) return null;
+    if (now - ch.at > CHALLENGE_TTL_MS) {
+      this.challenges.delete(to);
+      return null;
+    }
+    return ch;
+  }
+
+  /** Say yes: the challenger’s name and the price come back so the world can start their field. */
+  acceptChallenge(to: string, now = Date.now()): { ok: boolean; reason?: string; from?: string; wager?: number } {
+    const ch = this.challengeFor(to, now);
+    if (!ch) return { ok: false, reason: 'that challenge has run out' };
+    this.challenges.delete(to);
+    return { ok: true, from: ch.from, wager: ch.wager };
+  }
+
+  declineChallenge(to: string): string | null {
+    const ch = this.challenges.get(to);
+    this.challenges.delete(to);
+    return ch?.from ?? null;
+  }
+
   /** The leader sends someone out of the party. */
   kick(leader: string, target: string): { ok: boolean; reason?: string } {
     const party = this.partyOf(leader);
@@ -220,13 +271,15 @@ export class Social {
 
   // ------------------------------------------------------------------ trade
 
-  offer(from: string, to: string, giving: string[], wanting: string[]): TradeOffer {
+  offer(from: string, to: string, giving: string[], wanting: string[], givingItems: string[] = [], wantingItems: string[] = []): TradeOffer {
     const t: TradeOffer = {
       id: nextId('t-'),
       from,
       to,
       giving: [...new Set(giving)].slice(0, 6),
       wanting: [...new Set(wanting)].slice(0, 6),
+      givingItems: [...givingItems].slice(0, 6),
+      wantingItems: [...wantingItems].slice(0, 6),
       accepted: false,
       made: Date.now(),
     };
@@ -254,8 +307,8 @@ export class Social {
    * player can spend or lose a card between being offered and accepting. That is
    * the whole difference between a trade that works and one that duplicates cards.
    */
-  accept(tradeId: string, by: string, holdings: Record<string, string[]>):
-    { ok: true; swap: { to: string; give: string[]; take: string[] } } | { ok: false; reason: string } {
+  accept(tradeId: string, by: string, holdings: Record<string, string[]>, itemHoldings: Record<string, Record<string, number>> = {}):
+    { ok: true; swap: { to: string; give: string[]; take: string[]; giveItems: string[]; takeItems: string[] } } | { ok: false; reason: string } {
     const t = this.trades.get(tradeId);
     if (!t) return { ok: false, reason: 'gone' };
     if (t.to !== by) return { ok: false, reason: 'not yours' };
@@ -263,8 +316,19 @@ export class Social {
     const toCards = holdings[by] ?? [];
     if (!t.giving.every((c) => fromCards.includes(c))) return { ok: false, reason: 'they no longer hold it' };
     if (!t.wanting.every((c) => toCards.includes(c))) return { ok: false, reason: 'you no longer hold it' };
+    const counts = (ids: string[]): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const id of ids) m.set(id, (m.get(id) ?? 0) + 1);
+      return m;
+    };
+    for (const [id, n] of counts(t.givingItems)) {
+      if ((itemHoldings[t.from]?.[id] ?? 0) < n) return { ok: false, reason: 'they no longer hold it' };
+    }
+    for (const [id, n] of counts(t.wantingItems)) {
+      if ((itemHoldings[by]?.[id] ?? 0) < n) return { ok: false, reason: 'you no longer hold it' };
+    }
     this.cancel(tradeId);
-    return { ok: true, swap: { to: t.from, give: t.wanting, take: t.giving } };
+    return { ok: true, swap: { to: t.from, give: t.wanting, take: t.giving, giveItems: t.wantingItems, takeItems: t.givingItems } };
   }
 
   // ------------------------------------------------------------------ tribe

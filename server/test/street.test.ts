@@ -3,10 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  CHIP_BY_ID,
+  CARD_BY_ID,
   SF,
   GA_BY_ID,
-  GA_CHIPS,
+  GA_CARDS,
   sellPrice,
   cityOf,
   partyHpScale,
@@ -67,13 +67,49 @@ function fresh(token = 4001) {
 
 function finishField(world: InstanceType<typeof World>, id: string): void {
   const field = world.sessionOf(id)!;
-  const body = field.bodyOf(id)!;
+  const st = field.state;
+  const body = st.players.find((p) => p.id === id)!;
   field.field.boss.hp = 1;
-  field.field.boss.file = body.file;
-  SF.pressBuster(field.state, id);
-  SF.releaseBuster(field.state, id);
+  body.file = st.field.boss.file;
+  st.boss.next = 100_000;
+  field.field.hazards = [];
+  body.handOpen = false;
+  body.program = null;
+  SF.openHand(st, body);
+  const hand = body.hand!;
+  const cell = hand.cells.find((c) => SF.canPick(hand, c.cell, SF.capsOf(body)).ok);
+  expect(cell, 'a pickable card').toBeDefined();
+  expect(SF.pickCard(st, id, cell!.cell)).toBe(true);
+  expect(SF.execute(st, id)).toBe(true);
+  for (let t = 0; t < 3000 && st.result == null; t += 100) world.stepSessions(100);
   expect(field.state.result).toBe('win');
-  world.stepSessions(16);
+}
+
+/**
+ * finishField for a bout: both boots are already on, so the winner puts one program
+ * down the loser's file and the engine does the rest - down, grace, removal, decision.
+ * Separated so a PvP rebalance only breaks the brawl tests.
+ */
+function finishPvp(world: InstanceType<typeof World>, id: string): void {
+  const field = world.sessionOf(id)!;
+  const st = field.state;
+  const body = st.players.find((p) => p.id === id)!;
+  const loser = st.players.find((p) => p.id !== id)!;
+  loser.hp = 1;
+  body.file = loser.file;
+  for (const b of st.players) { b.chargeMs = 100_000; b.charge = 0; }
+  field.field.hazards = [];
+  body.handOpen = false;
+  body.program = null;
+  SF.openHand(st, body);
+  const hand = body.hand!;
+  const cell = hand.cells.find((c) => SF.canPick(hand, c.cell, SF.capsOf(body)).ok);
+  expect(cell, 'a pickable card').toBeDefined();
+  expect(SF.pickCard(st, id, cell!.cell)).toBe(true);
+  expect(SF.execute(st, id)).toBe(true);
+  for (let t = 0; t < 8000 && !st.over; t += 100) world.stepSessions(100);
+  expect(field.state.result).toBe('win');
+  expect(field.state.winnerId).toBe(id);
 }
 
 describe('where a player may stand', () => {
@@ -256,7 +292,7 @@ describe('the dungeons', () => {
         world.duelEnter(id, 'node');
         // What the tick loop does when a field's boss falls: the kill is issued before it is paid.
         profiles.armNode(tokenId, next.id);
-        last = profiles.clearCurrent(tokenId, 0);
+        last = profiles.clearCurrent(tokenId, 0, 1, world.players.get(id)!.build);
       }
     }
     return last;
@@ -357,6 +393,25 @@ describe('the dungeons', () => {
     const again = runToCore(world, p.tokenId, id);
     expect(again.cleared?.first).toBe(false);
     expect(again.cleared?.grant).toBeUndefined();
+  });
+
+  it('earns the signature itself on the first clear, and never twice', () => {
+    const { world, p, id } = fresh(40335);
+    toLevel(world, p.tokenId, 5);
+    stand(p, anchor('a-fold'));
+    expect(world.loop(id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
+    const sig = p.build.signature;
+    expect(world.profiles.pool(p.tokenId, p.build)).not.toContain(sig);
+    const res = runToCore(world, p.tokenId, id);
+    expect(res.cleared?.first).toBe(true);
+    expect(res.cleared?.grant?.cards).toContain(sig);
+    expect(world.profiles.pool(p.tokenId, p.build)).toContain(sig);
+    // a second run pays its rooms but never a second signature
+    world.loop(id, { action: 'area.close' });
+    expect(world.loop(id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
+    const again = runToCore(world, p.tokenId, id);
+    expect(again.cleared?.first).toBe(false);
+    expect(world.profiles.pool(p.tokenId, p.build).filter((c) => c === sig)).toHaveLength(1);
   });
 
   it('count toward the quest that names them, and no other', () => {
@@ -528,43 +583,43 @@ describe('the dungeons', () => {
 
   it('buys back a duplicate card at the counter instead of swallowing it', () => {
     const { world, p } = fresh(4060);
-    const card = [...CHIP_BY_ID.values()].find((c) => !c.klass)!;
+    const card = [...CARD_BY_ID.values()].find((c) => !c.klass)!;
     world.saves.setChips(p.tokenId, [card.id]);
     const wav = world.profiles.doc(p.tokenId).bag.wav;
 
-    const res = world.profiles.grant(p.tokenId, { chips: [card.id] });
+    const res = world.profiles.grant(p.tokenId, { cards: [card.id] });
     // A second copy of a card this Chog can already field is not a collection, so nothing lands —
     // but a drop that is worth less than nothing teaches a player to stop opening chests.
-    expect(res.chips).toEqual([]);
+    expect(res.cards).toEqual([]);
     expect(res.refunded).toEqual([{ id: card.id, name: card.name, wav: sellPrice(card) }]);
     // the same price the sell button pays, in the bag, on the spot
     expect(world.profiles.doc(p.tokenId).bag.wav).toBe(wav + sellPrice(card));
     expect(res.wav).toBe(sellPrice(card));
-    expect(world.saves.get(p.tokenId).chips).toEqual([card.id]);
+    expect(world.saves.get(p.tokenId).cards).toEqual([card.id]);
   });
 
   it('buys back what a full bag has no room for, and still makes room for a fusion', () => {
     const { world, p } = fresh(4061);
     const cap = world.profiles.unlocks(p.tokenId).bagCap;
     // The cap is a rule about ordinary cards, so the test fills the bag the same way the bag is filled.
-    const ordinary = [...CHIP_BY_ID.values()].filter((c) => !GA_BY_ID.has(c.id));
+    const ordinary = [...CARD_BY_ID.values()].filter((c) => !GA_BY_ID.has(c.id));
     const held = ordinary.slice(0, cap).map((c) => c.id);
     const loose = ordinary[cap]!;
-    const fused = GA_CHIPS[0]!;
+    const fused = GA_CARDS[0]!;
     world.saves.setChips(p.tokenId, held);
     const wav = world.profiles.doc(p.tokenId).bag.wav;
 
-    const res = world.profiles.grant(p.tokenId, { chips: [loose.id, fused.id] });
+    const res = world.profiles.grant(p.tokenId, { cards: [loose.id, fused.id] });
     // An ordinary card is held to the cap and paid for; a fused one is earned discovery and always fits.
     expect(res.refunded.map((r) => r.id)).toEqual([loose.id]);
-    expect(res.chips).toEqual([fused.id]);
+    expect(res.cards).toEqual([fused.id]);
     expect(world.profiles.doc(p.tokenId).bag.wav).toBe(wav + sellPrice(loose));
-    expect(world.saves.get(p.tokenId).chips).toEqual([...held, fused.id]);
+    expect(world.saves.get(p.tokenId).cards).toEqual([...held, fused.id]);
   });
 
   it('pays a chest on the step, and buys back the card this Chog already holds', () => {
     const { world, p, id } = fresh(4062);
-    const commons = [...CHIP_BY_ID.values()].filter((c) => !c.klass);
+    const commons = [...CARD_BY_ID.values()].filter((c) => !c.klass);
     const dup = commons[0]!;
     const freshCard = commons[1]!;
     world.saves.setChips(p.tokenId, [dup.id]);
@@ -576,7 +631,7 @@ describe('the dungeons', () => {
       entryId: '0-0', bossId: '2-0',
       nodes: [
         { id: '0-0', kind: 'gate', row: 0, col: 0, links: ['1-0'], label: 'MOUTH' },
-        { id: '1-0', kind: 'chest', row: 1, col: 0, links: ['2-0'], label: 'CACHE', chips: [dup.id, freshCard.id] },
+        { id: '1-0', kind: 'chest', row: 1, col: 0, links: ['2-0'], label: 'CACHE', cards: [dup.id, freshCard.id] },
         { id: '2-0', kind: 'boss', row: 2, col: 0, links: [], label: 'GUARDIAN' },
       ],
     };
@@ -587,8 +642,8 @@ describe('the dungeons', () => {
     const before = { xp: doc.xp, wav: doc.bag.wav };
     const step = world.loop(id, { action: 'area.step', nodeId: '1-0' }) as unknown as {
       ok: boolean;
-      outcome: { kind: string; xp: number; wav: number; chips: string[] };
-      grant?: { xp: number; wav: number; chips: string[]; refunded: { id: string; name: string; wav: number }[] };
+      outcome: { kind: string; xp: number; wav: number; cards: string[] };
+      grant?: { xp: number; wav: number; cards: string[]; refunded: { id: string; name: string; wav: number }[] };
     };
 
     expect(step.ok).toBe(true);
@@ -598,14 +653,14 @@ describe('the dungeons', () => {
     expect(world.profiles.doc(p.tokenId).bag.wav).toBe(before.wav + grant.wav);
     // the duplicate is money, so the purse pays more than the tile rolled and the bag holds only the new card
     expect(grant.wav).toBe(step.outcome.wav + sellPrice(dup));
-    expect(grant.chips).toEqual([freshCard.id]);
+    expect(grant.cards).toEqual([freshCard.id]);
     expect(grant.refunded).toEqual([{ id: dup.id, name: dup.name, wav: sellPrice(dup) }]);
-    expect(world.saves.get(p.tokenId).chips).toEqual([dup.id, freshCard.id]);
+    expect(world.saves.get(p.tokenId).cards).toEqual([dup.id, freshCard.id]);
   });
 
   it('show the end-of-fight plate what a room paid, refund and all', () => {
     const { world, p, id } = fresh(4064);
-    const commons = [...CHIP_BY_ID.values()].filter((c) => !c.klass);
+    const commons = [...CARD_BY_ID.values()].filter((c) => !c.klass);
     const dup = commons[0]!;
     const freshCard = commons[2]!;
     world.saves.setChips(p.tokenId, [dup.id]);
@@ -620,7 +675,7 @@ describe('the dungeons', () => {
         {
           id: '1-0', kind: 'wave', row: 1, col: 0, links: [], label: 'CONTACT',
           enemy: { name: 'TEST WAVE', element: 'burn', hp: 400, power: 8, archetype: 'spark' },
-          chips: [dup.id, freshCard.id],
+          cards: [dup.id, freshCard.id],
         },
       ],
     };
@@ -637,13 +692,13 @@ describe('the dungeons', () => {
     finishField(world, id);
 
     const end = inbox.find((m) => m.kind === 'end') as {
-      won: boolean; reason: string; xp: number; wav: number; chips: string[];
+      won: boolean; reason: string; xp: number; wav: number; cards: string[];
       refunded: { id: string; name: string; wav: number }[];
     };
     expect(end.won).toBe(true);
     expect(end.reason).toBe('cleared');
     expect(end.xp).toBeGreaterThan(0);
-    expect(end.chips).toEqual([freshCard.id]);
+    expect(end.cards).toEqual([freshCard.id]);
     // the bought-back card is named on the receipt, so the purse reading bigger than the tile is not a mystery
     expect(end.refunded).toEqual([{ id: dup.id, name: dup.name, wav: sellPrice(dup) }]);
     expect(end.wav).toBe(world.profiles.doc(p.tokenId).bag.wav - purse);
@@ -677,7 +732,7 @@ describe('the dungeons', () => {
 
   it('pays a Card Pack whose three commons are all already held', () => {
     const { world, p } = fresh(4063);
-    const commons = [...CHIP_BY_ID.values()].filter((c) => !c.klass);
+    const commons = [...CARD_BY_ID.values()].filter((c) => !c.klass);
     world.saves.setChips(p.tokenId, commons.map((c) => c.id));
     world.profiles.grant(p.tokenId, { items: { pack: 1 } });
     const wav = world.profiles.doc(p.tokenId).bag.wav;
@@ -685,7 +740,7 @@ describe('the dungeons', () => {
     const used = world.profiles.use(p.tokenId, 'pack');
     // Three commons from one bag is a roll with replacement, and this Chog holds every common there is.
     expect(used.ok).toBe(true);
-    expect(used.effect?.chips).toEqual([]);
+    expect(used.effect?.cards).toEqual([]);
     expect(used.effect?.refunded?.length).toBe(3);
     const back = (used.effect?.refunded ?? []).reduce((s, r) => s + r.wav, 0);
     expect(world.profiles.doc(p.tokenId).bag.wav).toBe(wav + back);
@@ -694,7 +749,7 @@ describe('the dungeons', () => {
 });
 
 describe('conversations and the journey', () => {
-  it('turns a blank line in a quest into a page turn, so the Dry Run is a conversation and not a wall of text', () => {
+  it('turns a blank line in a quest into a page turn, so the Testnet Baby is a conversation and not a wall of text', () => {
     const { world, p, id } = fresh(4032);
     // finish the first quest so the Operator has the next one on offer
     stand(p, anchor('a-board'));
@@ -754,7 +809,7 @@ describe('places and doors', () => {
     const { world, p, id } = fresh(4021);
     stand(p, anchor('a-courier'), 80);
     expect(world.loop(id, { action: 'door.enter', door: 'shop' }).ok).toBe(false);
-    stand(p, anchor('a-chip'), 0);
+    stand(p, anchor('a-card'), 0);
     expect(world.loop(id, { action: 'door.enter', door: 'shop' }).ok).toBe(true);
   });
 });
@@ -788,5 +843,372 @@ describe('mystery waves', () => {
     const ra = a.world.loop(a.id, { action: 'wave.collect', waveId: w.id }) as unknown as { wav: number };
     const rb = b.world.loop(b.id, { action: 'wave.collect', waveId: w.id }) as unknown as { wav: number };
     expect(ra.wav).toBe(rb.wav);
+  });
+});
+
+describe('area.draft — the 1-of-3 pick', () => {
+  // A fold with one wave in it, walked the honest way: step, engage, win. After the kill
+  // the run parks 3 dealt cards; `area.draft` takes exactly one of them into the collection.
+  function runToWaveDraft(token: number) {
+    const { world, p, id } = fresh(token);
+    const area: DataArea = {
+      id: 'a-draft', name: 'TEST DRAFT', tier: 1, seed: 7, sector: 'ashflat', rows: 2,
+      entryId: '0-0', bossId: '1-0',
+      nodes: [
+        { id: '0-0', kind: 'gate', row: 0, col: 0, links: ['1-0'], label: 'MOUTH' },
+        {
+          id: '1-0', kind: 'wave', row: 1, col: 0, links: [], label: 'CONTACT',
+          enemy: { name: 'TEST WAVE', element: 'burn', hp: 400, power: 8, archetype: 'spark' },
+        },
+      ],
+    };
+    const doc = world.profiles.doc(p.tokenId);
+    doc.area = area;
+    doc.run = startRun(area, 200);
+    expect(world.loop(id, { action: 'area.step', nodeId: '1-0' }).ok).toBe(true);
+    expect(world.loop(id, { action: 'area.engage' }).ok).toBe(true);
+    finishField(world, id);
+    return { world, p, id };
+  }
+
+  it('takes 1 of the 3 dealt cards into the pool and parks nothing after', () => {
+    const { world, p, id } = runToWaveDraft(4071);
+    const parked = world.profiles.doc(p.tokenId).run!.draft!;
+    expect(parked.options.length).toBe(3);
+    // Ownership, not the build-filtered pool: a drafted card of the banned element is still
+    // owned, just not fieldable by this Chog.
+    const before = world.saves.get(p.tokenId).cards;
+    expect(before).not.toContain(parked.options[0]);
+    const res = world.loop(id, { action: 'area.draft', card: parked.options[0] });
+    expect(res.ok).toBe(true);
+    // The sheet repaints off the reply, so the fresh run rides along and the panel clears itself.
+    expect((res.run as { draft: null } | undefined)?.draft).toBeNull();
+    expect(world.saves.get(p.tokenId).cards).toContain(parked.options[0]);
+    expect(world.profiles.doc(p.tokenId).run!.draft).toBeNull();
+    // The other two offers evaporate with the pick — no second serving.
+    expect(world.loop(id, { action: 'area.draft', card: parked.options[1] }).ok).toBe(false);
+  });
+
+  it('refuses a card it never dealt', () => {
+    const { world, p, id } = runToWaveDraft(4072);
+    const parked = world.profiles.doc(p.tokenId).run!.draft!;
+    const before = world.saves.get(p.tokenId).cards.slice();
+    const res = world.loop(id, { action: 'area.draft', card: 'nope-not-a-card' });
+    expect(res.ok).toBe(false);
+    expect(world.saves.get(p.tokenId).cards).toEqual(before);
+    // The real offer still waits after a wrong name.
+    expect(world.profiles.doc(p.tokenId).run!.draft!.options).toEqual(parked.options);
+  });
+
+  it('refuses when no combat node dealt anything', () => {
+    const { world, id } = fresh(4073);
+    expect(world.loop(id, { action: 'area.draft', card: 'c-ember-1' })).toMatchObject({ ok: false });
+  });
+});
+
+describe('area.shrine — the rest thins the deck', () => {
+  // A fold with one shrine in it, walked the honest way: step, rest. The step heals and
+  // parks the rest; `area.shrine` thins exactly one held card, never a signature.
+  function runToShrineRest(token: number) {
+    const { world, p, id } = fresh(token);
+    const area: DataArea = {
+      id: 'a-shrine', name: 'TEST REST', tier: 1, seed: 9, sector: 'ashflat', rows: 2,
+      entryId: '0-0', bossId: '1-0',
+      nodes: [
+        { id: '0-0', kind: 'gate', row: 0, col: 0, links: ['1-0'], label: 'MOUTH' },
+        { id: '1-0', kind: 'shrine', row: 1, col: 0, links: [], label: 'RELAY' },
+      ],
+    };
+    const doc = world.profiles.doc(p.tokenId);
+    doc.area = area;
+    doc.run = startRun(area, 200);
+    const held = [...CARD_BY_ID.values()].filter((c) => !c.klass && !c.signature);
+    world.saves.setChips(p.tokenId, [p.build.signature, held[0]!.id, held[1]!.id]);
+    expect(world.loop(id, { action: 'area.step', nodeId: '1-0' }).ok).toBe(true);
+    return { world, p, id, sig: p.build.signature, first: held[0]!.id, second: held[1]!.id };
+  }
+
+  it('removes one held copy, parks nothing after, and pays no WAV', () => {
+    const { world, p, id, first, second, sig } = runToShrineRest(4081);
+    expect(world.profiles.doc(p.tokenId).run!.shrine).toEqual({ nodeId: '1-0' });
+    const purse = world.profiles.doc(p.tokenId).bag.wav;
+    const res = world.loop(id, { action: 'area.shrine', card: first });
+    expect(res.ok).toBe(true);
+    expect(world.saves.get(p.tokenId).cards).toEqual([sig, second]);
+    expect(world.profiles.doc(p.tokenId).bag.wav).toBe(purse);
+    expect(world.profiles.doc(p.tokenId).run!.shrine).toBeNull();
+    // The sheet repaints off the reply, so the fresh run rides along.
+    expect((res.run as { shrine: null } | undefined)?.shrine).toBeNull();
+    // One rest, one thinning — no second serving.
+    expect(world.loop(id, { action: 'area.shrine', card: second }).ok).toBe(false);
+  });
+
+  it('refuses a signature card and keeps the rest waiting', () => {
+    const { world, p, id, sig, first, second } = runToShrineRest(4082);
+    const before = world.saves.get(p.tokenId).cards.slice();
+    expect(before).toEqual([sig, first, second]);
+    const res = world.loop(id, { action: 'area.shrine', card: sig });
+    expect(res.ok).toBe(false);
+    expect(world.saves.get(p.tokenId).cards).toEqual(before);
+    expect(world.profiles.doc(p.tokenId).run!.shrine).toEqual({ nodeId: '1-0' });
+  });
+
+  it('refuses a card never held, and a rest never taken', () => {
+    const { world, p, id } = runToShrineRest(4083);
+    const before = world.saves.get(p.tokenId).cards.slice();
+    expect(world.loop(id, { action: 'area.shrine', card: 'nope-not-a-card' }).ok).toBe(false);
+    expect(world.saves.get(p.tokenId).cards).toEqual(before);
+    expect(world.profiles.doc(p.tokenId).run!.shrine).toEqual({ nodeId: '1-0' });
+    const cold = fresh(4084);
+    expect(cold.world.loop(cold.id, { action: 'area.shrine', card: before[0] }).ok).toBe(false);
+  });
+});
+
+describe('pvp — brawl on one field', () => {
+  // Two Chogs on the street, both listening, so the challenge, the field and the
+  // story it tells are all checkable.
+  function twoOnStreet(aToken: number, bToken: number) {
+    const world = new World();
+    const a = world.join('p' + aToken, { tokenId: aToken, transferCount: 0, daysHeld: 0 }, 'ashflat');
+    const b = world.join('p' + bToken, { tokenId: bToken, transferCount: 0, daysHeld: 0 }, 'ashflat');
+    const inboxA: Record<string, unknown>[] = [];
+    const inboxB: Record<string, unknown>[] = [];
+    world.onPush(a.id, (m) => inboxA.push(m));
+    world.onPush(b.id, (m) => inboxB.push(m));
+    return { world, a, b, inboxA, inboxB };
+  }
+
+  it('carries a challenge to the street and steps both boots onto one field', () => {
+    const { world, a, b, inboxA, inboxB } = twoOnStreet(4091, 4092);
+    world.pvpAction(a.id, { action: 'challenge', with: b.id });
+    expect(inboxB.find((m) => m.t === 'pvp' && m.challenge)).toMatchObject({
+      challenge: { from: a.id, name: a.build.callsign },
+    });
+    expect(inboxA.find((m) => m.t === 'pvp' && m.notice)).toBeTruthy();
+    world.pvpAction(b.id, { action: 'accept' });
+    const field = world.sessions.get(`pvp:${a.id}:${b.id}`);
+    expect(field).toBeTruthy();
+    expect(field!.spec.pvp).toBe(true);
+    expect(field!.size).toBe(2);
+    expect(field!.brawl).toMatchObject({ rivalId: b.id, challengerName: a.build.callsign });
+    expect(a.inBattle).toBe(true);
+    expect(b.inBattle).toBe(true);
+    expect(inboxB.find((m) => m.t === 'pvp' && typeof m.notice === 'string' && String(m.notice).includes('stepped in'))).toBeTruthy();
+    expect(inboxA.find((m) => m.t === 'pvp' && typeof m.notice === 'string' && String(m.notice).includes('the bout is on'))).toBeTruthy();
+  });
+
+  it('tells the challenger when the bout is refused', () => {
+    const { world, a, b, inboxA } = twoOnStreet(4093, 4094);
+    world.pvpAction(a.id, { action: 'challenge', with: b.id });
+    world.pvpAction(b.id, { action: 'decline' });
+    expect(inboxA.find((m) => m.t === 'pvp' && m.declined)).toMatchObject({ declined: b.build.callsign });
+    expect(world.sessions.get(`pvp:${a.id}:${b.id}`)).toBeUndefined();
+  });
+
+  it('refuses yourself, the gone, the busy, and the unchallenged', () => {
+    const { world, a, b, inboxA } = twoOnStreet(4095, 4096);
+    world.pvpAction(a.id, { action: 'challenge', with: a.id });
+    world.pvpAction(a.id, { action: 'challenge', with: 'nobody-here' });
+    expect(inboxA.filter((m) => m.t === 'pvp' && m.refused).length).toBe(2);
+    a.inBattle = true;
+    world.pvpAction(a.id, { action: 'challenge', with: b.id });
+    expect(inboxA.filter((m) => m.t === 'pvp' && m.refused).length).toBe(3);
+    a.inBattle = false;
+    world.pvpAction(b.id, { action: 'accept' });
+    expect(world.sessions.get(`pvp:${a.id}:${b.id}`)).toBeUndefined();
+    world.pvpAction(a.id, { action: 'challenge', with: b.id });
+    b.inBattle = true;
+    world.pvpAction(b.id, { action: 'accept' });
+    expect(world.sessions.get(`pvp:${a.id}:${b.id}`)).toBeUndefined();
+  });
+
+  it('locks both stakes on accept and names the price on the street', () => {
+    const { world, a, b, inboxA, inboxB } = twoOnStreet(4201, 4202);
+    world.pvpAction(a.id, { action: 'challenge', with: b.id, wager: 100 });
+    expect(inboxB.find((m) => m.t === 'pvp' && m.challenge)).toMatchObject({
+      challenge: { from: a.id, wager: 100 },
+    });
+    expect(inboxA.find((m) => m.t === 'pvp' && typeof m.notice === 'string' && String(m.notice).includes('100 $CHOG'))).toBeTruthy();
+    world.pvpAction(b.id, { action: 'accept' });
+    expect(world.sessions.get(`pvp:${a.id}:${b.id}`)?.brawl).toMatchObject({ wager: 100 });
+    expect(world.profiles.chogOf(a.tokenId)).toBe(900);
+    expect(world.profiles.chogOf(b.tokenId)).toBe(900);
+  });
+
+  it('pays the winner minus the rake when the challenger wins', () => {
+    const { world, a, b, inboxA, inboxB } = twoOnStreet(4211, 4212);
+    const vaultBefore = world.profiles.vaultChog();
+    world.pvpAction(a.id, { action: 'challenge', with: b.id, wager: 100 });
+    world.pvpAction(b.id, { action: 'accept' });
+    finishPvp(world, a.id);
+    // 200 locked, 10 raked, 190 to the winner: money is conserved.
+    expect(world.profiles.chogOf(a.tokenId)).toBe(1090);
+    expect(world.profiles.chogOf(b.tokenId)).toBe(900);
+    expect(world.profiles.vaultChog()).toBe(vaultBefore + 10);
+    expect(inboxB.find((m) => m.t === 'pvp' && m.result)).toMatchObject({
+      result: { winnerId: a.id, prize: 190, rake: 10 },
+    });
+    expect(inboxA.find((m) => m.t === 'pvp' && m.result)).toMatchObject({
+      result: { winnerId: a.id, prize: 190 },
+    });
+  });
+
+  it('pays the rival when the challenger walks out', () => {
+    const { world, a, b, inboxA, inboxB } = twoOnStreet(4221, 4222);
+    const vaultBefore = world.profiles.vaultChog();
+    world.pvpAction(a.id, { action: 'challenge', with: b.id, wager: 100 });
+    world.pvpAction(b.id, { action: 'accept' });
+    world.duelLeave(a.id);
+    expect(world.profiles.chogOf(a.tokenId)).toBe(900);
+    expect(world.profiles.chogOf(b.tokenId)).toBe(1090);
+    expect(world.profiles.vaultChog()).toBe(vaultBefore + 10);
+    expect(inboxB.find((m) => m.t === 'pvp' && m.result)).toMatchObject({
+      result: { winnerId: b.id, prize: 190 },
+    });
+    const fled = inboxA.find((m) => m.t === 'pvp' && m.result) as { result: { story: string } } | undefined;
+    expect(fled?.result.story).toContain('fled');
+  });
+
+  it('refuses a price either side cannot cover, locking nothing', () => {
+    const { world, a, b, inboxA, inboxB } = twoOnStreet(4231, 4232);
+    world.pvpAction(a.id, { action: 'challenge', with: b.id, wager: 2000 });
+    expect(inboxA.find((m) => m.t === 'pvp' && m.refused)).toMatchObject({ refused: 'you cannot cover that' });
+    expect(world.profiles.addChog(b.tokenId, -950)).toBe(true);
+    world.pvpAction(a.id, { action: 'challenge', with: b.id, wager: 100 });
+    world.pvpAction(b.id, { action: 'accept' });
+    expect(inboxB.find((m) => m.t === 'pvp' && m.refused)).toMatchObject({ refused: 'you cannot cover that' });
+    expect(world.sessions.get(`pvp:${a.id}:${b.id}`)).toBeUndefined();
+    expect(world.profiles.chogOf(a.tokenId)).toBe(1000);
+    expect(world.profiles.chogOf(b.tokenId)).toBe(50);
+  });
+
+  it('leaves the ledger alone for an honor brawl', () => {
+    const { world, a, b } = twoOnStreet(4241, 4242);
+    const vaultBefore = world.profiles.vaultChog();
+    world.pvpAction(a.id, { action: 'challenge', with: b.id });
+    world.pvpAction(b.id, { action: 'accept' });
+    world.duelLeave(a.id);
+    expect(world.profiles.chogOf(a.tokenId)).toBe(1000);
+    expect(world.profiles.chogOf(b.tokenId)).toBe(1000);
+    expect(world.profiles.vaultChog()).toBe(vaultBefore);
+  });
+
+  it('refuses a debit past zero without moving anything', () => {
+    const { world, a } = twoOnStreet(4251, 4252);
+    expect(world.profiles.addChog(a.tokenId, -1001)).toBe(false);
+    expect(world.profiles.chogOf(a.tokenId)).toBe(1000);
+  });
+});
+
+describe('trade — cards and items across the street', () => {
+  function twoTraders(t1: number, t2: number) {
+    const { world, p } = fresh(t1);
+    const q = world.join(`p${t2}`, { tokenId: t2, transferCount: 0, daysHeld: 0 }, 'ashflat');
+    world.saves.setChips(p.tokenId, [p.build.signature, 'emberpaw']);
+    world.saves.setChips(q.tokenId, [q.build.signature, 'arcsnap']);
+    // The player carries a snapshot from join; the trade reads the snapshot.
+    p.save = world.saves.get(p.tokenId);
+    q.save = world.saves.get(q.tokenId);
+    world.profiles.grant(q.tokenId, { items: { amp: 1 } });
+    return { world, a: p, b: q };
+  }
+
+  it('moves a card and items to the other bag on accept', () => {
+    const { world, a, b } = twoTraders(4101, 4102);
+    const offered = world.tradeOffer(a.id, b.id, ['emberpaw'], ['arcsnap'], ['med'], ['amp']);
+    expect(offered.ok).toBe(true);
+    const r = world.tradeAccept(b.id, offered.offer!.id);
+    expect(r.ok).toBe(true);
+    expect(world.saves.get(a.tokenId).cards).toContain('arcsnap');
+    expect(world.saves.get(a.tokenId).cards).not.toContain('emberpaw');
+    expect(world.saves.get(b.tokenId).cards).toContain('emberpaw');
+    expect(world.profiles.doc(a.tokenId).bag.items.med).toBe(1);
+    expect(world.profiles.doc(a.tokenId).bag.items.amp).toBe(1);
+    expect(world.profiles.doc(b.tokenId).bag.items.med).toBe(3);
+    expect(world.profiles.doc(b.tokenId).bag.items.amp).toBe(0);
+  });
+
+  it('refuses to put a signature on the table', () => {
+    const { world, a, b } = twoTraders(4111, 4112);
+    expect(world.tradeOffer(a.id, b.id, [a.build.signature], [], [], [])).toMatchObject({
+      ok: false,
+      reason: 'your signature card cannot be traded',
+    });
+    expect(world.tradeOffer(a.id, b.id, [], [b.build.signature], [], [])).toMatchObject({
+      ok: false,
+      reason: 'their signature card cannot be traded',
+    });
+  });
+
+  it('re-checks the signature at accept time', () => {
+    // A stale offer planted before the guard existed still cannot cross.
+    const { world, a, b } = twoTraders(4121, 4122);
+    const t = world.social.offer(a.id, b.id, [a.build.signature], []);
+    expect(world.tradeAccept(b.id, t.id)).toMatchObject({
+      ok: false,
+      reason: 'a signature card cannot be traded',
+    });
+  });
+
+  it('refuses unknown ids and empty offers', () => {
+    const { world, a, b } = twoTraders(4131, 4132);
+    expect(world.tradeOffer(a.id, b.id, ['nope-not-a-card'], [], [], []).ok).toBe(false);
+    expect(world.tradeOffer(a.id, b.id, [], [], ['nope-not-an-item'], []).ok).toBe(false);
+    expect(world.tradeOffer(a.id, b.id, [], [], [], [])).toMatchObject({
+      ok: false,
+      reason: 'an empty offer trades nothing',
+    });
+  });
+
+  it('refuses a short bag without half-paying', () => {
+    const { world, a, b } = twoTraders(4141, 4142);
+    const before = { ...world.profiles.doc(a.tokenId).bag.items };
+    expect(world.profiles.moveItems(a.tokenId, b.tokenId, ['amp'], [])).toBe(false);
+    expect(world.profiles.doc(a.tokenId).bag.items).toEqual(before);
+    expect(world.profiles.doc(b.tokenId).bag.items.amp ?? 0).toBe(1);
+  });
+
+  it('refuses a card either side already holds', () => {
+    const { world, a, b } = twoTraders(4151, 4152);
+    expect(world.tradeOffer(a.id, b.id, [], ['emberpaw'], [], [])).toMatchObject({
+      ok: false,
+      reason: 'you already hold one of those',
+    });
+    world.saves.setChips(b.tokenId, [b.build.signature, 'arcsnap', 'emberpaw']);
+    b.save = world.saves.get(b.tokenId);
+    expect(world.tradeOffer(a.id, b.id, ['emberpaw'], [], [], [])).toMatchObject({
+      ok: false,
+      reason: 'they already hold one of those',
+    });
+  });
+
+  it('re-checks dupes at accept time', () => {
+    const { world, a, b } = twoTraders(4161, 4162);
+    world.saves.setChips(b.tokenId, [b.build.signature, 'arcsnap', 'emberpaw']);
+    b.save = world.saves.get(b.tokenId);
+    const t = world.social.offer(a.id, b.id, [], ['emberpaw']);
+    expect(world.tradeAccept(b.id, t.id)).toMatchObject({
+      ok: false,
+      reason: 'someone already holds one of those',
+    });
+  });
+
+  it('refuses trait cards on either side of the table', () => {
+    const { world, a, b } = twoTraders(4171, 4172);
+    world.saves.setChips(a.tokenId, [a.build.signature, 'emberpaw', 'v_bubblegum']);
+    a.save = world.saves.get(a.tokenId);
+    expect(world.tradeOffer(a.id, b.id, ['v_bubblegum'], [], [], [])).toMatchObject({
+      ok: false,
+      reason: 'trait cards cannot be traded',
+    });
+    expect(world.tradeOffer(a.id, b.id, [], ['v_rainfall'], [], [])).toMatchObject({
+      ok: false,
+      reason: 'trait cards cannot be traded',
+    });
+    const t = world.social.offer(a.id, b.id, [], ['v_rainfall']);
+    expect(world.tradeAccept(b.id, t.id)).toMatchObject({
+      ok: false,
+      reason: 'trait cards cannot be traded',
+    });
   });
 });

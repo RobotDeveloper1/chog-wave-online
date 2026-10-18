@@ -2,7 +2,7 @@ import './picker.css';
 import { GENESIS_SUPPLY, describeBuild, type HolderCard, type HoldingsView } from '@chog/shared';
 import { net } from '../net.ts';
 import { wallet } from '../wallet.ts';
-import { street, wordmark } from './brand.ts';
+import { wordmark } from './brand.ts';
 
 /**
  * The gate in front of the world.
@@ -59,7 +59,6 @@ function since(ms: number): string {
 
 class Picker {
   private readonly root = h('div', 'chog-pick');
-  private readonly canvas = h('canvas', 'pk-street');
   private readonly markEl = h('div', 'pk-mark');
   private readonly chainEl = h('span', 'pk-chain');
   private readonly walletBtn = h('button', 'pk-wallet-act');
@@ -68,9 +67,11 @@ class Picker {
   private readonly detailEl = h('div', 'pk-detail');
   private readonly enterBtn = h('button', 'pk-enter');
   private readonly connectBtn = h('button', 'pk-connect');
+  private readonly emailEl = h('input', 'pk-email');
+  private readonly codeEl = h('input', 'pk-code');
+  private codeStage: 'idle' | 'sent' = 'idle';
+  private email = '';
   private readonly kickerEl = h('span', 'pk-kicker');
-  /** The painted street, stopped for good when the gate closes. */
-  private backdrop: { stop(): void } | null = null;
   private resolve: ((p: Pick) => void) | null = null;
   private view: HoldingsView | null = null;
   private chosen: HolderCard | null = null;
@@ -90,7 +91,6 @@ class Picker {
       this.resolve = resolve;
       this.build();
       document.body.appendChild(this.root);
-      this.backdrop = street(this.canvas);
       this.offChange = wallet.onChange(() => void this.sync());
       this.keyHandler = (e) => this.onKey(e);
       addEventListener('keydown', this.keyHandler);
@@ -103,7 +103,7 @@ class Picker {
     brand.append(
       this.markEl,
       h('span', 'pk-tag', 'online'),
-      h('span', 'pk-supply', `${GENESIS_SUPPLY.toLocaleString()} genesis chogs · monad mainnet`),
+      h('span', 'pk-supply', `chog testnet replicas · monad testnet`),
     );
 
     // Their mark, not a redrawn one: the official lockup, kept small and off to the side.
@@ -127,10 +127,10 @@ class Picker {
     lede.append(
       document.createTextNode('There are '),
       h('b', '', GENESIS_SUPPLY.toLocaleString()),
-      document.createTextNode(' of them, and they live on Monad. Your wallet says which are yours — the world will not let you wear one you do not hold.'),
+      document.createTextNode(' of them, and they live on Monad. Your Privy wallet says which are yours — the world will not let you wear one you do not hold.'),
     );
     const steps = h('div', 'pk-steps');
-    for (const [n, label, detail] of [['01', 'SIGN', 'one message, no gas'], ['02', 'PICK', 'a genesis Chog'], ['03', 'PLAY', 'the street, live']] as const) {
+    for (const [n, label, detail] of [['01', 'EMAIL', 'a code, no password'], ['02', 'PICK', 'a testnet Chog'], ['03', 'PLAY', 'the street, live']] as const) {
       const step = h('div', n === '01' ? 'pk-step now' : 'pk-step');
       step.append(h('b', '', `${n} ${label}`), h('span', '', detail));
       steps.append(step);
@@ -138,15 +138,24 @@ class Picker {
     const copy = h('section', 'pk-copy');
     copy.append(title, lede, steps);
 
+    this.emailEl.type = 'email';
+    this.emailEl.placeholder = 'you@example.com';
+    this.emailEl.autocomplete = 'email';
+    this.emailEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.connect(); });
+    this.codeEl.type = 'text';
+    this.codeEl.placeholder = '6-digit code';
+    this.codeEl.autocomplete = 'one-time-code';
+    this.codeEl.maxLength = 6;
+    this.codeEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.connect(); });
     this.connectBtn.addEventListener('click', () => void this.connect());
     const fine = h('p', 'pk-fine');
     fine.append(
-      document.createTextNode('Signing proves an '),
-      h('b', '', 'address'),
-      document.createTextNode('. It moves no tokens, costs nothing, and is gone when the tab closes.'),
+      document.createTextNode('Privy emails a '),
+      h('b', '', 'one-time code'),
+      document.createTextNode('. No password, no extension. Everybody gets an embedded wallet; Chogs on it pick, the rest foster.'),
     );
     const act = h('div', 'pk-act');
-    act.append(this.kickerEl, this.connectBtn, this.fosterButton(true), fine);
+    act.append(this.kickerEl, this.emailEl, this.codeEl, this.connectBtn, this.fosterButton(true), fine);
 
     const hero = h('section', 'pk-hero');
     hero.append(copy, act);
@@ -161,7 +170,7 @@ class Picker {
     foot.append(this.fosterButton(false), this.enterBtn);
     this.enterBtn.addEventListener('click', () => this.confirm());
 
-    this.root.append(this.canvas, top, this.lineEl, hero, main, foot);
+    this.root.append(top, this.lineEl, hero, main, foot);
   }
 
   /** The way in for somebody who owns none of this. Not a consolation prize — the floor prices most people out. */
@@ -207,16 +216,44 @@ class Picker {
       wallet.signOut();
       this.view = null;
       this.chosen = null;
+      this.codeStage = 'idle';
+      this.email = '';
+      this.emailEl.value = '';
+      this.codeEl.value = '';
       this.note = 'signed out';
       this.bad = false;
       this.paint();
       return;
     }
-    this.note = `signing in — approve the message in ${wallet.label}`;
+    if (!wallet.available) {
+      this.note = 'no privy app id — the login is not configured';
+      this.bad = true;
+      this.paint();
+      return;
+    }
+    if (this.codeStage === 'idle') {
+      this.email = this.emailEl.value;
+      this.note = `sending a code to ${this.email}…`;
+      this.bad = false;
+      this.paint();
+      try {
+        await wallet.requestCode(this.email);
+        this.codeStage = 'sent';
+        this.note = `code sent — check ${this.email}`;
+        this.paint();
+        this.codeEl.focus();
+      } catch (error) {
+        this.note = (error as Error).message;
+        this.bad = true;
+        this.paint();
+      }
+      return;
+    }
+    this.note = `signing in as ${this.email}…`;
     this.bad = false;
     this.paint();
     try {
-      await wallet.connect();
+      await wallet.confirmCode(this.email, this.codeEl.value);
       this.note = '';
       await this.load();
     } catch (error) {
@@ -238,21 +275,23 @@ class Picker {
     const ribbon = this.bad ? '#ff5d72' : view && !view.ready ? '#f5c343' : '#43e2a8';
     this.markEl.innerHTML = wordmark(['CHOG', 'WAVE'], { cell: signed ? 3 : 6, ribbon });
 
-    this.chainEl.textContent = !wallet.address ? 'no session' : wallet.onMonad ? 'chain 143' : 'off Monad';
+    this.chainEl.textContent = !wallet.address ? 'no session' : wallet.onMonad ? `chain ${wallet.chainId}` : 'off Monad';
     this.chainEl.classList.toggle('on', wallet.onMonad && !!wallet.address);
     this.chainEl.classList.toggle('bad', !!wallet.address && !wallet.onMonad);
-    this.walletBtn.textContent = signed ? 'sign out' : wallet.available ? `connect ${wallet.label}` : 'no wallet extension';
+    this.walletBtn.textContent = signed ? 'sign out' : wallet.available ? `connect ${wallet.label}` : 'no privy app id';
     this.walletBtn.disabled = !signed && !wallet.available;
-    this.kickerEl.textContent = signed ? 'session live' : wallet.address ? 'address known, unsigned' : 'no session';
+    this.kickerEl.textContent = signed ? 'session live' : this.codeStage === 'sent' ? `code sent to ${this.email}` : 'no session';
 
     this.connectBtn.textContent = '';
     this.connectBtn.disabled = !signed && !wallet.available;
     const cta = h('span', '');
     cta.append(
-      document.createTextNode(signed ? 'You are signed in' : wallet.available ? 'Connect wallet' : 'No wallet extension'),
-      h('small', '', signed ? wallet.short : wallet.available ? `${wallet.label} · an EIP-191 message` : 'install one, or walk in as a foster'),
+      document.createTextNode(signed ? 'You are signed in' : !wallet.available ? 'Login not configured' : this.codeStage === 'sent' ? 'Enter the code' : 'Send login code'),
+      h('small', '', signed ? wallet.short : !wallet.available ? 'missing VITE_PRIVY_APP_ID' : this.codeStage === 'sent' ? `${this.email} · 6 digits` : 'email · one-time code'),
     );
     this.connectBtn.append(cta, h('i', '', '›'));
+    this.emailEl.style.display = signed || this.codeStage === 'sent' ? 'none' : '';
+    this.codeEl.style.display = !signed && this.codeStage === 'sent' ? '' : 'none';
 
     // A `?chog=` this wallet does hold, or a wallet holding exactly one Chog, has already
     // answered the question — the gate should not make somebody click it again.
@@ -409,7 +448,6 @@ class Picker {
     const resolve = this.resolve;
     this.resolve = null;
     if (this.poll) clearTimeout(this.poll);
-    this.backdrop?.stop();
     this.offChange?.();
     if (this.keyHandler) removeEventListener('keydown', this.keyHandler);
     this.root.remove();

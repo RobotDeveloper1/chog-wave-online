@@ -7,7 +7,7 @@ import { applyMotion, rigOf, type MotionKind } from './motion.ts';
  * Loads a Chog GLB and makes it look like the Blender original.
  *
  * Two export quirks drive everything here. glTF only carries base colour from a
- * Principled setup, and the Blender toon shader is a custom node tree, so all 13
+ * Principled setup, and the Blender toon shader is a hand node tree, so all 13
  * materials arrive as pure black — names survive, so colour comes from the
  * per-token manifest instead. And `skins` is empty: animation is rigid per-node
  * transforms, so parts never deform, they only swing.
@@ -46,7 +46,10 @@ const ramp = (() => {
 // by a percentage looked right on the head and swallowed the eyes, which sit
 // proud of it. 0.022 was nearly double the Blender hull (0.012-0.015) and showed
 // as a black bar across the face in the close-up duel/street cameras.
-const hullMaterial = new THREE.ShaderMaterial({
+//
+// Exported because it is shared by every Chog on screen: a caller that despawns one Chog must
+// not dispose it, or it tears the program out from under all the others.
+export const hullMaterial = new THREE.ShaderMaterial({
   vertexShader: `
     uniform float kThickness;
     void main() {
@@ -324,26 +327,28 @@ export async function loadChogNFT(opts: PartsModel & {
       continue;
     }
     const sheet = colors[file] ?? {};
-    const world = new THREE.Vector3();
+    // The parsed part is cached and shared, so harvest a CLONE: attaching the cached
+    // scene's own meshes re-parents them out from under the next Chog wearing the same
+    // file, which is how the second of two identical hats came out bald. Rig-free static
+    // meshes, so a plain deep clone is enough (geometry stays shared; paint() replaces
+    // the shared materials with per-mesh toons anyway).
+    const owned = part.scene.clone(true);
     // Collect first: re-parenting a mesh inside traverse() mutates the tree
     // being walked and three.js drops the rest of it.
     const partMeshes: THREE.Mesh[] = [];
-    part.scene.updateMatrixWorld(true);
-    part.scene.traverse((o) => {
+    owned.updateMatrixWorld(true);
+    owned.traverse((o) => {
       if ((o as THREE.Mesh).isMesh) partMeshes.push(o as THREE.Mesh);
     });
     for (const mesh of partMeshes) {
       paint(mesh, sheet[mesh.material && !Array.isArray(mesh.material) ? mesh.material.name : ''], tint);
       // Parts export rig-free in world space; re-home each mesh under its bone
-      // so rig animation carries it, converting world -> bone-local.
-      mesh.getWorldPosition(world);
+      // so rig animation carries it. attach() — not a hand-rolled position copy —
+      // because the bone's rest rotation is part of the conversion: copying only
+      // the position swung every part about the feet by the rest pitch and buried
+      // each shirt's back 2 cm inside the torso, which is the tear the street saw.
       const bone = byName.get(boneFor(mesh.name));
-      if (bone) {
-        mesh.position.copy(bone.worldToLocal(world.clone()));
-        bone.add(mesh);
-      } else {
-        root.add(mesh);
-      }
+      (bone ?? root).attach(mesh);
     }
   }
 

@@ -130,7 +130,7 @@ const ASHFLAT: ZonePlan = {
     [
       B('rail', 'Freight Sidings', 22),
       B('water', 'The Moat', 23),
-      B('market', 'Bazaar Cut', 24, { doors: [door('a-chip', 'shop', 'CHIP SHOP', 'S', 0.5)] }),
+      B('market', 'Bazaar Cut', 24, { doors: [door('a-card', 'shop', 'CHIP SHOP', 'S', 0.5)] }),
       B('plaza', 'The Crossing', 25, { landmark: 'fountain' }),
       B('market', 'Bazaar Cut', 26, { doors: [door('a-noodle', 'home', 'NOODLE BAR', 'N', 0.4)] }),
       B('water', 'The Moat', 27),
@@ -176,7 +176,7 @@ const ASHFLAT: ZonePlan = {
   // sightline: crossing, green, bridge, gate.
   spawn: { block: [3, 2], dx: 0, dz: 10 },
   npcs: [
-    npc('a-dealer', 'DEALER 143', 'volt', 'stock moves with the floor — buy now', { door: 'a-chip', dx: 4.5 }, 'shop'),
+    npc('a-dealer', 'DEALER 143', 'volt', 'stock moves with the floor — buy now', { door: 'a-card', dx: 4.5 }, 'shop'),
     npc('a-nurse', 'NURSE HOLLOW', 'wave', 'you look like you walked out of a storm', { door: 'a-clinic', dx: 4.5 }, 'heal'),
     npc('a-operator', 'OPERATOR', 'prism', 'station is hot — pulse when you are ready', { door: 'a-station', dx: -8, dz: 0.5 }, 'quest', 2),
     npc('a-scribe', 'SCRIBE', 'burn', 'the war resets at the week’s end', { door: 'a-tribe', dx: 4.5 }, 'quest'),
@@ -232,7 +232,7 @@ const VOLTGRID: ZonePlan = {
       B('industrial', 'Substation 07', 36),
     ],
     [
-      B('shops', 'Neon Strip', 37, { doors: [door('v-chip', 'shop', 'CHIP KIOSK', 'S', 0.5)] }),
+      B('shops', 'Neon Strip', 37, { doors: [door('v-card', 'shop', 'CHIP KIOSK', 'S', 0.5)] }),
       B('shops', 'Neon Strip', 38, { doors: [door('v-noodle', 'home', 'NODE BAR', 'S', 0.42)] }),
       B('shops', 'Neon Strip', 39, { doors: [door('v-clinic', 'heal', 'SIGNAL LANE', 'S', 0.5)] }),
       B('station', 'Wave Station', 40, { doors: [door('v-station', 'station', 'WAVE STATION', 'S', 0.5)] }),
@@ -262,7 +262,7 @@ const VOLTGRID: ZonePlan = {
   ],
   spawn: { block: [2, 2], dx: 0, dz: -9 },
   npcs: [
-    npc('v-dealer', 'KIOSK 7', 'volt', 'every card here fell off a server', { door: 'v-chip', dx: 4.5 }, 'shop'),
+    npc('v-dealer', 'KIOSK 7', 'volt', 'every card here fell off a server', { door: 'v-card', dx: 4.5 }, 'shop'),
     npc('v-nurse', 'TECH MEDIC', 'wave', 'your integrity is a rumour, hold still', { door: 'v-clinic', dx: 4.5 }, 'heal'),
     npc('v-operator', 'RELAY OPERATOR', 'prism', 'the index never drops below the floor here', { door: 'v-station', dx: -8, dz: 0.5 }, 'quest'),
     npc('v-scribe', 'EXCHANGE CLERK', 'burn', 'volume is the only honest number', { door: 'v-tribe', dx: 4.5 }, 'quest'),
@@ -314,7 +314,7 @@ const HOLLOW: ZonePlan = {
       B('ruin', 'The Overgrowth', 66),
     ],
     [
-      B('shops', 'Arcade Row', 67, { doors: [door('h-chip', 'shop', 'CHIP SHOP', 'S', 0.5)] }),
+      B('shops', 'Arcade Row', 67, { doors: [door('h-card', 'shop', 'CHIP SHOP', 'S', 0.5)] }),
       B('shops', 'Arcade Row', 68, { doors: [door('h-noodle', 'home', 'TEA HOUSE', 'S', 0.4)] }),
       B('shops', 'Clinic Row', 69, { doors: [door('h-clinic', 'heal', 'CLINIC', 'S', 0.5)] }),
       B('station', 'Wave Station', 70, { doors: [door('h-station', 'station', 'WAVE STATION', 'S', 0.5)] }),
@@ -344,7 +344,7 @@ const HOLLOW: ZonePlan = {
   ],
   spawn: { block: [2, 2], dx: 0, dz: -9 },
   npcs: [
-    npc('h-dealer', 'HERB DEALER', 'volt', 'cards grow on the trellis if you wait', { door: 'h-chip', dx: 4.5 }, 'shop'),
+    npc('h-dealer', 'HERB DEALER', 'volt', 'cards grow on the trellis if you wait', { door: 'h-card', dx: 4.5 }, 'shop'),
     npc('h-nurse', 'DOCTOR MOSS', 'wave', 'everything heals here, eventually', { door: 'h-clinic', dx: 4.5 }, 'heal'),
     npc('h-operator', 'STATION KEEPER', 'prism', 'the vines reach the dial — watch the Index', { door: 'h-station', dx: -8, dz: 0.5 }, 'quest'),
     npc('h-scribe', 'WAR WARDEN', 'burn', 'the arcade remembers every score', { door: 'h-tribe', dx: 4.5 }, 'quest'),
@@ -355,7 +355,7 @@ const HOLLOW: ZonePlan = {
     npc('h-gardener', 'HEAD GARDENER', 'wave', 'the dome keeps the rain out and the wave in', { block: [1, 0], dx: 0, dz: sw(HOLLOW_ROWS, 0) }, 'quest'),
     npc('h-ferryman', 'RESERVOIR WARDEN', 'frost', 'the water is deeper than it looks', { block: [0, 2], dx: -9.4, dz: -4 }, 'quest', 1),
     npc('h-foreman', 'CRANE OPERATOR', 'volt', 'she swings both ways, so do the contracts', { block: [4, 2], dx: -6, dz: sw(HOLLOW_ROWS, 2) }, 'quest'),
-    npc('h-vendor', 'MARKET HAWKER', 'burn', 'greens by the bundle, chips by the pound', { block: [4, 0], dx: 0, dz: sw(HOLLOW_ROWS, 0) }, 'lore'),
+    npc('h-vendor', 'MARKET HAWKER', 'burn', 'greens by the bundle, cards by the pound', { block: [4, 0], dx: 0, dz: sw(HOLLOW_ROWS, 0) }, 'lore'),
     npc('h-wanderer', 'MOSS WANDERER', 'void', 'the collapse took the old terminal. the cards stayed', { block: [4, 3], dx: 4, dz: -sw(HOLLOW_ROWS, 3) }, 'quest'),
     npc('h-hertz', 'MR. HERTZ', 'prism', '…the plants listen, you know.', { block: [5, 3], dx: -3, dz: -sw(HOLLOW_ROWS, 3) }, 'hertz', 2, true),
   ],

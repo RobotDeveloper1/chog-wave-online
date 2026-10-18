@@ -74,8 +74,8 @@ scale = min( 1.6,  1 / (1 + 0.05·levelGap + 0.09·(difficulty − 1)) )
 - **`difficulty` 1..6** = o tier do mapa (dungeon) ou `1 + floor(wave/25)` na rua.
 - **Piso de 300 ms é uma decisão de design, não um ajuste.** Abaixo disso a esquiva não é tardia, é loteria. O jogo pode ficar brutal até a linha e nunca passar.
 - `move.tell` (abaixo) é o multiplicador por golpe: um SWEEP é lido mais cedo que um JAB.
-- Treino: telegraph ×1.5, quiet ×1.35, gauge ×0.7, e **o boneco é sempre calibrado no level do jogador** (`levelGap = 0`). Um simulador de treino que trapaceia na leitura não treina nada.
-- Gauge do Custom Screen: `7000 ms`, começando em `FIRST_READY = 0.45` [medido].
+- Treino: telegraph ×1.5, quiet ×1.35, charge ×0.7, e **o boneco é sempre calibrado no level do jogador** (`levelGap = 0`). Um simulador de treino que trapaceia na leitura não treina nada.
+- Charge do Custom Screen: `7000 ms`, começando em `FIRST_READY = 0.45` [medido].
 
 **Leitura como grandeza, não como sensação:** `readRate(window) = clamp((window − 250) / 1250, 0, 1)` e `dodgeExposure(window) = (1 − read) / (1 − read(980 ms))`. Isso deixa o modelo de pacing dizer "entrar 6 níveis abaixo custa ~2× a integridade" em vez de "fica mais difícil".
 
@@ -176,17 +176,17 @@ Um arquétipo com **um** comportamento é o mesmo boss com mais vida. Cada arqu�
 Verificado contra manual americano (archive.org), TREZ e MMKB. **Não existe lista de tarefas de EP nem tela de alocação de pontos em Star Force**; a tela de 10 stats (com WND/SLIDE/CPY/GUT) é do Battle Network. O que existe:
 
 - **Level não vem de XP de batalha.** MegaMan Level 1–100: **+1 por HPMem10, +2 por HPMem20, +3 por biblioteca de classe completa.** Progressão vem de **comprar** e de **completar coleção**.
-- **O gate de capítulo são os irmãos.** Brother Band, 6 no máximo (3 antes de zerar), cada um com **um degrau mecânico**: Pegasus `Gauge+1`, Leo `Attack+1`, Dragon `MegaClass+1`, Zack `MegaClass+1`, Bud `+140 HP`.
-- **Stats reais: HP, Attack (AT), Rapid (RA), Charge (CH), Gauge, slots Mega/Giga.** AT manda porque **o shot carregado faz 10×**. Dano de carta é fixo, multiplicado só por elemento/painel e AttackPower (×2/×3 em fraqueza).
+- **O gate de capítulo são os irmãos.** Brother Band, 6 no máximo (3 antes de zerar), cada um com **um degrau mecânico**: Pegasus `Charge+1`, Leo `Attack+1`, Dragon `MegaClass+1`, Zack `MegaClass+1`, Bud `+140 HP`.
+- **Stats reais: HP, Attack (AT), Rapid (RA), Charge (CH), Charge, slots Mega/Giga.** AT manda porque **o shot carregado faz 10×**. Dano de carta é fixo, multiplicado só por elemento/painel e AttackPower (×2/×3 em fraqueza).
 - **Acertar de resposta paga uma carta aleatória (Bonus Card).** Você é pago por ler certo, na moeda do deck.
 - **Busting Level** dá nota por luta: tempo de delete, 0 aback +1 / 4 aback −3, double delete +2, triple +4, **0–2 passos dados +1**, counters +1 cada. **>10 = rank S = drop melhor.**
 - **Fontes de carta com odds publicados:** mystery wave (respawn por pulso, 1/64), Card Trader gacha (1,5% / 9 / 12 / 15,5 / 25 / 37%), Help Quests (**uma ativa por vez**, ~50 em 5 distritos), Cipher Mail, e **replay fantasma do boss → carta EX/SP cujo dano escala com o SEU registro**.
 - **Só carta é tradeável.** Habilidade e equipamento nunca.
 - O hub carrega a maior parte da *sensação* de progresso: scanning, pulsar em terminais, um Help Quest, minigames de navi-card, marcas na tela de título.
 
-**Porto para o Chog, na ordem:** (1) **nota da luta que escala o drop** — o campo já sabe tempo, passos, dodges, counters e dano; (2) **counter-hit paga carta**; (3) **WAV compra stats** (HP/Attack/Rapid/Charge/Gauge/slots já existem como números no código — `fieldHp`, `waveAffinity`, `cleanSignal`, `gaugeScale`, `queueSlots`, `mega/gigaSlots`); (4) **parceiros NPCs como gate de capítulo**, cada um com um degrau; (5) **odds de drop publicados na UI**; (6) **uma quest ativa por vez**; (7) **trade só de cartas**, com escrow e a regra que o código já sabe: duas bodies da mesma wallet não trocam entre si.
+**Porto para o Chog, na ordem:** (1) **nota da luta que escala o drop** — o campo já sabe tempo, passos, dodges, counters e dano; (2) **counter-hit paga carta**; (3) **WAV compra stats** (HP/Attack/Rapid/Charge/Charge/slots já existem como números no código — `fieldHp`, `waveAffinity`, `cleanSignal`, `chargeScale`, `queueSlots`, `mega/gigaSlots`); (4) **parceiros NPCs como gate de capítulo**, cada um com um degrau; (5) **odds de drop publicados na UI**; (6) **uma quest ativa por vez**; (7) **trade só de cartas**, com escrow e a regra que o código já sabe: duas bodies da mesma wallet não trocam entre si.
 
-**O que está morto no repositório e é exatamente onde esses números plugam:** `unlocks.laserCharges` (decorativo), item `scan` (seta uma flag que ninguém lê), títulos de first-clear (anunciados, nunca persistidos), e 5 dos 7 `GearMod` (`slots crit guard drain speed` — só `hp` e `gauge` funcionam). **Não crie um sistema novo: ligue esses cinco.**
+**O que está morto no repositório e é exatamente onde esses números plugam:** `unlocks.laserCharges` (decorativo), item `scan` (seta uma flag que ninguém lê), títulos de first-clear (anunciados, nunca persistidos), e 5 dos 7 `GearMod` (`slots crit guard drain speed` — só `hp` e `charge` funcionam). **Não crie um sistema novo: ligue esses cinco.**
 
 ---
 

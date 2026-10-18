@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  CHIPS, SF, cityOf, nodeBudget, partyHpScale, startRun,
+  CARDS, SF, cityOf, isBasicId, nodeBudget, partyHpScale, startRun,
   type Boss, type DataArea, type DuelEndMsg, type DuelMsg, type SectorState,
 } from '@chog/shared';
 import { BattleSession, type DuelBossSpec, type JoinSpec } from '../src/battle.ts';
@@ -14,7 +14,10 @@ const spec = (over: Partial<DuelBossSpec> = {}): DuelBossSpec => ({
 });
 const joinSpec = (over: Partial<JoinSpec> = {}): JoinSpec => ({
   stats: { ...SF.DEFAULT_STATS }, tokenId: 1, aggro: 0, resist: null,
-  folder: ['emberpaw', 'rimeclaw', 'staticnip', 'hoarbar', 'undertow', 'refract'],
+  deck: ['emberpaw', 'rimeclaw', 'staticnip', 'hoarbar', 'undertow', 'refract'],
+  // The neutral mid-range Chog, so a test that is not measuring the gap between a common and a
+  // Legendary is not quietly measuring it. `sf/loadout.ts basicMight`.
+  basic: SF.basicCard('burn', SF.basicMight({ PWR: 4, SPD: 4 })),
   level: 2, ...over,
 });
 function field(over: Partial<DuelBossSpec> = {}) {
@@ -41,13 +44,16 @@ function hazard(s: BattleSession, ids: string[], damage = 1, left = 50): void {
     const b = s.bodyOf(id)!;
     return { file: b.file, lane: b.lane };
   });
-  s.field.hazard = { panels, files: [...new Set(panels.map((p) => p.file))],
-    left, total: left, move: 'jab', label: 'TEST JAB', damage, on: ids };
+  s.field.hazards = [{ panels, files: [...new Set(panels.map((p) => p.file))],
+    left, total: left, move: 'jab', label: 'TEST JAB', damage, on: ids, owner: null, drain: 0 }];
 }
 // Keep long lifecycle fixtures out of unrelated boss attacks and automatic menus.
 function pauseAttacks(s: BattleSession): void {
   s.state.boss.next = 100_000;
-  for (const b of s.state.players) { b.gaugeMs = 100_000; b.gauge = 0; }
+  // A telegraph already in the air still lands: the clock only refuses to raise new ones, and a
+  // strike mid-revive knocks the rescuer down, which cancels the hold under test.
+  s.field.hazards = [];
+  for (const b of s.state.players) { b.chargeMs = 100_000; b.charge = 0; }
 }
 function sectorFixture(hp = 1_000) {
   const boss: Boss = { id: 'original', tier: 'glitch', hp, maxHp: hp, spawnedAt: 10, phase: 1 };
@@ -98,29 +104,58 @@ function training() {
 function worldAdvance(world: InstanceType<typeof World>, ms: number): void {
   for (let left = ms; left > 0; left -= 50) world.stepSessions(Math.min(50, left));
 }
-function ready(a: ReturnType<typeof training>, folder = ['emberpaw']): void {
-  a.b.folder = folder;
+function ready(a: ReturnType<typeof training>, deck = ['emberpaw']): void {
+  a.b.deck = deck;
   a.s.state.boss.next = 100_000;
-  // The hand is dealt on arrival, so a test that names its folder has the old one discarded before
-  // the gauge fills and the screen opens on exactly the cards it asked for.
-  a.b.custom = null;
-  a.b.customOpen = false;
-  a.b.gauge = 0;
-  worldAdvance(a.world, a.b.gaugeMs - a.b.gauge);
-  expect(a.b.custom!.hand).toHaveLength(6);
+  // The hand is dealt on arrival, so a test that names its deck has the old one discarded before
+  // the charge fills and the screen opens on exactly the cards it asked for.
+  a.b.hand = null;
+  a.b.handOpen = false;
+  a.b.charge = 0;
+  worldAdvance(a.world, a.b.chargeMs - a.b.charge);
+  expect(a.b.hand!.cells).toHaveLength(6);
 }
+// The Buster is gone, so a tap is a refused wire call: it fires nothing and hurts nothing.
 function tap(a: ReturnType<typeof seat>): void {
-  a.world.duel(a.id, { t: 'duel', action: 'buster', down: true });
-  a.world.duel(a.id, { t: 'duel', action: 'buster', down: false });
+  a.world.duel(a.id, { t: 'duel', action: 'buster', down: true } as unknown as DuelMsg);
+  a.world.duel(a.id, { t: 'duel', action: 'buster', down: false } as unknown as DuelMsg);
+}
+// Fire one real card through the engine: open the hand, take the first legal cell, fire it.
+function fireCardHit(st: SF.DuelSession, id: string): void {
+  const body = st.players.find((p) => p.id === id)!;
+  body.file = st.field.boss.file;
+  SF.openHand(st, body);
+  const hand = body.hand!;
+  const cell = hand.cells.find((c) => SF.canPick(hand, c.cell, SF.capsOf(body)).ok);
+  expect(cell, 'a pickable card').toBeDefined();
+  expect(SF.pickCard(st, id, cell!.cell)).toBe(true);
+  expect(SF.execute(st, id)).toBe(true);
+}
+// Kill the aligned anomaly with a real card — the only damage path left after the Buster was cut.
+// It drops the anomaly to 1 HP on the shooter's own file (so a covering shot is guaranteed), opens
+// the safe room if it isn't already, taps the first card (which fires it), and runs the clock until
+// the shot lands.
+function fireKill(a: ReturnType<typeof seat>): void {
+  const s = a.world.sessionOf(a.id)!;
+  const body = s.bodyOf(a.id)!;
+  s.field.boss.hp = Math.min(s.field.boss.hp, 1);
+  s.state.boss.next = 100_000;
+  s.field.hazards = [];
+  // The server no longer serves the removed Buster action, so a test that
+  // must land one authoritative hit goes through the engine primitive instead of the refused wire
+  // call. The body has to be able to act: out of the safe room and with no program mid-flight.
+  body.handOpen = false;
+  body.program = null;
+  fireCardHit(s.state, body.id);
+  for (let t = 0; t < 2000 && s.state.result == null; t += 100) a.world.stepSessions(100);
 }
 function finish(a: ReturnType<typeof seat>): Receipt {
   const s = a.world.sessionOf(a.id)!;
   s.field.boss.hp = 1;
-  s.field.boss.file = s.bodyOf(a.id)!.file;
-  tap(a);
-  expect(s.state.result).toBe('win');
-  a.world.stepSessions(16);
-  return a.end()!;
+  fireKill(a);
+  const end = a.end();
+  expect(end?.won).toBe(true);
+  return end!;
 }
 function dungeon(a: ReturnType<typeof seat>, hp = 73) {
   const stats = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level });
@@ -159,21 +194,21 @@ describe('SF field authority', () => {
     const events = advance(s, 100);
     expect(events).toContainEqual({ type: 'dodge', owner: 'a', file: s.bodyOf('a')!.file });
     expect(events.some((e) => e.type === 'dodge' && e.owner === 'b')).toBe(false);
-    expect(s.bodyOf('a')!.busting.dodges).toBe(1);
+    expect(s.bodyOf('a')!.rank.dodges).toBe(1);
     expect(s.hpOf('a')!.hp).toBe(hp);
     expect(events.some((e) => e.type === 'took-hit')).toBe(false);
   });
 
-  it('protects a body in Custom without crediting a passive nonhit as a dodge', () => {
+  it('protects a body in Hand without crediting a passive nonhit as a dodge', () => {
     const s = field(); const b = s.bodyOf('a')!;
-    SF.openCustom(s.state, b);
+    SF.openHand(s.state, b);
     const hp = b.hp;
     hazard(s, ['a'], 20);
-    s.field.hazard!.on = [];
+    s.field.hazards[0]!.on = [];
     const events = s.step(50, []).events;
     expect(b.hp).toBe(hp);
     expect(events.some((e) => e.type === 'took-hit' || e.type === 'dodge')).toBe(false);
-    expect(b.busting.dodges).toBe(0);
+    expect(b.rank.dodges).toBe(0);
   });
 
   it('widens without moving existing bodies, and never shrinks file indices on departure', () => {
@@ -188,8 +223,9 @@ describe('SF field authority', () => {
 
   it('preserves damage while dungeon body-count scaling grows and shrinks the HP pool', () => {
     const s = field({ hp: 1_000, maxHp: 1_000, partyHp: 'node' });
-    SF.pressBuster(s.state, 'a'); SF.releaseBuster(s.state, 'a');
-    s.step(1, []);
+    pauseAttacks(s);
+    fireCardHit(s.state, 'a');
+    advance(s, 1500);
     const damage = s.damageOf('a');
     expect(damage).toBeGreaterThan(0);
     s.join({ id: 'b', wallet: 'other' }, joinSpec());
@@ -200,12 +236,12 @@ describe('SF field authority', () => {
     expect(s.field.boss.hp).toBe(1_000 - damage);
   });
 
-  it('changes capacity and gauge timing without healing or losing gauge fraction', () => {
+  it('changes capacity and charge timing without healing or losing charge fraction', () => {
     const s = field(); const b = s.bodyOf('a')!;
-    b.hp = 71; b.gauge = b.gaugeMs / 2;
-    s.setStats('a', { ...b.stats, hp: 400, gauge: 5 });
+    b.hp = 71; b.charge = b.chargeMs / 2;
+    s.setStats('a', { ...b.stats, hp: 400, charge: 5 });
     expect(s.hpOf('a')).toEqual({ hp: 71, maxHp: 400 });
-    expect(b.gauge / b.gaugeMs).toBeCloseTo(0.5, 3);
+    expect(b.charge / b.chargeMs).toBeCloseTo(0.5, 3);
     s.setStats('a', { ...b.stats, hp: 60 });
     expect(s.hpOf('a')).toEqual({ hp: 60, maxHp: 60 });
   });
@@ -272,62 +308,87 @@ describe('authoritative duel routing', () => {
     expect({ file: a.b.file, lane: a.b.lane, hp: a.s.field.boss.hp }).toEqual(before);
   });
 
-  it('opens Custom automatically on server time and freezes movement and Buster while selecting', () => {
+  it('opens Hand automatically on server time; stepping out closes the safe room', () => {
     const a = training();
     // The hand is on the table from the join; the screen, the picking and the safe room are not.
-    expect(a.b.custom).not.toBeNull();
-    expect(a.b.customOpen).toBe(false);
+    expect(a.b.hand).not.toBeNull();
+    expect(a.b.handOpen).toBe(false);
     a.world.duel(a.id, { t: 'duel', action: 'pick', cell: 0 });
     expect(a.last('pick')).toMatchObject({ ok: false, reason: 'closed' });
     ready(a);
     expect(a.s.view(a.id).you).toMatchObject({ frozen: true, shielded: true });
-    const file = a.b.file; const hp = a.s.field.boss.hp;
+    // Seamless movement: the body walks out of the safe room instead of being refused.
+    a.b.file = 2;
     a.world.duel(a.id, { t: 'duel', action: 'step', dir: 'left' }); tap(a);
-    expect(a.b.file).toBe(file); expect(a.s.field.boss.hp).toBe(hp);
-    expect(a.last('buster').ok).toBe(false);
+    expect(a.b.file).toBe(1);
+    expect(a.b.handOpen).toBe(false);
+    expect(a.b.hand).not.toBeNull();
+    expect(a.b.charge).toBe(0);
+    expect(a.s.view(a.id).you).toMatchObject({ frozen: false, shielded: false });
+    expect(a.last('refused').reason).toBe('unsupported duel action');
   });
 
-  it('deals the persisted chosen folder, not an obsolete token-born hand', () => {
+  it('deals the persisted chosen deck, not an obsolete token-born hand', () => {
     const a = arena();
     const granted = ['glacierhowl', 'stormchomp', 'tsunamichog', 'magmachog', 'chognova', 'signaldeath'];
-    a.world.profiles.grant(a.p.tokenId, { chips: granted.filter((id) => !a.p.build.library.includes(id)) });
-    const saved = a.world.loop(a.id, { action: 'folder.auto' });
+    a.world.profiles.grant(a.p.tokenId, { cards: granted.filter((id) => !a.p.build.library.includes(id)) });
+    const saved = a.world.loop(a.id, { action: 'deck.auto' });
     expect(saved.ok).toBe(true);
-    const folder = a.world.profiles.folderFor(a.p.tokenId, a.p.build);
+    const deck = a.world.profiles.deckFor(a.p.tokenId, a.p.build);
     a.world.duel(a.id, { t: 'duel', action: 'enter', mode: 'train' });
     const s = a.world.sessionOf(a.id)!; const b = s.bodyOf(a.id)!;
-    expect(b.folder).toEqual(folder);
+    expect(b.deck).toEqual(deck);
     s.state.boss.next = 100_000;
-    worldAdvance(a.world, b.gaugeMs - b.gauge);
-    expect(b.custom!.hand.every((c) => folder.includes(c.chipId))).toBe(true);
+    worldAdvance(a.world, b.chargeMs - b.charge);
+    // Every cell is either the deck the player saved or the token's basic attack — never a card
+    // from an obsolete token-born hand, which is what this test is actually about. It used to be
+    // `every(c => deck.includes(c.cardId))`, which cannot hold any more: a two-slot deck
+    // cannot fill a six-cell panel, and the cells it cannot fill are the whole point.
+    const hand = b.hand!.cells;
+    expect(hand).toHaveLength(6);
+    expect(hand.every((c) => deck.includes(c.cardId) || isBasicId(c.cardId))).toBe(true);
+    // And the basics carry the token's own number, not the catalogue's placeholder.
+    for (const c of hand) {
+      if (!isBasicId(c.cardId)) continue;
+      expect(c.might).toBe(a.p.build.basicMight);
+      expect(c.might).toBeGreaterThan(1);
+    }
   });
 
-  it('rejects an invalid folder and a card outside the collection', () => {
+  it('rejects an over-full deck and a card outside the collection', () => {
     const a = arena();
-    const short = a.world.loop(a.id, { action: 'folder.save', cards: ['emberpaw'] });
-    expect(short.ok).toBe(false); expect((short.errors as string[]).join(' ')).toMatch(/exactly/);
-    const folder = [...a.world.profiles.folderFor(a.p.tokenId, a.p.build)];
+    // Over-full is the deck rule now. Under-full is not: a Chog that has cleared one
+    // encounter of the Line holds one card and has two slots, and that is a legal deck.
+    // See `shared/test/deck.test.ts` and `docs/THE-LINE.md` §4.4.
+    const over = a.world.loop(a.id, { action: 'deck.save', cards: Array(9).fill(a.p.build.signature) });
+    expect(over.ok).toBe(false); expect((over.errors as string[]).join(' ')).toMatch(/holds 2 cards/);
+    const deck = [...a.world.profiles.deckFor(a.p.tokenId, a.p.build)];
     const stranger = ['glacierhowl', 'stormchomp', 'tsunamichog', 'chognova'].find((id) => !a.p.build.library.includes(id))!;
-    folder[folder.length - 1] = stranger;
-    const unowned = a.world.loop(a.id, { action: 'folder.save', cards: folder });
+    deck.push(stranger);
+    const unowned = a.world.loop(a.id, { action: 'deck.save', cards: deck });
     expect(unowned.ok).toBe(false); expect((unowned.errors as string[]).join(' ')).toMatch(/collection/);
   });
 
-  it('repairs the folder after a sale and refuses duplicate sale or buying a birth card', () => {
+  it('repairs the deck after a sale and refuses duplicate sale or buying a birth card', () => {
     const a = arena();
     const extra = ['glacierhowl', 'stormchomp', 'tsunamichog', 'staticnip', 'rimeclaw', 'refract'].find((id) =>
       !a.p.build.library.includes(id) && SF.battleCard(id)!.element !== a.p.build.loadout.weakness)!;
-    a.world.profiles.grant(a.p.tokenId, { chips: [extra] });
-    a.world.loop(a.id, { action: 'folder.auto' });
+    a.world.profiles.grant(a.p.tokenId, { cards: [extra] });
+    // The Line is what pays for deck room, so walk two regions before expecting the
+    // auto-deck to have anywhere to put the card the grant just handed over.
+    a.world.profiles.lineCleared(a.p.tokenId, ['tolls.1'], a.p.build);
+    a.world.loop(a.id, { action: 'deck.auto' });
     expect(a.world.profiles.sell(a.p.tokenId, extra, [a.p.build.signature]).ok).toBe(true);
     expect(a.world.profiles.sell(a.p.tokenId, extra, [a.p.build.signature]).ok).toBe(false);
-    const folder = a.world.profiles.folderFor(a.p.tokenId, a.p.build);
-    expect(folder).not.toContain(extra); expect(folder.length).toBeGreaterThanOrEqual(12);
-    expect(a.world.profiles.buy(a.p.tokenId, 'ashflat', 'chip', a.p.build.library[0]!, 3000, Date.now(), a.p.build.library).ok).toBe(false);
+    const deck = a.world.profiles.deckFor(a.p.tokenId, a.p.build);
+    expect(deck).not.toContain(extra);
+    expect(deck.length).toBe(a.world.profiles.slots(a.p.tokenId));
+    expect(deck.length).toBeGreaterThanOrEqual(2);
+    expect(a.world.profiles.buy(a.p.tokenId, 'ashflat', 'card', a.p.build.library[0]!, 3000, Date.now(), a.p.build.library).ok).toBe(false);
   });
 
   it.each([
-    { action: 'fire', placements: [{ chipId: 'signaldeath', row: 0, col: 1 }] },
+    { action: 'fire', placements: [{ cardId: 'signaldeath', row: 0, col: 1 }] },
     { action: 'laser' }, { action: 'fire', queue: [0] },
     { action: 'execute', queue: [0] }, { action: 'pick', cell: 0, placements: [] },
     { action: 'step', dir: 'right', col: 2 }, { action: 'move', col: 2 },
@@ -344,7 +405,7 @@ describe('authoritative duel routing', () => {
   it('rejects legacy direct fire, laser and absolute-file movement entry points', () => {
     const a = training(); const hp = a.s.field.boss.hp; const file = a.b.file;
     for (const laser of [false, true]) {
-      expect(a.world.fire(a.id, 'ashflat', [{ chipId: 'signaldeath', row: 0, col: 1 }], laser))
+      expect(a.world.fire(a.id, 'ashflat', [{ cardId: 'signaldeath', row: 0, col: 1 }], laser))
         .toMatchObject({ damage: 0, laser, reason: expect.stringMatching(/legacy combat is disabled/) });
     }
     a.world.battleMove(a.id, 0);
@@ -353,47 +414,47 @@ describe('authoritative duel routing', () => {
   });
 });
 
-describe('Custom picks, locks and execution', () => {
+describe('Hand picks, locks and execution', () => {
   it('enforces already, duplicate, element and invalid-cell locks on the dealt hand', () => {
     const a = training();
     const cards = ['emberpaw', 'emberpaw', 'rimeclaw', 'staticnip', 'undertow', 'refract'];
     let i = 0; a.b.handRand = () => (i++ % 6 + 0.1) / 6;
     ready(a, cards);
-    expect(a.b.custom!.hand.map((c) => c.chipId)).toEqual(cards);
+    expect(a.b.hand!.cells.map((c) => c.cardId)).toEqual(cards);
     // A cell with no card is refused outright and never fires.
     for (const cell of [-1, 0.5, 99]) {
       a.world.duel(a.id, { t: 'duel', action: 'pick', cell });
       expect(a.last('pick')).toMatchObject({ ok: false, reason: 'empty' });
-      expect(a.b.custom!.queue).toEqual([]);
+      expect(a.b.hand!.queue).toEqual([]);
       expect(a.b.program).toBeNull();
     }
     // Tapping a card fires it, so a screen is only ever mid-build when the engine has taken a
     // card without executing — and it is that state the world must still refuse against.
     expect(SF.pickCard(a.s.state, a.id, 0)).toBe(true);
-    expect(a.b.custom).toMatchObject({ queue: [0], lock: 'burn' });
+    expect(a.b.hand).toMatchObject({ queue: [0], lock: 'burn' });
     for (const [cell, reason] of [[0, 'already'], [1, 'duplicate'], [2, 'element']] as const) {
       a.world.duel(a.id, { t: 'duel', action: 'pick', cell });
       expect(a.last('pick')).toMatchObject({ ok: false, reason });
-      expect(a.b.custom!.queue).toEqual([0]);
+      expect(a.b.hand!.queue).toEqual([0]);
       expect(a.b.program).toBeNull();
     }
-    expect(a.s.view(a.id).you!.custom!.cells[1]!.locked).toBe('duplicate');
+    expect(a.s.view(a.id).you!.hand!.cells[1]!.locked).toBe('duplicate');
     a.world.duel(a.id, { t: 'duel', action: 'undo' });
-    expect(a.b.custom).toMatchObject({ queue: [], lock: null });
+    expect(a.b.hand).toMatchObject({ queue: [], lock: null });
     a.world.duel(a.id, { t: 'duel', action: 'clear' });
-    expect(a.b.custom).toMatchObject({ queue: [], lock: null });
+    expect(a.b.hand).toMatchObject({ queue: [], lock: null });
   });
 
-  it('a refused pick does not fire the card, close the screen or spend the gauge', () => {
+  it('a refused pick does not fire the card, close the screen or spend the charge', () => {
     const a = training();
     ready(a, ['emberpaw']);
-    const hp = a.s.field.boss.hp; const gauge = a.b.gauge;
+    const hp = a.s.field.boss.hp; const charge = a.b.charge;
     a.world.duel(a.id, { t: 'duel', action: 'pick', cell: 99 });
     expect(a.last('pick')).toMatchObject({ ok: false, reason: 'empty' });
-    expect(a.b.custom).not.toBeNull();
+    expect(a.b.hand).not.toBeNull();
     expect(a.b.program).toBeNull();
     expect(a.s.field.shots).toHaveLength(0);
-    expect(a.b.gauge).toBe(gauge);
+    expect(a.b.charge).toBe(charge);
     a.world.stepSessions(50);
     expect(a.s.field.boss.hp).toBe(hp);
   });
@@ -401,7 +462,7 @@ describe('Custom picks, locks and execution', () => {
   it.each(['mega', 'giga', 'giga-spent', 'full'] as const)('enforces the %s selection cap', (reason) => {
     const a = training();
     const cls = reason.startsWith('giga') ? 'giga' : reason === 'mega' ? 'mega' : 'standard';
-    const cards = CHIPS.filter((c) => SF.cardClass(c) === cls).slice(0, 6).map((c) => c.id);
+    const cards = CARDS.filter((c) => SF.cardClass(c) === cls).slice(0, 6).map((c) => c.id);
     expect(cards.length).toBeGreaterThanOrEqual(2);
     a.b.transformed = true;
     a.p.build.loadout.megaCap = 1;
@@ -418,32 +479,32 @@ describe('Custom picks, locks and execution', () => {
     expect(a.b.program).toBeNull();
   });
 
-  it('fires the tapped card from the authoritative file, waits for flight, and resets the gauge', () => {
+  it('fires the tapped card from the authoritative file, waits for flight, and resets the charge', () => {
     const a = training();
-    const cards = CHIPS.filter((c) => c.element === 'burn' && SF.cardClass(c) === 'standard').slice(0, 6).map((c) => c.id);
+    const cards = CARDS.filter((c) => c.element === 'burn' && SF.cardClass(c) === 'standard').slice(0, 6).map((c) => c.id);
     let i = 0; a.b.handRand = () => (i++ % cards.length + 0.1) / cards.length;
     ready(a, cards);
     // Pin the anomaly on the shooter's own file and clear its reposition clock, so the flight —
     // which is shorter than the next reposition — lands for sure.
     a.s.field.boss.file = a.b.file;
     a.s.state.bossClock = 0;
-    // One tap both selects and fires: the screen closes and the gauge resets in the same action,
+    // One tap both selects and fires: the screen closes and the charge resets in the same action,
     // and the next hand is dealt before the panel repaints, so it is never an empty table.
     a.world.duel(a.id, { t: 'duel', action: 'pick', cell: 1 });
     expect(a.last('pick').ok).toBe(true);
-    expect(a.b.customOpen).toBe(false); expect(a.b.custom).not.toBeNull(); expect(a.b.gauge).toBe(0);
+    expect(a.b.handOpen).toBe(false); expect(a.b.hand).not.toBeNull(); expect(a.b.charge).toBe(0);
     expect(a.b.program!.cards.map((c) => c.id)).toEqual([cards[1]]);
     const file = a.b.file; const hp = a.s.field.boss.hp;
     a.world.duel(a.id, { t: 'duel', action: 'step', dir: 'left' });
     expect(a.b.file).toBe(file);
     a.world.stepSessions(50);
-    expect(a.s.field.shots[0]).toMatchObject({ owner: a.id, chipId: cards[1], t: 0 });
+    expect(a.s.field.shots[0]).toMatchObject({ owner: a.id, cardId: cards[1], t: 0 });
     expect(a.s.field.boss.hp).toBe(hp);
     worldAdvance(a.world, 550);
     const fired = a.msgs.flatMap((m) => (m.events ?? []) as SF.FieldEvent[]).filter((e) => e.type === 'shot-fired');
-    expect(fired.map((e) => e.chipId)).toEqual([cards[1]]);
+    expect(fired.map((e) => e.cardId)).toEqual([cards[1]]);
     expect(a.s.damageOf(a.id)).toBeGreaterThan(0);
-    expect(a.b.customOpen).toBe(false); expect(a.b.custom).not.toBeNull(); expect(a.b.program).toBeNull();
+    expect(a.b.handOpen).toBe(false); expect(a.b.hand).not.toBeNull(); expect(a.b.program).toBeNull();
     expect(a.s.view(a.id).you!.readyIn).toBeGreaterThan(0);
     // There is no separate Execute step to take once a card is tapped.
     a.world.duel(a.id, { t: 'duel', action: 'execute' });
@@ -468,72 +529,37 @@ describe('Custom picks, locks and execution', () => {
   });
 
   it('spends a selected Giga for the battle, not merely for this screen', () => {
-    const a = training(); const giga = CHIPS.find((c) => SF.cardClass(c) === 'giga')!.id;
+    const a = training(); const giga = CARDS.find((c) => SF.cardClass(c) === 'giga')!.id;
     a.p.build.loadout.gigaCap = 1;
     a.s.field.boss.hp = a.s.field.boss.maxHp = 100_000;
     ready(a, [giga]);
     a.world.duel(a.id, { t: 'duel', action: 'pick', cell: 0 });
     expect(a.b.gigaSpent).toBe(true);
-    worldAdvance(a.world, a.b.gaugeMs + 1_000);
-    expect(a.b.custom?.gigaSpent).toBe(true);
+    worldAdvance(a.world, a.b.chargeMs + 1_000);
+    expect(a.b.hand?.gigaSpent).toBe(true);
     a.world.duel(a.id, { t: 'duel', action: 'pick', cell: 0 });
     expect(a.last('pick')).toMatchObject({ ok: false, reason: 'giga-spent' });
   });
 });
 
-describe('Buster press and release', () => {
-  it('fires on release, respects cooldown, and leaves the element chain unchanged', () => {
+describe('Buster is removed — the fight is cards and dodging', () => {
+  it('refuses the removed action with the standing unsupported-action message', () => {
     const a = training(); const hp = a.s.field.boss.hp;
-    a.b.chain = 3; a.b.lastElement = 'burn';
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: true });
+    a.world.duel(a.id, { t: 'duel', action: 'buster', down: true } as unknown as DuelMsg);
+    expect(a.last('refused').reason).toBe('unsupported duel action');
+    a.world.duel(a.id, { t: 'duel', action: 'buster', down: false } as unknown as DuelMsg);
+    expect(a.last('refused').reason).toBe('unsupported duel action');
+    // Nothing fires and nothing takes damage.
+    a.world.stepSessions(50);
     expect(a.s.field.boss.hp).toBe(hp);
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: false });
-    const damage = SF.busterDamage(false, a.b.stats.attack);
-    expect(a.s.field.boss.hp).toBe(hp - damage);
-    tap(a); expect(a.s.field.boss.hp).toBe(hp - damage);
-    expect(a.b.chain).toBe(3); expect(a.b.lastElement).toBe('burn');
-    a.world.stepSessions(1);
-    expect(a.s.damageOf(a.id)).toBe(damage);
-  });
-
-  it('does not manufacture a shot from release without a matching press', () => {
-    const a = training(); const hp = a.s.field.boss.hp;
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: false });
-    expect(a.s.field.boss.hp).toBe(hp);
-    expect(a.s.state.events.some((e) => e.type === 'buster')).toBe(false);
-  });
-
-  it('charges only while held and records the charged release in progression', () => {
-    const a = training(); a.s.state.boss.next = 100_000;
-    const hp = a.s.field.boss.hp;
-    worldAdvance(a.world, 500);
-    expect(a.b.buster.held).toBe(0);
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: true });
-    worldAdvance(a.world, SF.chargeMs(a.b.stats.charge));
-    expect(a.s.field.boss.hp).toBe(hp);
-    expect(a.b.buster.held).toBeGreaterThanOrEqual(SF.chargeMs(a.b.stats.charge));
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: false });
-    expect(a.s.field.boss.hp).toBe(hp - SF.busterDamage(true, a.b.stats.attack));
-    a.world.stepSessions(1);
-    expect(a.msgs.flatMap((m) => (m.events ?? []) as SF.FieldEvent[]))
-      .toContainEqual(expect.objectContaining({ type: 'buster', owner: a.id, charged: true }));
-    expect(a.world.profiles.doc(a.p.tokenId).stats.lasers).toBe(1);
-  });
-
-  it('rejects malformed Buster input and a shot aimed at another file does no damage', () => {
-    const a = training(); const hp = a.s.field.boss.hp;
-    a.world.duel(a.id, { t: 'duel', action: 'buster', down: 'yes' } as unknown as DuelMsg);
-    expect(a.last('refused').reason).toMatch(/press or release/);
-    a.world.duel(a.id, { t: 'duel', action: 'step', dir: 'left' }); tap(a);
-    a.world.stepSessions(1);
-    expect(a.s.field.boss.hp).toBe(hp); expect(a.s.damageOf(a.id)).toBe(0);
+    expect(a.s.damageOf(a.id)).toBe(0);
   });
 });
 
 describe('down, cover, loss and archived outcomes', () => {
   it('keeps a downed body through grace, then archives HP, grading, wave and seconds', () => {
     const s = field(); const b = s.bodyOf('a')!;
-    pauseAttacks(s); b.hp = 1; b.waveDrained = 7; b.busting.counters = 2;
+    pauseAttacks(s); b.hp = 1; b.waveDrained = 7; b.rank.counters = 2;
     hazard(s, ['a'], 10);
     const first = s.step(50, []);
     expect(first.downed).toEqual(['a']); expect(first.expired).toEqual([]);
@@ -545,7 +571,7 @@ describe('down, cover, loss and archived outcomes', () => {
     expect(s.has('a')).toBe(false); expect(s.state.result).toBe('loss');
     expect(s.hpOf('a')).toEqual({ hp: 0, maxHp: SF.DEFAULT_STATS.hp });
     const outcome = s.outcomeOf('a')!;
-    expect(outcome).toMatchObject({ survived: false, wave: 7, busting: { counters: 2, abacks: 1 } });
+    expect(outcome).toMatchObject({ survived: false, wave: 7, rank: { counters: 2, abacks: 1 } });
     expect(outcome.drop).toEqual(SF.dropFor(outcome.level));
     expect(s.secondsOf('a')).toBeCloseTo(SF.DOWN_GRACE_MS / 1000);
     s.join({ id: 'a' }, joinSpec()); expect(s.has('a')).toBe(false);
@@ -579,9 +605,13 @@ describe('down, cover, loss and archived outcomes', () => {
     a.world.simulateSale(12_000, 3);
     for (const who of [a, partner]) a.world.duel(who.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     const s = a.world.sessionOf(a.id)!; const b = s.bodyOf(partner.id)!;
-    s.state.boss.next = 100_000;
+    pauseAttacks(s);
     b.file = 0; b.hp = 1;
     hazard(s, [partner.id], 10); a.world.stepSessions(50);
+    // The test jab re-arms the boss clock the moment it resolves, so the pause has to be
+    // re-applied: without it the anomaly telegraphs again mid-hold and strikes exactly
+    // when the revive would land.
+    pauseAttacks(s);
     a.world.duel(a.id, { t: 'duel', action: 'cover', with: partner.id });
     expect(a.last('cover')).toMatchObject({ ok: true, target: partner.id });
     worldAdvance(a.world, SF.REVIVE_HOLD_MS - 50);
@@ -594,8 +624,8 @@ describe('down, cover, loss and archived outcomes', () => {
 
   it('archives a departing body and removes its airborne shots and cover targets', () => {
     const s = field(); s.join({ id: 'b' }, joinSpec());
-    const b = s.bodyOf('b')!; b.hp = 73; b.busting.counters = 4; b.waveDrained = 9;
-    SF.openCustom(s.state, b); SF.pickCard(s.state, 'b', 0); SF.execute(s.state, 'b'); s.step(50, []);
+    const b = s.bodyOf('b')!; b.hp = 73; b.rank.counters = 4; b.waveDrained = 9;
+    SF.openHand(s.state, b); SF.pickCard(s.state, 'b', 0); SF.execute(s.state, 'b'); s.step(50, []);
     expect(s.field.shots.some((shot) => shot.owner === 'b')).toBe(true);
     s.bodyOf('a')!.hold = { target: 'b', ms: 100 };
     const outcome = s.outcomeOf('b'); const seconds = s.secondsOf('b');
@@ -619,7 +649,7 @@ describe('down, cover, loss and archived outcomes', () => {
     worldAdvance(a.world, SF.DOWN_GRACE_MS);
     expect(a.p.inBattle).toBe(false); expect(a.s.hpOf(a.id)!.hp).toBe(0);
     expect(a.end()).toMatchObject({ won: false, reason: 'wiped', wave: 5, lockoutMs: SF.DEFEAT_LOCKOUT_MS });
-    expect(a.end()!.busting.level).toBe(a.s.outcomeOf(a.id)!.level);
+    expect(a.end()!.rank.level).toBe(a.s.outcomeOf(a.id)!.level);
     expect(a.world.profiles.doc(a.p.tokenId).stats.deaths).toBe(1);
     a.world.duel(a.id, { t: 'duel', action: 'enter', mode: 'train' });
     expect(a.last('refused').reason).toMatch(/recovering/);
@@ -629,24 +659,34 @@ describe('down, cover, loss and archived outcomes', () => {
 describe('shared sector HP and boss identity', () => {
   it('reconciles between-tick releases and mirrors other sessions without double counting', () => {
     const { boss, sectors, make } = sectorFixture(); const a = make('a'); const b = make('b');
-    const damage = SF.busterDamage(false, SF.DEFAULT_STATS.attack);
-    SF.pressBuster(a.state, 'a'); SF.releaseBuster(a.state, 'a');
+    pauseAttacks(a); pauseAttacks(b);
+    fireCardHit(a.state, 'a');
     expect(boss.hp).toBe(1_000);
-    a.step(1, sectors); expect(boss.hp).toBe(1_000 - damage);
+    for (let t = 0; t < 1500; t += 50) a.step(50, sectors);
+    const damage = 1_000 - boss.hp;
+    expect(damage).toBeGreaterThan(0);
     b.step(1, sectors); expect(b.field.boss.hp).toBe(boss.hp); expect(b.damageOf('b')).toBe(0);
-    SF.pressBuster(b.state, 'b'); SF.releaseBuster(b.state, 'b'); b.step(1, sectors);
-    a.step(1, sectors); expect(a.field.boss.hp).toBe(1_000 - damage * 2);
-    expect(a.damageOf('a')).toBe(damage); expect(b.damageOf('b')).toBe(damage);
-    a.step(1, sectors); expect(boss.hp).toBe(1_000 - damage * 2);
+    fireCardHit(b.state, 'b');
+    for (let t = 0; t < 1500; t += 50) b.step(50, sectors);
+    a.step(1, sectors); expect(a.field.boss.hp).toBe(boss.hp);
+    expect(a.damageOf('a')).toBe(damage); expect(b.damageOf('b')).toBeGreaterThan(0);
+    const total = 1_000 - boss.hp;
+    a.step(1, sectors); expect(1_000 - boss.hp).toBe(total);
   });
 
   it('credits only actual shared HP removed when two sessions overkill the same pool', () => {
     const { sector, sectors, make } = sectorFixture(5); const a = make('a'); const b = make('b');
-    SF.pressBuster(a.state, 'a'); SF.releaseBuster(a.state, 'a');
-    SF.pressBuster(b.state, 'b'); SF.releaseBuster(b.state, 'b');
-    const out = a.step(1, sectors);
+    pauseAttacks(a); pauseAttacks(b);
+    fireCardHit(a.state, 'a');
+    fireCardHit(b.state, 'b');
+    let out = a.step(1, sectors);
+    let hit = out.events.some((e) => e.type === 'hit');
+    for (let t = 0; t < 2000 && !out.cleared; t += 50) {
+      out = a.step(50, sectors);
+      hit = hit || out.events.some((e) => e.type === 'hit');
+    }
     expect(out.cleared).toBe(true); expect(out.signals.some((e) => e.type === 'cleared')).toBe(true);
-    expect(out.events.find((e) => e.type === 'buster')).toMatchObject({ damage: 5 });
+    expect(hit).toBe(true);
     expect(a.damageOf('a')).toBe(5); expect(a.bestOf('a')).toBe(5);
     expect(sector.boss).toBeNull(); expect(sector.cleared).toBe(1);
     expect(b.step(1, sectors).gone).toBe(true); expect(b.damageOf('b')).toBe(0);
@@ -654,7 +694,8 @@ describe('shared sector HP and boss identity', () => {
 
   it.each(['id', 'spawnedAt'] as const)('never applies queued damage to a replacement with changed %s', (key) => {
     const { boss, sector, sectors, make } = sectorFixture(); const a = make('a');
-    SF.pressBuster(a.state, 'a'); SF.releaseBuster(a.state, 'a');
+    pauseAttacks(a);
+    fireCardHit(a.state, 'a');
     const replacement = { ...boss, [key]: key === 'id' ? 'replacement' : boss.spawnedAt + 1 } as Boss;
     sector.boss = replacement;
     expect(a.matchesBoss(replacement)).toBe(false);
@@ -680,7 +721,7 @@ describe('shared sector HP and boss identity', () => {
 describe('real social-party traits', () => {
   it('does not treat strangers in the same field as a social party, and never heals on membership changes', () => {
     const a = arena(); const b = seat(a.world, 'friend'); const c = seat(a.world, 'stranger');
-    a.p.build.loadout.gear = 'gauge'; b.p.build.loadout.gear = 'hp'; c.p.build.loadout.gear = 'guard';
+    a.p.build.loadout.gear = 'charge'; b.p.build.loadout.gear = 'hp'; c.p.build.loadout.gear = 'guard';
     a.world.simulateSale(12_000, 3);
     for (const who of [a, b, c]) who.world.duel(who.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     const s = a.world.sessionOf(a.id)!; const body = s.bodyOf(a.id)!;
@@ -727,20 +768,20 @@ describe('graded loot and training rewards', () => {
     sector.boss!.hp = sector.boss!.maxHp = 1;
     for (const who of [a, spectator]) a.world.duel(who.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     const s = a.world.sessionOf(a.id)!; const b = s.bodyOf(a.id)!;
-    b.busting = { ...SF.emptyBusting(), counters: high ? 5 : 0, abacks: high ? 0 : 18, maxChain: high ? 4 : 0 };
+    b.rank = { ...SF.emptyRank(), counters: high ? 5 : 0, abacks: high ? 0 : 18, maxChain: high ? 4 : 0 };
     s.state.elapsed = high ? 1_000 : 200_000;
     spectator.p.bestProgram = 100_000;
     const grant = vi.spyOn(a.world.profiles, 'grant');
     vi.spyOn(Math, 'random').mockReturnValue(0.2);
-    tap(a); a.world.stepSessions(1);
+    fireKill(a);
     const outcome = s.outcomeOf(a.id)!; const end = a.end()!;
-    expect(end).toMatchObject({ won: true, reason: 'cleared', busting: { level: outcome.level, rank: outcome.rank }, drop: outcome.drop });
-    expect(outcome.rank).toBe(high ? 'S' : 'D');
-    const cards = grant.mock.calls.filter(([token, reward]) => token === a.p.tokenId && reward.chips?.length).flatMap(([, reward]) => reward.chips!);
+    expect(end).toMatchObject({ won: true, reason: 'cleared', rank: { level: outcome.level, letter: outcome.letter }, drop: outcome.drop });
+    expect(outcome.letter).toBe(high ? 'S' : 'D');
+    const cards = grant.mock.calls.filter(([token, reward]) => token === a.p.tokenId && reward.cards?.length).flatMap(([, reward]) => reward.cards!);
     expect(cards).toHaveLength(outcome.drop.rolls);
     expect(cards.every((id) => (SF.battleCard(id)!.cls !== 'standard') === high)).toBe(true);
     expect(a.world.saves.get(a.p.tokenId).kills).toBe(1);
-    expect(spectator.end()).toMatchObject({ won: true, xp: 0, wav: 0, chips: [] });
+    expect(spectator.end()).toMatchObject({ won: true, xp: 0, wav: 0, cards: [] });
     expect(a.world.saves.get(spectator.p.tokenId).kills).toBe(0);
     a.world.stepSessions(50);
     expect(a.msgs.filter((m) => m.kind === 'end')).toHaveLength(1);
@@ -751,12 +792,12 @@ describe('graded loot and training rewards', () => {
     const first = finish(a);
     expect(first).toMatchObject({ won: true, first: true, reason: 'cleared' });
     expect(first.xp).toBeGreaterThanOrEqual(40); expect(first.items).toContain('med');
-    expect(first.chips).toHaveLength(1); expect(a.p.build.library).not.toContain(first.chips[0]);
-    expect(a.world.profileFor(a.id)!.chips).toContain(first.chips[0]);
+    expect(first.cards).toHaveLength(1); expect(a.p.build.library).not.toContain(first.cards[0]);
+    expect(a.world.profileFor(a.id)!.cards).toContain(first.cards[0]);
     const paid: number[] = [];
     for (let i = 0; i < 6; i++) {
       a.world.duel(a.id, { t: 'duel', action: 'enter', mode: 'train' });
-      const end = finish(a); expect(end.first).toBe(false); expect(end.chips).toEqual([]); paid.push(end.xp);
+      const end = finish(a); expect(end.first).toBe(false); expect(end.cards).toEqual([]); paid.push(end.xp);
     }
     expect(paid[0]).toBeGreaterThan(0); expect(paid[0]).toBeLessThan(20);
     expect(paid.at(-1)).toBe(0); expect(a.world.profiles.doc(a.p.tokenId).stats.trains).toBe(7);
@@ -766,7 +807,7 @@ describe('graded loot and training rewards', () => {
     const a = training(); const doc = a.world.profiles.doc(a.p.tokenId);
     doc.quests['m-01b'] = { progress: [0], done: false, turnedIn: false };
     const end = finish(a);
-    expect(doc.quests['m-01b']!.done).toBe(true); expect(end.quests).toContain('Dry Run');
+    expect(doc.quests['m-01b']!.done).toBe(true); expect(end.quests).toContain('Testnet Baby');
   });
 });
 
@@ -831,4 +872,119 @@ describe('dungeon authorization and persisted run integrity', () => {
     expect(a.last('refused').reason).toMatch(/room IDs are only valid/);
     expect(a.world.sessionOf(a.id)).toBeNull();
   });
+});
+
+/**
+ * Loot with a body.
+ *
+ * A payout used to arrive as a menu entry. These tests hold the four rules that make a drop a
+ * thing on the street instead: it exists, only its owner may take it, only from arm's reach, and
+ * the street eventually takes it back.
+ */
+describe('loot on the street', () => {
+  // Winning a fight is a real-time fixture; give the block room on a loaded machine.
+  const TIMEOUT = 20_000;
+  const piles = (a: ReturnType<typeof seat>): Record<string, unknown>[] => {
+    const m = [...a.msgs].reverse().find((x) => x.t === 'drops') as { drops?: Record<string, unknown>[] } | undefined;
+    return m?.drops ?? [];
+  };
+  /** Walk a dungeon room: arm the node, clear the field, take the kill. */
+  const clearRoom = (a: ReturnType<typeof seat>): void => {
+    // The real route into a fold room: arm the node on the run and engage it. The kill is issued by
+    // the server itself when the field closes — calling `area.kill` here would find no field left.
+    const { area } = dungeon(a, 90);
+    a.world.loop(a.id, { action: 'area.step', nodeId: 'enemy' });
+    a.world.loop(a.id, { action: 'area.engage' });
+    const s = a.world.sessionOf(a.id)!;
+    expect(s.state.place).toMatchObject({ kind: 'dungeon', dungeonId: area.dungeonId, roomId: 'enemy' });
+    fireKill(a);
+    expect(a.end()?.won).toBe(true);
+  };
+
+  it('drops nothing for training — it is a practice room, not a reward', () => {
+    const a = training();
+    expect(piles(a)).toHaveLength(0);
+    finish(a);
+    // Training hands out the starter card to teach the loop and then it is over. A pile left on the
+    // street afterwards is a pile a player walks over expecting a fold's loot and receives the
+    // starter card instead, so there is no pile.
+    expect(piles(a)).toHaveLength(0);
+    const list = [...a.msgs].filter((m) => m.t === 'drops');
+    expect(list.every((m) => (m.drops as unknown[]).length === 0)).toBe(true);
+  }, TIMEOUT);
+
+  it('drops what a cleared dungeon room paid, on the ground where it was earned', () => {
+    const a = arena();
+    clearRoom(a);
+    const list = piles(a);
+    expect(list.length).toBeGreaterThan(0);
+    for (const d of list) {
+      expect(d.owner).toBe(a.id);
+      expect(typeof d.x).toBe('number');
+      expect(typeof d.z).toBe('number');
+      expect(d.ttl).toBeGreaterThan(0);
+      // Scattered around the body, not stacked on the exact same spot.
+      expect(Math.hypot((d.x as number) - a.p.x, (d.z as number) - a.p.y)).toBeGreaterThan(0);
+    }
+  }, TIMEOUT);
+
+  it('refuses a pile that belongs to somebody else', () => {
+    const a = arena();
+    clearRoom(a);
+    const first = piles(a)[0]!;
+    const other = seat(a.world);
+    // Put the stranger right on top of it: proximity is not permission.
+    other.p.x = first.x as number; other.p.y = first.z as number;
+    const res = a.world.loop(other.id, { action: 'take', dropId: first.id as string });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toMatch(/not yours/);
+    // And it is still on the ground for the player who earned it.
+    expect(piles(a).some((d) => d.id === first.id)).toBe(true);
+  }, TIMEOUT);
+
+  it('refuses a pile you are not standing on, then collects it when you walk to it', () => {
+    const a = arena();
+    clearRoom(a);
+    const first = piles(a)[0]!;
+    a.p.x = (first.x as number) + 40; a.p.y = first.z as number;
+    expect(a.world.loop(a.id, { action: 'take', dropId: first.id as string }).reason).toMatch(/too far/);
+
+    // The bag must NOT grow: a clear already paid this loot, and the pile is that payout made
+    // visible. Granting again would hand the bag a duplicate, which the duplicate path silently
+    // buys back for WAV — a beam labelled CINDER FANG that pays coins.
+    const chipsBefore = [...a.world.saves.get(a.p.tokenId).cards];
+    const itemsBefore = { ...(a.world.profiles.doc(a.p.tokenId).bag.items as Record<string, number>) };
+    a.p.x = first.x as number; a.p.y = first.z as number;
+    const res = a.world.loop(a.id, { action: 'take', dropId: first.id as string });
+    expect(res.ok).toBe(true);
+    expect(res.name).toBe(first.name);
+    expect(a.world.saves.get(a.p.tokenId).cards).toEqual(chipsBefore);
+    expect(a.world.profiles.doc(a.p.tokenId).bag.items).toEqual(itemsBefore);
+    expect(piles(a).some((d) => d.id === first.id)).toBe(false);
+  }, TIMEOUT);
+
+  it('lets the street take a pile back once it has waited too long', () => {
+    const a = arena();
+    clearRoom(a);
+    const first = piles(a)[0]!;
+    a.p.x = first.x as number; a.p.y = first.z as number;
+    const real = Date.now;
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(real() + 10 * 60_000);
+    try {
+      const res = a.world.loop(a.id, { action: 'take', dropId: first.id as string });
+      expect(res.ok).toBe(false);
+      expect(res.reason).toMatch(/took it back/);
+      expect(piles(a).some((d) => d.id === first.id)).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('re-asks for the street on demand, so a reconnect is not blind', () => {
+    const a = arena();
+    clearRoom(a);
+    const res = a.world.loop(a.id, { action: 'drops' });
+    expect(res.ok).toBe(true);
+    expect((res.drops as unknown[]).length).toBe(piles(a).length);
+  }, TIMEOUT);
 });

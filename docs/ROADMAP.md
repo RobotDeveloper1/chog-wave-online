@@ -41,8 +41,8 @@ changed and why. Tick items as they land.
 
 ### Duel
 - Server-authoritative field: boss **telegraphs** a file, then fires; you dodge by changing file; HP and defeat; chain meter; four phases; per-archetype volleys.
-- Custom Screen: the server deals the hand, enforces the gauge and the queue limit; programs are resolved by projectiles on the field (a card that visually misses does no damage); fusion/Program Advance detected in the queue.
-- New arena (panels, backdrop, boss avatar per archetype, FX, damage numbers) and a new HUD (boss plate, player plate, gauge, chain, telegraph banner, hand/grid/queue UI).
+- Custom Screen: the server deals the hand, enforces the charge and the queue limit; programs are resolved by projectiles on the field (a card that visually misses does no damage); fusion/Program Advance detected in the queue.
+- New arena (panels, backdrop, boss avatar per archetype, FX, damage numbers) and a new HUD (boss plate, player plate, charge, chain, telegraph banner, hand/grid/queue UI).
 
 ### Social
 - Chat panel with channels (global / district / party / whisper), history, bubbles over avatars, `/` commands, rate limit.

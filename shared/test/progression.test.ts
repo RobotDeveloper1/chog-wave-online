@@ -71,7 +71,7 @@ describe('the dungeons', () => {
         expect(area.rows).toBe(def.rows);
         const boss = nodeById(area, area.bossId)!;
         expect(boss.enemy).toMatchObject({ name: def.boss.name, archetype: def.boss.archetype, element: def.element });
-        expect(boss.chips?.length).toBeGreaterThan(0);
+        expect(boss.cards?.length).toBeGreaterThan(0);
         const reach = new Set<string>([area.entryId]);
         const stack = [area.entryId];
         while (stack.length) for (const l of nodeById(area, stack.pop()!)?.links ?? []) if (!reach.has(l)) (reach.add(l), stack.push(l));
@@ -133,7 +133,7 @@ describe('the ladder', () => {
   });
 
   it('names what a level-up climbed, and says what comes next', () => {
-    expect(gatesBetween(1, 2)).toEqual(['Custom Screen: 4-card programs', 'Dungeon: EMBER FOUNDRY']);
+    expect(gatesBetween(1, 2)).toEqual(['Hand: 4-card programs', 'Dungeon: EMBER FOUNDRY']);
     expect(gatesBetween(2, 4)).toEqual([]);
     expect(gatesBetween(4, 8)).toContain('Dungeon: RELAY SPIRE');
     expect(unlocksAt(1).next).toMatch(/Lv 2/);
@@ -169,7 +169,7 @@ describe('the acts', () => {
     });
   });
 
-  it('teach the loop in the order it pays: the Sim before the folder before the shop', () => {
+  it('teach the loop in the order it pays: the Sim before the deck before the shop', () => {
     const chain = ACTS.flatMap((a) => a.quests);
     expect(chain.indexOf('m-01b')).toBeLessThan(chain.indexOf('m-01c'));
     expect(chain.indexOf('m-01c')).toBeLessThan(chain.indexOf('m-02'));
@@ -178,7 +178,7 @@ describe('the acts', () => {
     expect(QUEST_BY_ID.get('m-05b')!.objectives[0]!.kind).toBe('fuse');
   });
 
-  it('keep every main quest in the one city, and out of the market’s hands', () => {
+  it('keep every main quest in the one city, and out of the market’s.cellss', () => {
     for (const q of STORY) {
       expect(q.sector ?? 'ashflat').toBe('ashflat');
       // an errand a quiet market could block would stop the road for whoever plays at night
@@ -209,7 +209,7 @@ describe('the journey', () => {
   });
 
   it('holds a quest until its level, and tells the player what they are waiting for', () => {
-    const act1 = ['m-01', 'm-01b', 'm-01c', 'm-02', 'm-03', 'm-04'];
+    const act1 = ['m-01', 'm-01b', 'm-01c', 'm-01d', 'm-01e', 'm-02', 'm-03', 'm-04'];
     const low = journey(act1, [], 1);
     expect(low[0]!.state).toBe('done');
     expect(low[1]!.steps[0]).toMatchObject({ id: 'm-05', state: 'locked', level: 2 });

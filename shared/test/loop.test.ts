@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALBUM_TOTAL,
-  CHIP_BY_ID,
+  CARD_BY_ID,
   ITEMS,
   LEVEL_CAP,
   advanceRun,
-  albumStat,
+  applyOutcome,  albumStat,
   applyEvent,
   areaTierUnlocked,
   board,
@@ -13,8 +13,8 @@ import {
   buy,
   canEnter,
   canSell,
-  chipPrice,
-  chipValue,
+  cardPrice,
+  cardValue,
   controlOf,
   credit,
   emptyLedger,
@@ -49,8 +49,11 @@ import {
   weeklyPrizes,
   freshState,
   sweepBounties,
+  clearNode,
+  draftRoll,
   makeArea,
   nodeById,
+  resolveNode,
   FUN,
   SF,
   dpsProfile,
@@ -143,10 +146,10 @@ describe('economy', () => {
 
   it('never lets a purchase be turned back into more money than it cost', () => {
     for (const line of stockForChips(7, { mon: 0 }, 'voltgrid')) {
-      const c = CHIP_BY_ID.get(line.stockId);
+      const c = CARD_BY_ID.get(line.stockId);
       if (!c) continue;
       // Cheapest possible shelf price vs the best possible resale.
-      expect(sellPrice(c)).toBeLessThan(chipPrice(c, 0.75));
+      expect(sellPrice(c)).toBeLessThan(cardPrice(c, 0.75));
     }
   });
 
@@ -161,7 +164,7 @@ describe('economy', () => {
   it('only ever stocks cards that exist', () => {
     for (let seed = 0; seed < 40; seed++) {
       for (const line of stockForChips(seed, { mon: 900 }, 'hollow')) {
-        expect(CHIP_BY_ID.has(line.stockId)).toBe(true);
+        expect(CARD_BY_ID.has(line.stockId)).toBe(true);
       }
     }
   });
@@ -183,8 +186,8 @@ describe('economy', () => {
   });
 
   it('will not buy back a Chog signature card from its own owner', () => {
-    const sig = [...CHIP_BY_ID.values()].find((c) => c.signature)?.id ?? 'emberpaw';
-    expect(canSell(CHIP_BY_ID.get(sig)!, [sig])).toBe(false);
+    const sig = [...CARD_BY_ID.values()].find((c) => c.signature)?.id ?? 'emberpaw';
+    expect(canSell(CARD_BY_ID.get(sig)!, [sig])).toBe(false);
   });
 
   it('pays the party once, on the party table', () => {
@@ -211,22 +214,22 @@ describe('economy', () => {
   });
 });
 
-describe('chip pricing', () => {
+describe('card pricing', () => {
   it('never lets a void card collapse to the floor price', () => {
     // Negative waveDrain is a liability, not a discount code: every void card used to
     // price at the 15 WAV minimum because the drain factor went sub-zero.
-    const voids = [...CHIP_BY_ID.values()].filter((c) => c.waveDrain < 0);
+    const voids = [...CARD_BY_ID.values()].filter((c) => c.waveDrain < 0);
     expect(voids.length).toBeGreaterThan(0);
     for (const c of voids) {
-      expect(chipValue(c)).toBeGreaterThan(c.power * Math.max(1, c.hits) * 0.3);
-      expect(chipPrice(c, 0.75)).toBeGreaterThan(15);
+      expect(cardValue(c)).toBeGreaterThan(c.power * Math.max(1, c.hits) * 0.3);
+      expect(cardPrice(c, 0.75)).toBeGreaterThan(15);
     }
   });
 
   it('prices stronger cards higher, whatever their element', () => {
-    const weak = CHIP_BY_ID.get('emberpaw')!;
-    const strong = CHIP_BY_ID.get('signaldeath')!;
-    expect(chipValue(strong)).toBeGreaterThan(chipValue(weak));
+    const weak = CARD_BY_ID.get('emberpaw')!;
+    const strong = CARD_BY_ID.get('signaldeath')!;
+    expect(cardValue(strong)).toBeGreaterThan(cardValue(weak));
   });
 });
 
@@ -321,15 +324,22 @@ describe('SF pacing math', () => {
     const early = dpsProfile(2, 'core', { samples: 36, seed: 812 });
     expect(dpsProfile(2, 'core', { samples: 36, seed: 812 })).toEqual(early);
     expect(early.queueSlots).toBe(SF.DEFAULT_STATS.slots);
-    expect(early.gaugeMs).toBe(SF.gaugeMsFor({ gauge: 2 }));
-    expect(early.cycleSeconds).toBeGreaterThan(early.gaugeMs / 1000 + 3);
-    expect(early.dps).toBeGreaterThan(early.programDamage / early.cycleSeconds);
+    expect(early.chargeMs).toBe(SF.chargeMsFor({ charge: 2 }));
+    expect(early.cycleSeconds).toBeGreaterThan(early.chargeMs / 1000 + 3);
+    // `dps` is total damage over total time; `programDamage / cycleSeconds` is the same figure
+    // derived from the means. They must agree, and the only reason they are not bit-identical is
+    // that the mean of a ratio is not the ratio of the means. This used to assert `>`, which was
+    // asserting Monte-Carlo luck rather than a property of the model — it passed on a 24-card
+    // reference deck and failed the moment the Line shortened it to 18.
+    const derived = early.programDamage / early.cycleSeconds;
+    expect(early.dps).toBeGreaterThan(derived * 0.9);
+    expect(early.dps).toBeLessThan(derived * 1.1);
     expect(early.licence).toBe(1);
     const late = dpsProfile(26, 'core', { samples: 36, seed: 812 });
     expect(late.dps).toBeGreaterThan(early.dps);
     expect(late.queueSlots).toBe(6);
     expect(late.gridEdge).toBe(6);
-    expect(late.gaugeMs).toBeLessThan(early.gaugeMs);
+    expect(late.chargeMs).toBeLessThan(early.chargeMs);
   });
 
   it('does not let report callers corrupt the cached measurements', () => {
@@ -340,10 +350,19 @@ describe('SF pacing math', () => {
   });
 
   it('samples an actual legal program and never fires duplicate copies', () => {
-    const output = sampleProgram(['emberpaw', 'emberpaw'], 'new', 2, 3, () => 0);
     const attack = SF.attackScale(1);
-    expect(output).toBe(Math.round(SF.card('emberpaw').might * attack) * SF.CRIT_MULTIPLIER);
-    expect(sampleProgram([], 'new', 2, 3, rng(1))).toBe(0);
+    const ember = Math.round(SF.card('emberpaw').might * attack) * SF.CRIT_MULTIPLIER;
+    // A deck of two copies of the same card deals **one** Emberpaw and four basic cells, and
+    // the duplicate rule keeps the second Emberpaw out of the program. So the program is not
+    // "2x Emberpaw" any more, which is what `drawCandidates` drawing distinct-first bought.
+    const output = sampleProgram(['emberpaw', 'emberpaw'], 'new', 2, 3, () => 0);
+    expect(output).toBeGreaterThanOrEqual(ember);
+    expect(output).toBeLessThan(ember * 2);
+    // An empty deck used to be a do-nothing program and scored 0. It is not any more: the hand
+    // is always six cells and the ones the deck cannot fill are the token's basic attack, so a
+    // Chog that has walked nowhere still has something to press. This is the feature, not a
+    // regression — see `docs/THE-LINE.md` §4.2.
+    expect(sampleProgram([], 'new', 2, 3, rng(1))).toBeGreaterThan(0);
   });
 
   it('prices attrition on SF clocks and integrity, including high-depth cadence', () => {
@@ -495,7 +514,7 @@ describe('data areas', () => {
     for (let seed = 0; seed < 80; seed++) {
       const area = makeArea(seed, 1 + (seed % 4), 'voltgrid');
       for (const n of area.nodes) {
-        for (const id of n.chips ?? []) expect(CHIP_BY_ID.has(id)).toBe(true);
+        for (const id of n.cards ?? []) expect(CARD_BY_ID.has(id)).toBe(true);
       }
     }
   });
@@ -570,7 +589,7 @@ describe('album', () => {
     expect(row.pct).toBe(1);
     expect(pendingCompletions({ seen: full.seen, claimed: [] })).toHaveLength(1);
     const paid = pendingCompletions({ seen: full.seen, claimed: [] })[0]!;
-    expect(paid.chip).toBe(categoryPrize('Eyes'));
+    expect(paid.card).toBe(categoryPrize('Eyes'));
     expect(markClaimed(emptyAlbum(), ['Eyes']).claimed).toEqual(['Eyes']);
     expect(pendingCompletions({ seen: full.seen, claimed: ['Eyes'] })).toHaveLength(0);
   });
@@ -578,7 +597,7 @@ describe('album', () => {
   it('prize cards are real cards', () => {
     for (const cat of albumStat([]).categories) {
       const prize = categoryPrize(cat.category);
-      if (prize) expect(CHIP_BY_ID.has(prize)).toBe(true);
+      if (prize) expect(CARD_BY_ID.has(prize)).toBe(true);
     }
   });
 });
@@ -636,5 +655,140 @@ describe('tribe war', () => {
       ledger = credit(ledger, { tokenId: 7, tribe: 'void', sector: 'ashflat', points: 5, clear: true });
     }
     expect(board(ledger).find((r) => r.tribe === 'void')!.members).toBe(1);
+  });
+});
+
+describe('the 1-of-3 draft', () => {
+  it('passes the node’s own pre-rolled cards straight through, and deals the 1-of-3 pick beside them', () => {
+    const area = makeArea(7, 2, 'ashflat');
+    for (const n of area.nodes) {
+      if (n.kind !== 'wave' && n.kind !== 'elite' && n.kind !== 'boss') continue;
+      const run = { ...startRun(area, 200), at: n.id };
+      let t = 0.13;
+      const out = resolveNode(run, area, n.id, 0.5, 1, () => (t = (t + 0.37) % 1));
+      expect(out && 'draft' in out && out.draft.length).toBe(3);
+      const ids = (out as { draft: string[] }).draft;
+      expect(new Set(ids).size).toBe(3);
+      for (const id of ids) expect(CARD_BY_ID.has(id)).toBe(true);
+      // The node’s own pay still pays immediately (buyback included) — the draft is the pick
+      // on top, not instead. A wave with an empty shelf pays nothing straight, by the shelf.
+      expect((out as { cards: string[] }).cards).toEqual(n.cards ?? []);
+    }
+  });
+
+  it('deals commons on waves, mids on elites, and a high on the boss — never a signature', () => {
+    let t = 0.29;
+    const r = () => (t = (t + 0.37) % 1);
+    const wave = draftRoll('wave', 1, r);
+    expect(wave.length).toBe(3);
+    for (const id of wave) expect(CARD_BY_ID.get(id)!.klass).toBeUndefined();
+    const elite = draftRoll('elite', 2, r);
+    expect(elite.filter((id) => CARD_BY_ID.get(id)!.klass === 'M').length).toBeGreaterThanOrEqual(2);
+    const boss = draftRoll('boss', 3, r);
+    expect(boss.filter((id) => CARD_BY_ID.get(id)!.klass === 'G').length).toBe(1);
+    expect(boss.filter((id) => CARD_BY_ID.get(id)!.klass === 'M').length).toBe(2);
+    for (const id of [...wave, ...elite, ...boss]) {
+      expect(CARD_BY_ID.get(id)!.signature).toBeUndefined();
+    }
+  });
+
+  it('parks the draft on the run, and a newer combat node re-deals over it', () => {
+    let area = makeArea(11, 2, 'ashflat');
+    for (let seed = 0; seed < 60; seed++) {
+      const cand = makeArea(seed, 2, 'ashflat');
+      if (cand.nodes.filter((n) => n.kind === 'wave').length >= 2) { area = cand; break; }
+    }
+    const waves = area.nodes.filter((n) => n.kind === 'wave');
+    expect(waves.length).toBeGreaterThanOrEqual(2);
+    let run = { ...startRun(area, 200), at: waves[0]!.id };
+    const first = clearNode(run, area, 0, 0.25);
+    expect(first.ok).toBe(true);
+    expect(first.run.draft?.options.length).toBe(3);
+    run = { ...first.run, at: waves[1]!.id };
+    const second = clearNode(run, area, 0, 0.75);
+    expect(second.ok).toBe(true);
+    expect(second.run.draft?.nodeId).toBe(waves[1]!.id);
+  });
+
+  it('leaves chests and shrines without a draft', () => {
+    let area = makeArea(13, 2, 'ashflat');
+    for (let seed = 0; seed < 60; seed++) {
+      const cand = makeArea(seed, 2, 'ashflat');
+      if (cand.nodes.some((n) => n.kind === 'chest') && cand.nodes.some((n) => n.kind === 'shrine')) { area = cand; break; }
+    }
+    const chest = area.nodes.find((n) => n.kind === 'chest')!;
+    const shrine = area.nodes.find((n) => n.kind === 'shrine')!;
+    const rc = clearNode({ ...startRun(area, 200), at: chest.id }, area, 0, 0.5);
+    expect(rc.ok).toBe(true);
+    expect(rc.run.draft).toBeNull();
+    const rs = clearNode({ ...startRun(area, 200), at: shrine.id }, area, 0, 0.5);
+    expect(rs.ok).toBe(true);
+    expect(rs.run.draft).toBeNull();
+  });
+});
+
+describe('the shrine rest', () => {
+  it('starts with no rest waiting', () => {
+    const area = makeArea(7, 2, 'ashflat');
+    expect(startRun(area, 200).shrine).toBeNull();
+  });
+
+  it('parks a rest when a shrine resolves, and a newer shrine re-parks it', () => {
+    let area = makeArea(21, 2, 'ashflat');
+    for (let seed = 0; seed < 120; seed++) {
+      const cand = makeArea(seed, 2, 'ashflat');
+      if (cand.nodes.filter((n) => n.kind === 'shrine').length >= 2) { area = cand; break; }
+    }
+    const shrines = area.nodes.filter((n) => n.kind === 'shrine');
+    expect(shrines.length).toBeGreaterThanOrEqual(2);
+    let run = { ...startRun(area, 200), at: shrines[0]!.id };
+    const first = clearNode(run, area, 0, 0.5);
+    expect(first.ok).toBe(true);
+    expect(first.run.shrine).toEqual({ nodeId: shrines[0]!.id });
+    run = { ...first.run, at: shrines[1]!.id };
+    const second = clearNode(run, area, 0, 0.75);
+    expect(second.ok).toBe(true);
+    expect(second.run.shrine).toEqual({ nodeId: shrines[1]!.id });
+  });
+
+  it('leaves combat and chest outcomes without touching the rest', () => {
+    const area = makeArea(7, 2, 'ashflat');
+    const wave = area.nodes.find((n) => n.kind === 'wave')!;
+    const chest = area.nodes.find((n) => n.kind === 'chest')!;
+    const rested = { ...startRun(area, 200), shrine: { nodeId: 's-0' } };
+    const waveOut = resolveNode({ ...rested, at: wave.id }, area, wave.id, 0.5, 1, () => 0.5)!;
+    expect(applyOutcome(rested, area, wave.id, waveOut).shrine).toEqual({ nodeId: 's-0' });
+    const chestOut = resolveNode({ ...rested, at: chest.id }, area, chest.id, 0.5, 1, () => 0.5)!;
+    expect(applyOutcome(rested, area, chest.id, chestOut).shrine).toEqual({ nodeId: 's-0' });
+  });
+});
+
+describe('the under-level promise', () => {
+  it('hits harder every phase, on every tier', () => {
+    for (const tier of ['glitch', 'anomaly', 'storm', 'node', 'train'] as const) {
+      const vols = [1, 2, 3].map((p) => SF.volleyDamage(p, tier));
+      expect(vols[1]!).toBeGreaterThan(vols[0]!);
+      expect(vols[2]!).toBeGreaterThan(vols[1]!);
+    }
+  });
+
+  it('grows node health with the tier, never backwards', () => {
+    const hps = [1, 2, 3, 4, 5].map((t) => nodeBudget(t).hp);
+    for (let i = 1; i < hps.length; i++) expect(hps[i]!).toBeGreaterThanOrEqual(hps[i - 1]!);
+    expect(hps[4]!).toBeGreaterThan(hps[0]!);
+  });
+
+  it('scratches five under, never graves: one volley stays under 15% of the band', () => {
+    const hp = SF.hpFor(refLevel(1));
+    const volley = SF.enemyVolleyDamage(3, 'node', undefined, undefined, 5);
+    expect(volley).toBeLessThan(hp * 0.15);
+  });
+
+  it('clamps the gap multiplier, so the ends of the ladder stay sane', () => {
+    const base = SF.enemyVolleyDamage(2, 'node', undefined);
+    const top = SF.enemyVolleyDamage(2, 'node', undefined, undefined, 100);
+    const low = SF.enemyVolleyDamage(2, 'node', undefined, undefined, -100);
+    expect(top / base).toBeLessThanOrEqual(1.8);
+    expect(low / base).toBeGreaterThanOrEqual(0.55);
   });
 });

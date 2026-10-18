@@ -1,10 +1,10 @@
-import { CHIPS_ALL } from './chips.ts';
+import { CARDS_ALL } from './cards.ts';
 import * as SF from './sf/index.ts';
-import { folderSlots } from './formula.ts';
+import { LINE_MAX_SLOTS } from './line/index.ts';
 import { partyHpScale, partyPowerScale } from './party.ts';
 import { LEVEL_CAP } from './progress.ts';
 import { deriveBuild } from './derive.ts';
-import type { Chip, Element } from './types.ts';
+import type { Card, Element } from './types.ts';
 
 type DuelTier = SF.DuelTier;
 
@@ -13,9 +13,9 @@ type DuelTier = SF.DuelTier;
  *
  * Every difficulty number in this game used to be a guess written next to a comment claiming
  * it felt right. It is the same failure in both directions: the designer picks an HP band, the
- * player picks a folder, and nobody checks whether those two numbers ever meet. This module is
- * the check. It drives SF sessions with legal Custom Screen picks, real staggered projectiles,
- * persistent element chains, per-battle Giga expenditure, crits and Buster taps. A stationary,
+ * player picks a deck, and nobody checks whether those two numbers ever meet. This module is
+ * the check. It drives SF sessions with legal Hand picks, real staggered projectiles,
+ * persistent element chains, per-battle Giga expenditure and crits. A stationary,
  * neutral target isolates outgoing throughput; the SF volley clock prices incoming attrition.
  *
  * Which turns difficulty into the only unit that matters for an action game: **seconds**. A node
@@ -36,9 +36,9 @@ type DuelTier = SF.DuelTier;
 export type Band = 'new' | 'core' | 'optimized';
 
 export interface BandModel {
-  /** Folder construction: which elements it leans on and how far up the rarity ladder it reaches. */
+  /** Deck construction: which elements it leans on and how far up the rarity ladder it reaches. */
   lean: Partial<Record<Element, number>>;
-  /** NFT rarity controls folder capacity; SF field width comes from level-derived stats. */
+  /** NFT rarity controls deck capacity; SF field width comes from level-derived stats. */
   rarity: number;
   /** Copies of one card the player is willing to bank, which is what makes a draw repeat. */
   copies: number;
@@ -48,7 +48,7 @@ export interface BandModel {
   chainRun: number;
   /** Fraction of a volley this band eats. Telegraph reading is the skill the field tests. */
   hitRate: number;
-  /** How long this band spends in the Custom Screen per program. */
+  /** How long this band spends in the Hand per program. */
   menuMs: number;
   /** How likely it is to land a card on the file the boss occupies. */
   aim: number;
@@ -60,7 +60,7 @@ export interface BandModel {
 const ELEMENTS: Element[] = ['burn', 'frost', 'volt', 'wave', 'prism', 'void'];
 
 export const BANDS: Record<Band, BandModel> = {
-  // Day one: a folder of whatever the token was born holding, three cards in the queue, and a
+  // Day one: a deck of whatever the token was born holding, three cards in the queue, and a
   // player still reading the telegraph. Everything here is deliberately bad.
   new: {
     lean: {},
@@ -118,11 +118,11 @@ export function rng(seed: number): () => number {
   };
 }
 
-function weightOf(lean: Record<Element, number>, c: Chip): number {
+function weightOf(lean: Record<Element, number>, c: Card): number {
   const output = c.power * Math.max(1, c.hits);
-  // A real player's folder is not uniform-random over what they own: they hold more of what hits
+  // A real player's deck is not uniform-random over what they own: they hold more of what hits
   // harder, and far more of the tribe they chose. Both are here, and together they are why
-  // `optimized` reads stronger than a born folder at the same queue length.
+  // `optimized` reads stronger than a born deck at the same queue length.
   return (lean[c.element] ?? 1) * (0.6 + output / 400);
 }
 
@@ -138,7 +138,7 @@ function leanFor(model: BandModel, tribe: Element): Record<Element, number> {
  * Fill `want` slots from `pool`, at most `copies` of any one card, weighted by `weight`.
  * The loop cannot hang: every pass either places a card or finds the pool capped.
  */
-function drawQuota(pool: readonly Chip[], want: number, copies: number, weight: (c: Chip) => number, rand: () => number): string[] {
+function drawQuota(pool: readonly Card[], want: number, copies: number, weight: (c: Card) => number, rand: () => number): string[] {
   const counts = new Map<string, number>();
   const out: string[] = [];
   while (out.length < want) {
@@ -161,44 +161,44 @@ function drawQuota(pool: readonly Chip[], want: number, copies: number, weight: 
 }
 
 /**
- * The folder a player at this band would actually carry. Built with the same constraints the
- * folder editor enforces — a size, a copies cap, a Mega and a Giga allowance, and one element it
- * may never field (its own weakness) — so the draw distribution the Custom Screen sees here is
+ * The deck a player at this band would actually carry. Built with the same constraints the
+ * deck editor enforces — a size, a copies cap, a Mega and a Giga allowance, and one element it
+ * may never field (its own weakness) — so the draw distribution the Hand sees here is
  * the one it sees in the game.
  */
-export function referenceFolder(band: Band, rand: () => number): string[] {
+export function referenceDeck(band: Band, rand: () => number): string[] {
   const model = BANDS[band];
   const tribe = ELEMENTS[Math.floor(rand() * ELEMENTS.length) % ELEMENTS.length]!;
   const banned = ELEMENTS[(ELEMENTS.indexOf(tribe) + 2 + Math.floor(rand() * 3)) % ELEMENTS.length]!;
   const lean = leanFor(model, tribe);
-  const weight = (c: Chip) => weightOf(lean, c);
-  const shelf = (k: 'S' | 'M' | 'G') => CHIPS_ALL.filter((c) => (c.klass ?? 'S') === k && c.element !== banned);
+  const weight = (c: Card) => weightOf(lean, c);
+  const shelf = (k: 'S' | 'M' | 'G') => CARDS_ALL.filter((c) => (c.klass ?? 'S') === k && c.element !== banned);
   const giga = drawQuota(shelf('G'), model.giga, model.copies, weight, rand);
   const mega = drawQuota(shelf('M'), model.mega, model.copies, weight, rand);
-  const commons = drawQuota(shelf('S'), folderSlots(model.rarity) - giga.length - mega.length, model.copies, weight, rand);
+  const commons = drawQuota(shelf('S'), LINE_MAX_SLOTS - giga.length - mega.length, model.copies, weight, rand);
   return [...giga, ...mega, ...commons];
 }
 
 /**
  * Six folders per band, drawn once for the band rather than once per level.
  *
- * One reference folder per (band, level) made the level curve measure that folder's luck instead
- * of the player's growth — a level 26 folder of weak commons read as *less damage* than a level 12
- * folder of good ones, which is the opposite of the claim the whole module is making. Averaging
- * over a handful of folders, all drawn from a stream seeded by band alone, keeps the folder spread
+ * One reference deck per (band, level) made the level curve measure that deck's luck instead
+ * of the player's growth — a level 26 deck of weak commons read as *less damage* than a level 12
+ * deck of good ones, which is the opposite of the claim the whole module is making. Averaging
+ * over a handful of folders, all drawn from a stream seeded by band alone, keeps the deck spread
  * (and the tribe variety inside it) fixed while SF level-derived stats change across the ladder.
  */
-export const FOLDERS_PER_BAND = 6;
+export const DECKS_PER_BAND = 6;
 const BAND_SEED: Record<Band, number> = { new: 1_013, core: 2_027, optimized: 4_019 };
-const folderCache = new Map<Band, string[][]>();
+const deckCache = new Map<Band, string[][]>();
 
-export function referenceFolders(band: Band, count = FOLDERS_PER_BAND): string[][] {
-  const seen = folderCache.get(band);
+export function referenceDecks(band: Band, count = DECKS_PER_BAND): string[][] {
+  const seen = deckCache.get(band);
   if (seen && seen.length >= count) return seen.slice(0, count);
   const rand = rng(BAND_SEED[band]!);
   const out: string[][] = [];
-  for (let i = 0; i < count; i++) out.push(referenceFolder(band, rand));
-  folderCache.set(band, out);
+  for (let i = 0; i < count; i++) out.push(referenceDeck(band, rand));
+  deckCache.set(band, out);
   return out;
 }
 
@@ -208,20 +208,25 @@ function referenceStats(level: number, band: Band): SF.DuelStats {
   const loadout = deriveBuild({ tokenId: 418, transferCount: 0, daysHeld: 0 }).loadout;
   return SF.duelStatsOf({
     level,
-    loadout: { ...loadout, gear: 'gauge', voice: { critPct: model.crit * 100 }, megaCap: model.mega > 0 ? 1 : 0, gigaCap: model.giga > 0 ? 1 : 0 },
+    loadout: { ...loadout, gear: 'charge', voice: { critPct: model.crit * 100 }, megaCap: model.mega > 0 ? 1 : 0, gigaCap: model.giga > 0 ? 1 : 0 },
   });
 }
 
 function selectProgram(session: SF.DuelSession, body: SF.DuelBody, band: Band): void {
-  while (body.custom) {
-    const legal = body.custom.hand.filter((c) => SF.canPick(body.custom!, c.cell, SF.capsOf(body)).ok);
+  // A candidate's own `might` wins over the catalogue's, because the basic attack carries the
+  // token's number there and not in `cards.ts` (`sf/loadout.ts basicMight`). Reading
+  // `SF.card(id).might` alone ranked every basic as a 1-power card and would have made the
+  // mature bands refuse the very thing a small deck fills its hand with.
+  const mightOf = (c: SF.Candidate): number => c.might ?? SF.card(c.cardId).might;
+  while (body.hand) {
+    const legal = body.hand.cells.filter((c) => SF.canPick(body.hand!, c.cell, SF.capsOf(body)).ok);
     if (!legal.length) break;
-    const take = band === 'new' ? legal[0]! : legal.reduce((a, b) => SF.card(b.chipId).might > SF.card(a.chipId).might ? b : a);
+    const take = band === 'new' ? legal[0]! : legal.reduce((a, b) => (mightOf(b) > mightOf(a) ? b : a));
     if (!SF.pickCard(session, body.id, take.cell)) break;
   }
 }
 
-function referenceSession(folder: readonly string[], band: Band, level: number, rand: () => number): { session: SF.DuelSession; body: SF.DuelBody } {
+function referenceSession(deck: readonly string[], band: Band, level: number, rand: () => number): { session: SF.DuelSession; body: SF.DuelBody } {
   const session = SF.openSession({
     id: 'pacing', place: { kind: 'train', sector: 'ashflat' }, rand,
     boss: { name: 'Neutral DPS target', archetype: 'dummy', element: 'void', hp: 1_000_000_000, level },
@@ -229,17 +234,17 @@ function referenceSession(folder: readonly string[], band: Band, level: number, 
   // A stationary, non-attacking target isolates throughput from the separate attrition model.
   // Void is neutral to every attacking element; chains, crits and Giga expenditure remain live.
   session.boss.next = Infinity;
-  const body = SF.addBody(session, { id: 'reference', owner: 'reference', name: band, tribe: 'burn', level, stats: referenceStats(level, band), folder });
+  const body = SF.addBody(session, { id: 'reference', owner: 'reference', name: band, tribe: 'burn', level, stats: referenceStats(level, band), deck });
   return { session, body };
 }
 
 /** One legal SF program, including real coverage, chain and landing-time crits. */
-export function sampleProgram(folder: readonly string[], band: Band, level: number, cols: number, rand: () => number): number {
-  const { session, body } = referenceSession(folder, band, level, rand);
+export function sampleProgram(deck: readonly string[], band: Band, level: number, cols: number, rand: () => number): number {
+  const { session, body } = referenceSession(deck, band, level, rand);
   SF.widen(session.field, Math.max(SF.MIN_COLS, Math.min(SF.MAX_COLS, cols)));
   const target = rand() < BANDS[band].aim ? session.field.boss.file : session.field.boss.file + 1;
   while (body.file !== target) SF.step(session, body.id, body.file < target ? 'right' : 'left');
-  SF.openCustom(session, body);
+  SF.openHand(session, body);
   selectProgram(session, body, band);
   SF.execute(session, body.id);
   let damage = 0;
@@ -250,32 +255,30 @@ export function sampleProgram(folder: readonly string[], band: Band, level: numb
   return damage;
 }
 
-function measureCycles(folder: readonly string[], band: Band, level: number, programs: number, rand: () => number): { damage: number; cards: number; ms: number } {
-  const { session, body } = referenceSession(folder, band, level, rand);
+function measureCycles(deck: readonly string[], band: Band, level: number, programs: number, rand: () => number): { damage: number; cards: number; ms: number } {
+  const { session, body } = referenceSession(deck, band, level, rand);
   let fired = 0;
   let damage = 0;
   let cards = 0;
   const aimFile = (): number => rand() < BANDS[band].aim ? session.field.boss.file : Math.min(session.field.cols - 1, session.field.boss.file + 1);
   let target = aimFile();
   while (fired < programs || body.program || session.field.shots.length) {
-    if (body.custom) {
-      if (body.customMs >= BANDS[band].menuMs) {
+    if (body.hand) {
+      if (body.handMs >= BANDS[band].menuMs) {
         selectProgram(session, body, band);
         SF.execute(session, body.id);
         fired++;
         target = aimFile();
       }
     } else if (SF.canAct(body) && fired < programs) {
+      // Cards and dodging only: the Buster was cut, so the reference player spends the charge
+      // window moving to aim, not tapping a gun that no longer exists. The dead time is real and
+      // it is priced in — that is what makes the measured DPS honest about the new pacing.
       if (body.file !== target) SF.step(session, body.id, body.file < target ? 'right' : 'left');
-      if (SF.canFire(body.buster)) {
-        SF.pressBuster(session, body.id);
-        SF.releaseBuster(session, body.id);
-      }
     }
     SF.tick(session, 50);
     for (const event of SF.drainEvents(session)) {
       if (event.type === 'hit') { cards += event.damage; damage += event.damage; }
-      if (event.type === 'buster') damage += event.damage;
     }
   }
   return { damage, cards, ms: session.elapsed };
@@ -286,18 +289,18 @@ export interface DpsProfile {
   band: Band;
   /** Damage the reference player actually lands per second, including the menu's dead time. */
   dps: number;
-  /** Mean landed SF card damage, excluding Buster taps. */
+  /** Mean landed SF card damage. */
   programDamage: number;
   /** Retained report field: licences no longer apply an invented combat multiplier. */
   licence: number;
   cycleSeconds: number;
-  gaugeMs: number;
+  chargeMs: number;
   queueSlots: number;
   gridEdge: number;
   samples: number;
 }
 
-/** Licences govern the folder editor, not a separate SF damage multiplier. */
+/** Licences govern the deck editor, not a separate SF damage multiplier. */
 export function licenceBoost(_level: number): number {
   return 1;
 }
@@ -308,8 +311,8 @@ const cache = new Map<string, DpsProfile>();
  * Measured DPS for a lone reference player. Memoised because it is a Monte Carlo over hundreds of
  * simulated programs and the dungeon calls it while generating maps.
  *
- * Every folder runs one continuous battle, with paired seeds across levels. Gauge refill is full
- * after the opening partial fill, and time in both the menu and the program stops the gauge.
+ * Every deck runs one continuous battle, with paired seeds across levels. Charge refill is full
+ * after the opening partial fill, and time in both the menu and the program stops the charge.
  * The per-battle Giga and chain state are never reset between the sampled programs.
  */
 export function dpsProfile(level: number, band: Band, opts: { samples?: number; seed?: number } = {}): DpsProfile {
@@ -320,7 +323,7 @@ export function dpsProfile(level: number, band: Band, opts: { samples?: number; 
   const seen = cache.get(hit);
   if (seen) return { ...seen, level };
 
-  const folders = referenceFolders(band);
+  const folders = referenceDecks(band);
   const per = Math.max(6, Math.ceil(samples / folders.length));
   const count = per * folders.length;
   let damage = 0;
@@ -339,7 +342,7 @@ export function dpsProfile(level: number, band: Band, opts: { samples?: number; 
     programDamage: Math.round(cards / count),
     licence: licenceBoost(level),
     cycleSeconds: Math.round(ms / count / 10) / 100,
-    gaugeMs: SF.gaugeMsFor({ gauge: stats.gauge }),
+    chargeMs: SF.chargeMsFor({ charge: stats.charge }),
     queueSlots: stats.slots,
     // Retain the report's field name, but its value is SF field width, not a placement grid.
     gridEdge: stats.cols,
@@ -484,7 +487,14 @@ export function attritionFor(args: AttritionArgs): Attrition {
   };
 }
 
-/** The bite that makes a fight of this length cost exactly `pct` of the field. */
+/**
+ * The bite that makes a fight of this length cost exactly `pct` of the field.
+ *
+ * The answer carries fractional precision on purpose: with the faster duel pacing the per-volley
+ * bite is smaller, and rounding it to a whole number coarsens the whole budget — a 5-percent step
+ * on a small bite is a 5-percent error on every map solved from it. Two decimals is finer than any
+ * consumer needs and tight enough for the round-trip to hold.
+ */
 export function powerForCost(args: Omit<AttritionArgs, 'power'> & { pct: number }): number {
   const kind = args.kind ?? 'node';
   const duel = duelTierOf(kind, args.tier);
@@ -493,7 +503,7 @@ export function powerForCost(args: Omit<AttritionArgs, 'power'> & { pct: number 
   const landings = volleysIn(args.seconds, { difficulty: args.tier }) * model.hitRate * exposure(size) * (1 - (args.guard ?? 0));
   const perPhase = mean(volleySeries(duel, args.archetype));
   const bite = (args.pct * referenceStats(args.level, args.band).hp) / Math.max(Number.EPSILON, landings * perPhase);
-  return Math.max(1, Math.round(bite * SF.volleyAnchor(duel)));
+  return Math.max(1, Math.round(bite * SF.volleyAnchor(duel) * 100) / 100);
 }
 
 // ---------------------------------------------------------------------------
@@ -875,7 +885,7 @@ export function pacingVerdicts(rows: PacingRow[] = pacingReport()): { ok: boolea
     if (r.role === 'weaker') {
       // A map cut for a stronger band is not mis-sized because a weaker player suffers in it — that
       // is what the cut means. But the suffering has to be named, because it is the one thing the
-      // level gate cannot promise: the gate says you are level 12, not that your folder can hold 12.
+      // level gate cannot promise: the gate says you are level 12, not that your deck can hold 12.
       if (r.nodeSeconds > hi * 2) {
         reads.push(`T${r.tier} ${r.band}: a node is ${r.nodeSeconds}s for them (${hi}s window) — they can reach the gate and still not clear the fold`);
       }

@@ -1,23 +1,36 @@
 import * as THREE from 'three';
-import { QUEST_BY_ID, SECTOR_NAME, anyChip, cityOf, DUNGEONS, gatesBetween, nextStep, npcOf, unlocksAt, type AreaRun, type ProfileView, type SectorId, type SectorState, type TalkView } from '@chog/shared';
-import { sfx, toggleMute, unlock } from '../audio.ts';
+import { QUEST_BY_ID, REGION_BY_ID, SECTOR_NAME, type EncounterSite, type RegionId, anyCard, boardSideFor, campOf, cityOf, DUNGEONS, gatesBetween, nextStep, npcOf, unlocksAt, type AreaRun, type DropView, type ProfileView, type SectorId, type SectorState, type TalkView } from '@chog/shared';
+import { setSfxVolume, sfx, toggleMute, unlock } from '../audio.ts';
+import { playMusic, setMusicMuted, setMusicVolume, unlockMusic } from '../music.ts';
+import { QUALITY_PRESET, UI_ZOOM, getSettings, subscribeSettings, updateSettings } from '../settings.ts';
 import { net } from '../net.ts';
 import { DISTRICTS } from './art.ts';
 import { Duel, DUEL_CAM } from './duel/duel.ts';
 import { loadChogNFT, type Chog, type PartsModel } from './chogLoader.ts';
 import { CHOG_SCALE, Explorer, type Target } from './explorer.ts';
+import { faceUrl } from './portrait.ts';
 import { Hud } from './hud/hud.ts';
+import type { MapMarker } from './hud/minimap.ts';
 import { ICON } from './hud/icons.ts';
 import { createTouchLayer, type TouchLayer } from './hud/touch.ts';
 import { buildRoom, type RoomKind, type RoomLayout } from './interiors.ts';
 import { buildDungeonField, type DungeonField, type DungeonNode } from './dungeon/field.ts';
 import { moodFor } from './dungeon/themes.ts';
 import { RemoteAvatars, WALK_SPEED, bindKeys, createPlayer, setVirtualInput, stepPlayer } from './player.ts';
-import { bindFolder } from './deckPages.ts';
+import { bindDeck } from './deckPages.ts';
 import { bindDungeons } from './dungeonPage.ts';
+import { bindOptions } from './sheet/optionsPage.ts';
 import { bindParty, social } from './partyPage.ts';
+import { closeTradeComposer, openTradeComposer, tradeLines, tradeNames } from './tradePage.ts';
+import { openWagerPicker } from './brawlPage.ts';
+import { openPlayerMenu, closePlayerMenu } from './playerMenu.ts';
+import { Drops } from './drops.ts';
+import { buildLineField, type LineField, type MobView } from './line/field.ts';
+import { linePage, type LineView } from './linePage.ts';
+import { moodOf } from './line/theme.ts';
 import { pickAndEnter } from './picker.ts';
 import { Voice } from './voice.ts';
+import type { RanksView } from '@chog/shared';
 import { TABS, bindSheet, renderSheet, type AreaView, type SheetCtx, type Tab, type WarView } from './sheet.ts';
 import { Stage } from './stage.ts';
 
@@ -26,7 +39,7 @@ import { Stage } from './stage.ts';
  *
  * Exploring, the top screen is the whole window — a city, seen from above at a quarter
  * turn, with a HUD laid over it. Anything that is not walking (the bag, the shop, the quest
- * log, the Custom Screen of a fight) is the lower screen, which slides up under it when it
+ * log, the Hand of a fight) is the lower screen, which slides up under it when it
  * has something to show and goes away when it does not.
  *
  * This file is orchestration only. The district's geometry and people are `explorer.ts`,
@@ -56,32 +69,101 @@ export interface Shell {
   say(text: string, cls?: string): void;
 }
 
+/**
+ * OPTIONS tab → live game. Sound volumes, the quality preset, the post toggle
+ * and the UI scale apply here; mute never does (the audio graph owns that flag
+ * — see settings.ts). Runs once at boot and on every settings change.
+ */
+function applyOptions(stage: Stage): void {
+  const s = getSettings();
+  setSfxVolume(s.sound.sfx);
+  setMusicVolume(s.sound.music);
+  const q = QUALITY_PRESET[s.graphics.quality];
+  stage.setPixelRatioCap(q.pixelCap);
+  stage.setShadows(q.shadows);
+  stage.setPost(s.graphics.post);
+  const zoom = String(UI_ZOOM[s.a11y.uiScale]);
+  for (const id of ['hud', 'bottom']) document.getElementById(id)?.style.setProperty('zoom', zoom);
+}
+
 export async function bootShell(): Promise<Shell> {
   const hud = new Hud();
   const stage = new Stage(hud.canvas);
+  applyOptions(stage);
+  if (getSettings().sound.muted) {
+    // Same path as the N key: the graph owns the flag, settings mirror it.
+    toggleMute();
+    setMusicMuted(true);
+  }
+  subscribeSettings(() => applyOptions(stage));
   bindKeys();
 
   const debug = new URLSearchParams(location.search).has('debug');
+
+  // there is one city; the dungeons are under it
+  let sector: SectorId = 'ashflat';
+  if (!SECTORS.includes(sector)) sector = 'ashflat';
+
+  // ------------------------------------------------------- the world, before the join
+
+  // The login screen IS the city. The street builds from shared layout alone — no join,
+  // no profile — so it goes up first and the gate opens over it as a transparent panel.
+  // A slow orbit around the quest-board plaza keeps every plate readable while the chain
+  // is still being read, and the NPCs stream in around the lens the same way they do
+  // around the player (that distance is just a number to `update`).
+  document.body.classList.add('prejoin');
+  const explorer = new Explorer(stage, MODEL, () => {
+    const s = net.sector(sector);
+    return { wave: s?.wave ?? 0, tier: (s?.tier ?? 'normal') as 'normal' };
+  });
+  const berth = explorer.enter(sector, null);
+  // Uma volta pela praça do board: perto o bastante para ler fachadas e NPCs,
+  // longe o bastante para a rua respirar.
+  const vista = new THREE.Vector3(berth.x, 0, berth.z);
+  vista.y = explorer.city?.groundY(vista.x, vista.z) ?? 0;
+  // Perto da praça: rua e fachadas, não o quadrado do mapa. O centro volta a ser o board,
+  // onde os NPCs entram em cena — de perto eles são gente, não pixel.
+  const vistaR = 52;
+  const vistaH = 26;
+  const orbitT0 = performance.now();
+  stage.setCameraControl((camera) => {
+    const t = (performance.now() - orbitT0) / 1000;
+    const a = Math.PI / 4 + t * 0.045;
+    camera.position.set(vista.x + Math.cos(a) * vistaR, vista.y + vistaH, vista.z + Math.sin(a) * vistaR);
+    camera.lookAt(vista.x, vista.y + 4, vista.z);
+    if (camera.fov !== 42) { camera.fov = 42; camera.updateProjectionMatrix(); }
+  });
+  let attractLast = performance.now();
+  let attractId = 0;
+  const attractFrame = (t: number): void => {
+    attractId = requestAnimationFrame(attractFrame);
+    try {
+      const dt = Math.min(0.05, (t - attractLast) / 1000);
+      attractLast = t;
+      stage.resizeTo(hud.top); // the window can move under the gate too
+      explorer.update(dt, vista.x, vista.z, vista);
+      stage.render(dt);
+    } catch {
+      // A backdrop frame must never kill the gate. The worst case is a skipped orbit step.
+    }
+  };
+  attractId = requestAnimationFrame(attractFrame);
+  playMusic('city');
 
   // Nothing walks the street until the server has said yes to a Chog. The picker is a
   // choice; the join is the admission, and the id the world honoured is the one the model
   // is painted from — a foster Chog must not arrive wearing Chog #1's face.
   const pick = await pickAndEnter();
 
-  // there is one city; the dungeons are under it
-  let sector: SectorId = 'ashflat';
-  if (!SECTORS.includes(sector)) sector = 'ashflat';
-
-  // ---------------------------------------------------------------- the world
-
-  const explorer = new Explorer(stage, MODEL, () => {
-    const s = net.sector(sector);
-    return { wave: s?.wave ?? 0, tier: (s?.tier ?? 'normal') as 'normal' };
-  });
+  // The street is already up and the lens is already here: hand both back and walk in.
+  cancelAnimationFrame(attractId);
+  stage.setCameraControl(null);
+  document.body.classList.remove('prejoin');
   const remotes = new RemoteAvatars(
     stage.scene,
-    async () => {
-      const c = await loadChogNFT({ ...MODEL, traits: {}, tokenId: 900_000 + Math.floor(Math.random() * 99_999) });
+    async (p) => {
+      // Somebody else's Chog, built from their traits — the generic body was the bug.
+      const c = await loadChogNFT({ ...MODEL, traits: p.attributes ?? {}, tokenId: p.tokenId });
       c.root.scale.setScalar(CHOG_SCALE);
       return c;
     },
@@ -95,7 +177,7 @@ export async function bootShell(): Promise<Shell> {
   const traits = pick.attributes ?? net.me?.attributes ?? {};
   const chog: Chog = await loadChogNFT({ ...MODEL, traits, tokenId: net.me?.tokenId ?? 0 });
   chog.root.scale.setScalar(CHOG_SCALE);
-  const first = explorer.enter(sector, null);
+  const first = berth; // the city went up before the gate: reuse it, do not rebuild it
   const player = createPlayer(chog, first);
   stage.scene.add(chog.root);
   stage.snap();
@@ -111,6 +193,36 @@ export async function bootShell(): Promise<Shell> {
   ring.add(ringBand, ringFill);
   stage.scene.add(ring);
   const ELEMENT_RING: Record<string, number> = { burn: 0xff7a45, frost: 0x7fd8ff, volt: 0xffe066, wave: 0x43e2a8, prism: 0xcbb2f2, void: 0xa874ff };
+
+  /** The Line: open country outside the city. Mutually exclusive with the street. Declared before the loot so piles can ground to its terrain. */
+  let line: LineField | null = null;
+  let lineRegion: RegionId | null = null;
+
+  // Loot on the street. The server owns the list and who may take one; this draws it and reports
+  // which pile a body stepped on. Walking over a pile is the whole interaction — see `drops.ts`.
+  const drops = new Drops(
+    stage,
+    {
+      player: () => ({ x: player.pos.x, z: player.pos.z }),
+      take: (id) => net.send('loop', { action: 'take', dropId: id }),
+      collected: (v) => {
+        // The pile is the payout made visible; the fight already paid it. So the line says what it
+        // was, not that something new arrived — the bag was already carrying it.
+        if (v.kind === 'wav') sfx.lootMoney();
+        else if (v.rarity === 'epic') sfx.lootEpic();
+        else if (v.rarity === 'rare') sfx.lootRare();
+        else sfx.lootCommon();
+        say(`collected ${v.name}${v.klass ? ` · ${v.klass} class` : ''}`, v.rarity === 'epic' ? 't-anomaly' : '');
+      },
+      outOfReach: (v) => {
+        sfx.deny();
+        say(`${v.name} is too far — get closer`, 't-anomaly');
+      },
+    },
+    // Loot falls where the fight was: on the Line that is the region's own terrain, in the city
+    // it is the district's. A fixed city ground left piles floating or buried on the road.
+    (x, z) => line?.groundY(x, z) ?? explorer.city?.groundY(x, z) ?? 0,
+  );
 
   const shell: Shell = {
     stage,
@@ -128,6 +240,41 @@ export async function bootShell(): Promise<Shell> {
   let roomTarget: { kind: 'board' | 'gate'; label: string; x: number; z: number; hint: string } | null = null;
   /** The dungeon we are standing in, if any. Its own scene, its own node graph. */
   let dungeon: DungeonField | null = null;
+  /**
+   * **Whether the player is on the Line right now** — and that is a different question from
+   * whether a field exists.
+   *
+   * `line` is a cache: it survives a fold or a shop so walking back out of one lands you in the
+   * region you were standing in, rather than at a spawn. Leaving it as `??:` was the bug — walking
+   * into a dungeon from a region, abandoning the run, and coming back out, `leaveDungeon` saw a
+   * non-null `line` and restored **the region**, while the server had already put the player back
+   * on the street. You then walked Ashflat wearing Ash Pine's `solids` and hit a wall of invisible
+   * trees that only existed in the collision set.
+   *
+   * So the object and the truth are separate. The field may be cached; this flag is the answer,
+   * and it is set by the server's own `onTheLine`, never by a click.
+   */
+  let onLine = false;
+  let lineSite: EncounterSite | null = null;
+  /** Standing by the trailhead scout's fire: the Line's first live E. */
+  let scoutNear = false;
+/**
+ * What the MAPS tab draws. **Never computed here** — it is whatever the last `line.state` said,
+ * and the only way it changes is the server saying so.
+ *
+ * There is deliberately no `emptyLine` fallback to merge into. An earlier version merged the
+ * partial `state` that `line.travel` returns, and that payload has no `at` and no `onTheLine`,
+ * so the tab believed the player was still in the city immediately after they walked out of it.
+ * The fix was to stop merging: ask `line.state` again and take the whole answer. One round trip
+ * is cheaper than a second copy of the truth that drifts.
+ */
+let lineView: LineView | null = null;
+/** The last refusal from the Line, printed on the MAPS tab. A page that silently waits is a bug. */
+let lineProblem = '';
+/** The Line site whose fight is on the field, so the end message can bank it without the
+ * client having to remember. The server re-derives the win either way.
+ */
+let fightingSite: string | null = null;
   let dungeonTarget: DungeonNode | null = null;
   let dungeonName = '';
   const streetPos = new THREE.Vector3();
@@ -136,6 +283,8 @@ export async function bootShell(): Promise<Shell> {
   let viz = false;
   let tab: Tab = 'home';
   let war: WarView | null = null;
+  let ranks: RanksView | null = null;
+  let ranksProblem = '';
   let area: AreaView | null = null;
   let tracked: string | null = null;
   let talkingTo: string | null = null;
@@ -166,6 +315,7 @@ export async function bootShell(): Promise<Shell> {
       name: net.me.build.callsign,
       element: net.me.build.loadout.element,
       tribe: net.me.build.loadout.element,
+      face: faceUrl(chog.root),
       foster: net.me.tokenId >= 900_000,
     });
   };
@@ -305,8 +455,14 @@ export async function bootShell(): Promise<Shell> {
     sector,
     sectors: net.sectors(),
     debug,
-    tracked,
-    area: explorer.areaName(player.pos.x, player.pos.z),
+tracked,
+    area: line
+      ? (REGION_BY_ID.get(lineRegion ?? 'tolls')?.name ?? 'the Line')
+      : explorer.areaName(player.pos.x, player.pos.z),
+    line: lineView,
+    lineProblem,
+    ranks,
+    ranksProblem,
   });
 
   let paintedTab: Tab | null = null;
@@ -338,21 +494,27 @@ export async function bootShell(): Promise<Shell> {
     // a repaint of the same page keeps where the lists were scrolled to
     const scrolls = tab === paintedTab ? [hud.sheetEl.scrollTop, ...[...hud.sheetEl.querySelectorAll<HTMLElement>('.fd-list, .lib-list, .dg-list')].map((e) => e.scrollTop)] : [];
     paintedTab = tab;
-    hud.sheetEl.innerHTML = renderSheet(tab, net.profile, war, area, sheetCtx());
+hud.sheetEl.innerHTML = renderSheet(tab, net.profile, war, area, sheetCtx());
+    // NOTE: `paint` draws and nothing else. It must never send a request, because every reply
+    // that wants a repaint calls back into here — a `net.loop` on this line turned the MAPS tab
+    // into a ping-pong that rebuilt the page once per socket round trip and left the player
+    // looking at the first frame ("asking the road…") forever. `openTab` is where the asking
+    // belongs; the reply comes back and repaints, once.
     if (scrolls.length) {
       hud.sheetEl.scrollTop = scrolls[0] ?? 0;
       hud.sheetEl.querySelectorAll<HTMLElement>('.fd-list, .lib-list, .dg-list').forEach((e, i) => (e.scrollTop = scrolls[i + 1] ?? 0));
     }
-    if (tab === 'folder' && net.profile) {
-      bindFolder(hud.sheetEl, net.profile, {
-        save: (cards) => net.loop('folder.save', { cards }),
-        auto: () => net.loop('folder.auto'),
-        reset: () => net.loop('folder.reset'),
+    if (tab === 'deck' && net.profile) {
+      bindDeck(hud.sheetEl, net.profile, {
+        save: (cards) => net.loop('deck.save', { cards }),
+        auto: () => net.loop('deck.auto'),
+        reset: () => net.loop('deck.reset'),
         repaint: paint,
       });
     }
     hud.sheetEl.querySelectorAll<HTMLElement>('[data-t]').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.t!)));
     if (tab === 'dungeons') bindDungeons(hud.sheetEl, paint);
+    if (tab === 'options') bindOptions(hud.sheetEl, paint);
     if (tab === 'party') {
       bindParty(hud.sheetEl, {
         invite: (id) => net.send('party', { action: 'invite', with: id }),
@@ -376,16 +538,29 @@ export async function bootShell(): Promise<Shell> {
     }
     bindSheet(hud.sheetEl, {
       buy: (kind, stockId) => net.loop('buy', { kind, stockId }),
-      sell: (chipId) => net.loop('sell', { stockId: chipId }),
+      sell: (cardId) => net.loop('sell', { stockId: cardId }),
       use: (id) => net.loop('use', { itemId: id }),
       track: setTracked,
       openDungeon: (id) => net.loop('area.open', { dungeonId: id }),
       stepArea: (nodeId) => net.loop('area.step', { nodeId }),
-      closeArea: () => {
+      takeDraft: (cardId) => net.loop('area.draft', { card: cardId }),
+      shrineRemove: (cardId) => net.loop('area.shrine', { card: cardId }),
+closeArea: () => {
         net.loop('area.close');
         area = null;
         leaveDungeon();
         paint();
+      },
+      // The road. The tab sends the region and the server decides; nothing here assumes it worked,
+      // which is why `enterLine`/`leaveLine` are driven off the server's answer rather than off
+      // the click.
+      travel: (region) => {
+        if (region) net.loop('line.travel', { region });
+        else {
+          net.loop('line.travel');
+          leaveLine();
+          paint();
+        }
       },
     });
     drawWorldMap();
@@ -401,9 +576,13 @@ export async function bootShell(): Promise<Shell> {
   const openTab = (t: string): void => {
     sfx.ui();
     tab = (t === 'home' || TABS.some((x2) => x2.id === t) ? t : 'home') as Tab;
-    if (tab === 'war') net.loop('war');
+if (tab === 'war') net.loop('war');
+    if (tab === 'ranks') net.loop('ranks');
     if (tab === 'dungeons') net.loop('area.state');
-    if (tab === 'shop' || tab === 'jobs' || tab === 'album' || tab === 'bag' || tab === 'folder' || tab === 'library' || tab === 'career') net.loop('profile');
+    // The MAPS tab is entirely the server's — every gate, every lock reason. Ask on open, the
+    // same way `war` and `area.state` do, and let the reply repaint once.
+    if (tab === 'line') net.loop('line.state');
+    if (tab === 'shop' || tab === 'jobs' || tab === 'album' || tab === 'bag' || tab === 'deck' || tab === 'library' || tab === 'career') net.loop('profile');
     if (tab === 'party') social.notice = '';
     hud.menu(true);
     paint();
@@ -508,9 +687,30 @@ export async function bootShell(): Promise<Shell> {
   const partyAct = (action: string): void => {
     if (action === 'accept' || action === 'decline') {
       social.invite = null;
+      if (social.asking === 'party') social.asking = null;
       hud.setInvite(null);
       net.send('party', { action });
     }
+  };
+
+  /** The brawl popup's buttons. Both sides fight, live, on opposite halves. */
+  const pvpAct = (action: string): void => {
+    if (action === 'accept' || action === 'decline') {
+      social.brawl = null;
+      if (social.asking === 'brawl') social.asking = null;
+      hud.setInvite(null);
+      net.send('pvp', { action });
+    }
+  };
+
+  /** The trade popup's buttons. Accept answers the offer; decline cancels it for both sides. */
+  const tradeAct = (action: string): void => {
+    const t = social.trade;
+    if (!t || (action !== 'accept' && action !== 'decline')) return;
+    social.trade = null;
+    if (social.asking === 'trade') social.asking = null;
+    hud.setInvite(null);
+    net.send('trade', action === 'accept' ? { action: 'accept', tradeId: t.tradeId } : { action: 'cancel', tradeId: t.tradeId });
   };
 
   const refreshParty = (): void => {
@@ -527,11 +727,13 @@ export async function bootShell(): Promise<Shell> {
     const members = (m.members ?? []) as { id: string }[];
     if (m.invite) {
       social.invite = { ...m.invite, at: performance.now() };
+      social.asking = 'party';
       sfx.accept();
       hud.setInvite(m.invite);
       say(`${m.invite.name} invited you to a party — Y to accept, N to decline`, 't-anomaly');
     } else if (members.length > 1 && social.invite) {
       social.invite = null;
+      if (social.asking === 'party') social.asking = null;
       hud.setInvite(null);
     }
     if (m.notice) {
@@ -545,6 +747,59 @@ export async function bootShell(): Promise<Shell> {
     voice.setMembers(members.map((x) => x.id));
     if (members.length < 2 && voice.enabled) voice.disable();
     refreshParty();
+  });
+
+  net.on('pvp', (m) => {
+    if (m.challenge) {
+      const wager = Math.max(0, Math.floor(Number(m.challenge.wager ?? 0)));
+      social.brawl = { from: String(m.challenge.from), name: String(m.challenge.name), wager, at: performance.now() };
+      social.asking = 'brawl';
+      sfx.accept();
+      const price = wager > 0 ? `for ${wager} $CHOG a side` : 'for honor';
+      hud.setInvite({ from: String(m.challenge.from), name: String(m.challenge.name), kind: 'brawl', summary: `wants to fight you live ${price}` });
+      say(`${m.challenge.name} challenged you to a brawl ${price} — step on? Y to accept, N to decline`, 't-anomaly');
+    }
+    if (m.notice) say(String(m.notice), 't-glitch');
+    if (m.refused) hud.toast({ icon: 'chat', title: 'BRAWL', sub: String(m.refused), colour: 'var(--rose)' });
+    if (m.declined) say(`${m.declined} declined your challenge`, 'sys');
+    if (m.result) {
+      hud.toast({ icon: 'bolt', title: 'BRAWL', sub: String(m.result.story ?? 'the bout ended'), colour: 'var(--gold)' });
+      if (social.asking === 'brawl') { social.brawl = null; social.asking = null; hud.setInvite(null); }
+    }
+  });
+
+  net.on('trade', (m) => {
+    const action = String(m.action ?? '');
+    const clearTrade = (): void => {
+      social.trade = null;
+      if (social.asking === 'trade') social.asking = null;
+      hud.setInvite(null);
+    };
+    if (action === 'incoming') {
+      const from = String(m.from ?? '');
+      const name = social.nearby.find((q) => q.id === from)?.name ?? 'A chog';
+      const giving = (m.giving ?? []) as string[];
+      const wanting = (m.wanting ?? []) as string[];
+      const givingItems = (m.givingItems ?? []) as string[];
+      const wantingItems = (m.wantingItems ?? []) as string[];
+      social.trade = { tradeId: String(m.tradeId ?? ''), from, name, giving, wanting, givingItems, wantingItems, at: performance.now() };
+      social.asking = 'trade';
+      sfx.accept();
+      const lines = tradeLines(giving, wanting, givingItems, wantingItems);
+      hud.setInvite({ from, name, kind: 'trade', summary: lines.short });
+      say(`${name} wants to trade — ${lines.full}. Y to accept, N to decline`, 't-anomaly');
+    } else if (action === 'accepted') {
+      hud.toast({ icon: 'check', title: 'TRADE', sub: `you got ${tradeNames((m.wanting ?? []) as string[], (m.wantingItems ?? []) as string[])}`, colour: 'var(--gold)' });
+      clearTrade();
+      closeTradeComposer();
+      net.loop('profile');
+    } else if (action === 'refused') {
+      hud.toast({ icon: 'chat', title: 'TRADE', sub: String(m.reason ?? 'refused'), colour: 'var(--rose)' });
+      if (social.asking === 'trade' && String(m.tradeId ?? '') === (social.trade?.tradeId ?? '∅')) clearTrade();
+    } else if (action === 'cancelled') {
+      if (!social.trade || String(m.tradeId ?? '') === social.trade.tradeId) clearTrade();
+      say('the trade was cancelled', 'sys');
+    }
   });
 
   net.on('rtc', (m) => {
@@ -575,9 +830,10 @@ export async function bootShell(): Promise<Shell> {
       name: 'WAVE LINK',
       role: 'system',
       tribe: b?.loadout.element ?? 'prism',
+      face: faceUrl(chog.root) ?? undefined,
       pages: [
         `Link established. Welcome to the Index, ${name}. You are a Chog — a signal that walks. The traits on your token are not decoration: they are your deck, your speed and your weakness.`,
-        'Under this city runs the Wave, and the real market moves it. When it runs hot an anomaly opens over a district, and you fight it Star Force style: slide off the red rows, build a program from your cards on the Custom Screen, and hit what you cover.',
+        'Under this city runs the Wave, and the real market moves it. When it runs hot a Battle Rift tears open over a district, and you take it on the grid: slide off the marked rows, build a program from your cards on the Hand, and hit what you cover.',
         'Beneath the Foldgate Yard are six dungeons, one for each element. Each opens at a level and only once the one before it is beaten; their bosses are the road, and the city is where you get ready for them.',
         'W A S D to walk · Q and R turn the camera · the wheel zooms · E talks to people and opens doors · Tab opens the menu · Enter is chat (/p talks to your party) · P is your party. The beam of light always points at what to do next.',
         'Your first step is a contract on the Quest Board in the middle of this plaza — the marker with the "!" over it. Walk to it and press E. The Operator at the Wave Station will take it from there.',
@@ -604,11 +860,28 @@ export async function bootShell(): Promise<Shell> {
     net.loop('npc.talk', { npcId });
   };
 
+  /**
+   * NPC avatars stream in as you walk up to them, so a face asked for too early has to be asked
+   * for again. Polls a few beats and stops the moment it lands (or gives up, leaving the glyph).
+   */
+  const faceSoon = (npcId: string): void => {
+    let tries = 0;
+    const poll = setInterval(() => {
+      const url = explorer.face(npcId);
+      if (url) { hud.setFace(url); clearInterval(poll); return; }
+      if (++tries >= 8) clearInterval(poll);
+    }, 350);
+  };
+
   const openTalk = (t: TalkView): void => {
     sfx.talk();
     hud.menu(false);
     talkingTo = t.npc.id;
-    hud.openDialogue({ name: t.npc.name, role: t.npc.role, tribe: t.npc.tribe, pages: t.pages, options: t.options, ...(t.rewards ? { rewards: t.rewards } : {}) });
+    // The speaker's own 3D-model face, cloned off the avatar standing in front of you.
+    const url = explorer.face(t.npc.id);
+    hud.openDialogue({ name: t.npc.name, role: t.npc.role, tribe: t.npc.tribe, pages: t.pages, options: t.options, face: url ?? undefined, ...(t.rewards ? { rewards: t.rewards } : {}) });
+    // The avatar streams in as you approach; if it wasn't ready, keep asking for a few beats.
+    if (!url) faceSoon(t.npc.id);
   };
 
   const closeDialogue = (): void => {
@@ -621,7 +894,7 @@ export async function bootShell(): Promise<Shell> {
     openTab: (t) => openTab(t),
     toggleViz,
     chat: (text) => sendChat(text),
-    party: (action) => partyAct(action),
+    party: (action) => { if (social.asking === 'trade') tradeAct(action); else if (social.asking === 'brawl') pvpAct(action); else partyAct(action); },
     closeDialogue,
     option: (id) => {
       const npc = talkingTo;
@@ -655,15 +928,85 @@ export async function bootShell(): Promise<Shell> {
   // ---------------------------------------------------------------- rooms and doors
 
   /** Fade out, run `fn` in the dark, fade back in. Input is held while it runs. */
-  const transition = (fn: () => void): void => {
+const transition = (fn: () => void): void => {
     if (busy) return;
     busy = true;
     hud.fade(true);
     setTimeout(() => {
-      fn();
+      // A place-builder that throws must not leave `busy` stuck. It did: the throw skipped
+      // `busy = false`, so the screen stayed faded, every later transition was refused by the
+      // `if (busy) return` above, and the symptom was "the teleport did nothing" with nothing in
+      // the console the player could see. A transition that fails has to un-fail.
+      try {
+        fn();
+      } catch (err) {
+        console.error('[transition]', err);
+        say(`could not open that place: ${String((err as Error)?.message ?? err)}`, 't-storm');
+      }
       hud.fade(false);
       setTimeout(() => (busy = false), 160);
     }, 230);
+  };
+
+    // ------------------------------------------------------------------ exactly one place is UP
+
+  /**
+   * The Line's field is either in the scene or it is not, and nothing else may decide that.
+   *
+   * This is the bug that has been reported three times and that I half-fixed twice. Every place
+   * that existed before the Line — the street, the six rooms, the dungeons, the duel — was
+   * written on the assumption that *there is one other place to come back to*, so
+   * `leaveDungeon` restores the street and `enterDungeon` hides only the street. The Line managed
+   * to be behind every one of those blind spots at once:
+   *
+   *   - walk out into a region, then open a dungeon from the MAPS tab, and the region is still a
+   *     child of `stage.scene` while the dungeon is built on top of it — the same 420 metres of
+   *     forest standing exactly where the rock is;
+   *   - walk back out and the dungeon goes, the city comes back, and **the Line is still up** —
+   *     a forest in the middle of Ashflat, which is what "o mapa ainda fica dentro da dungeon"
+   *     and "sai do mapa e o mapa fica na cidade" were both describing.
+   *
+   * So the rule is a single pair of functions. `enterLine` adds, `leaveLine` removes, and every
+   * other place calls `stashLine()` on the way in and `restoreLine()` on the way out — and there
+   * are only two restores, so a place can no longer be brought back by a path that forgot to ask
+   * which one it was.
+   */
+
+  /** Detach the region without destroying it, so a room or a fold opened from it can be left. */
+  const stashLine = (): void => {
+    if (line && line.group.parent) stage.scene.remove(line.group);
+  };
+
+  /** Bring the region back, with the camera that frames it. Idempotent. */
+  const restoreLine = (): void => {
+    if (!line) return;
+    if (!line.group.parent) stage.scene.add(line.group);
+    explorer.setVisible(false);
+    remotes.visible(false);
+    remotes.setGround((x, z) => line?.groundY(x, z) ?? 0);
+    stage.setLineMood(moodOf(lineRegion ?? 'tolls'));
+    hud.minimap.setDungeon(line.layout.bounds);
+    stage.setBounds(line.bounds);
+    stage.setRig('line', true);
+    stage.snap();
+    // On the terrain, not at the world's zero a few metres under it.
+    player.pos.y = line.groundY(player.pos.x, player.pos.z);
+    drops.setVisible(false);
+    hud.setWhere(REGION_BY_ID.get(lineRegion ?? 'tolls')?.name ?? 'the Line', 'the Line');
+    hud.setPrompt(null);
+  };
+
+  /** Bring the city back. Idempotent, and the only other place there is. */
+  const restoreStreet = (): void => {
+    explorer.setVisible(true);
+    remotes.visible(true);
+    remotes.setGround((x, z) => explorer.city?.groundY(x, z) ?? 0);
+    stage.setDistrict(DISTRICTS[sector], sector);
+    hud.minimap.setCity(explorer.layout, DISTRICTS[sector]);
+    stage.setBounds(explorer.walk.bounds);
+    stage.setRig('street', true);
+    stage.snap();
+    drops.setVisible(true);
   };
 
   const enterRoom = (kind: RoomKind, label: string): void => {
@@ -675,6 +1018,7 @@ export async function bootShell(): Promise<Shell> {
       room = buildRoom(kind, DISTRICTS[sector], label);
       streetPos.copy(player.pos);
       inside = { kind, label };
+      stashLine();
       explorer.setVisible(false);
       remotes.visible(false);
       stage.scene.add(room.group);
@@ -696,6 +1040,7 @@ export async function bootShell(): Promise<Shell> {
     sfx.door();
     net.move({ place: 'street' });
     transition(() => {
+      room!.alive = false;
       stage.scene.remove(room!.group);
       room!.group.traverse((o) => {
         const m = o as THREE.Mesh;
@@ -703,11 +1048,10 @@ export async function bootShell(): Promise<Shell> {
       });
       room = null;
       inside = null;
-      explorer.setVisible(true);
-      remotes.visible(true);
+      // From a region back out of a shop is a region, not a street. Same rule as the fold.
+      if (onLine) restoreLine();
+      else restoreStreet();
       player.pos.copy(streetPos);
-      stage.setBounds(explorer.walk.bounds);
-      stage.setRig('street', true);
       stage.snap();
       hud.setWhere(explorer.layout.name, explorer.areaName(player.pos.x, player.pos.z));
     });
@@ -727,10 +1071,12 @@ export async function bootShell(): Promise<Shell> {
       dungeonName = a.area!.name;
       dungeon = buildDungeonField(a.area!, a.run!, element);
       streetPos.copy(player.pos);
+      stashLine();
       explorer.setVisible(false);
       remotes.visible(false);
       stage.scene.add(dungeon.group);
       stage.setDungeonMood(moodFor(element));
+      hud.minimap.setDungeon({ x0: dungeon.bounds.minX, z0: dungeon.bounds.minZ, x1: dungeon.bounds.maxX, z1: dungeon.bounds.maxZ });
       player.pos.set(dungeon.spawn.x, 0, dungeon.spawn.z);
       stage.setBounds(null);
       // The street rig frames a whole district; a dungeon wants the indoor lens,
@@ -738,10 +1084,11 @@ export async function bootShell(): Promise<Shell> {
       stage.setRig('dungeon', true);
       stage.setZoom(1.0);
       stage.snap();
-      hud.setWhere(dungeonName, 'data area');
+      hud.setWhere(dungeonName, 'request');
       hud.setPrompt(null);
       say(`the fold opens: ${dungeonName} — ${moodFor(element).air}`, 't-anomaly');
-      hud.zoneBanner(dungeonName, def?.tagline ?? 'a data area');
+      hud.zoneBanner(dungeonName, def?.tagline ?? 'a request');
+      playMusic('dungeon');
     });
   };
 
@@ -752,28 +1099,130 @@ export async function bootShell(): Promise<Shell> {
       dungeon!.dispose();
       dungeon = null;
       dungeonTarget = null;
+      // A fold opened from the road goes back to the road; from the city it comes home to the
+      // board. Pointing `streetPos` at the board first makes the shared `player.pos.copy`
+      // below land there too — same point the server set on `area.close`, so nothing is sent.
+      if (onLine && line) {
+        // `streetPos` still holds the region footing parked by `enterDungeon`.
+        player.pos.copy(streetPos);
+        restoreLine();
+        say(`out of ${dungeonName}, back on the road`, 't-glitch');
+        playMusic(lineRegion ?? 'line');
+        return;
+      }
+      {
+        const bs = boardSideFor(explorer.layout);
+        streetPos.set(bs.x, explorer.city?.groundY(bs.x, bs.z) ?? 0, bs.z);
+      }
       explorer.setVisible(true);
       remotes.visible(true);
       player.pos.copy(streetPos);
       stage.setDistrict(DISTRICTS[sector], sector);
+      hud.minimap.setCity(explorer.layout, DISTRICTS[sector]);
       stage.setBounds(explorer.walk.bounds);
       stage.setRig('street', true);
       stage.snap();
       say(`out of ${dungeonName}`, 't-glitch');
+      playMusic('city');
     });
   };
 
-  /** Re-lay the platforms after the run moved: which node is here, which are open. */
+/** Re-lay the platforms after the run moved: which node is here, which are open. */
   const refreshDungeon = (): void => {
     if (!dungeon || !area?.area || !area.run) return;
     const el = area.area.dungeonId ? DUNGEONS.find((d) => d.id === area!.area!.dungeonId)?.element ?? 'void' : 'void';
     const keep = player.pos.clone();
+    // Build the replacement first and swap in the same task: removing the old
+    // field before the new one exists leaves the stage rendering the void for
+    // as long as the build takes — the black flash after a node resolves.
+    const next = buildDungeonField(area.area, area.run, el);
+    stage.scene.add(next.group);
     stage.scene.remove(dungeon.group);
     dungeon.dispose();
-    dungeon = buildDungeonField(area.area, area.run, el);
-    stage.scene.add(dungeon.group);
+    dungeon = next;
     player.pos.copy(keep);
     stage.snap();
+  };
+
+  // ------------------------------------------------------------------ the Line
+
+  /**
+   * Walk out of the city and into a region.
+   *
+   * Modelled on `enterDungeon` above, down to the details that were learned the hard way there:
+   * the swap happens **inside** `transition()` so the black flash is covered, the street position
+   * is stashed so the walk back does not lose it, and the street is hidden rather than torn down
+   * so the return is instant.
+   *
+   * The three things that differ from a dungeon are the ones that come from `shared/`: the
+   * terrain comes from `lineLayout(region)` — the same layout the server validates against — the
+   * camera gets its own `line` rig, and the fog distance is `moodOf(region).haze`.
+   */
+  const enterLine = (region: RegionId, cleared: readonly string[], mobs: readonly unknown[] = []): void => {
+    if (line && lineRegion === region) return;
+    transition(() => {
+      streetPos.copy(player.pos);
+      if (line) {
+        stage.scene.remove(line.group);
+        line.dispose();
+        line = null;
+      }
+      lineRegion = region;
+      line = buildLineField(region, cleared);
+      stage.scene.add(line.group);
+      explorer.setVisible(false);
+      remotes.visible(false);
+      remotes.setGround((x, z) => line?.groundY(x, z) ?? 0);
+      stage.setLineMood(moodOf(region));
+      // `setDungeon(bounds: Rect)`, not `setCity(layout: CityLayout)`. The region is a plate of
+      // ground with sites on it, and `setDungeon` takes the `{x0,x1,z0,z1}` rectangle that
+      // `lineLayout.bounds` already is — whereas `setCity` wants a whole `CityLayout` and reads
+      // `layout.extent.x0` off it. Passing a hand-built object there threw a `TypeError` inside
+      // the transition, which is how "the teleport did nothing" happened with no visible cause.
+      hud.minimap.setDungeon(line.layout.bounds);
+      // On the terrain, not at the world's zero six metres under it.
+      player.pos.set(line.spawn.x, line.groundY(line.spawn.x, line.spawn.z), line.spawn.z);
+      stage.setBounds(line.bounds);
+      stage.setRig('line', true);
+      stage.setZoom(1);
+      stage.snap();
+      const def = REGION_BY_ID.get(region);
+      hud.setWhere(def?.name ?? 'the Line', 'the Line');
+      hud.zoneBanner(def?.name ?? 'THE LINE', def?.tagline ?? '');
+      say(moodOf(region).air, 't-line');
+      drops.setVisible(false);
+      /*
+       * The bodies, fed HERE rather than after `enterLine` returns.
+       *
+       * `transition` is a fade: everything above runs on a later frame than the call site, so a
+       * `setMobs` written after `enterLine(...)` executed while `line` was still the old field or
+       * null — which is why the road built with zero mobs while the server had already sent eleven.
+       * The field exists for certain inside this callback, so this is the one place the handover
+       * cannot miss it.
+       */
+      if (mobs.length) line.setMobs(mobs as MobView[]);
+      playMusic(region);
+    });
+  };
+
+  /** Walk back into the city. The mirror of `enterLine`, and as careful about the stash. */
+  const leaveLine = (): void => {
+    if (!line) return;
+    transition(() => {
+      stage.scene.remove(line!.group);
+      line!.dispose();
+      line = null;
+      lineRegion = null;
+      lineSite = null;
+      onLine = false;
+      restoreStreet();
+      // Trips come home to the board: same point the server set, so nothing is sent.
+      const home = boardSideFor(explorer.layout);
+      player.pos.set(home.x, explorer.city?.groundY(home.x, home.z) ?? 0, home.z);
+      streetPos.copy(player.pos);
+      say('back in Ashflat', 't-glitch');
+      playMusic('city');
+    });
   };
 
   /** What the counter in each room does, from the player's side. */
@@ -813,7 +1262,7 @@ export async function bootShell(): Promise<Shell> {
   /**
    * The Wave Station's terminal. It is where a fight begins: the anomaly the market opened
    * (when there is one), or the Training Sim, which is always there and is where the first
-   * fight is meant to happen — nobody should have to wait for a sale to learn the Custom Screen.
+   * fight is meant to happen — nobody should have to wait for a sale to learn the Hand.
    */
   const openStation = (): void => {
     const s = net.sector(sector);
@@ -862,7 +1311,7 @@ export async function bootShell(): Promise<Shell> {
     hud.openDialogue({ name: 'THE FOLD', role: 'system', tribe: 'void', pages, options });
   };
 
-  const startDuel = (mode: 'anomaly' | 'train' | 'node'): void => {
+  const startDuel = (mode: 'anomaly' | 'train' | 'pvp' | 'node'): void => {
     if (duel) return;
     closeDialogue();
     duel = new Duel(
@@ -873,6 +1322,8 @@ export async function bootShell(): Promise<Shell> {
         sector,
         art: DISTRICTS[sector],
         enter: () => {
+          // Same rule as a fold: whatever place was up comes down first.
+          stashLine();
           explorer.setVisible(false);
           remotes.visible(false);
           ring.visible = false;
@@ -880,7 +1331,57 @@ export async function bootShell(): Promise<Shell> {
         },
         onClose: () => {
           duel = null;
-          explorer.setVisible(true);
+          playMusic(dungeon ? 'dungeon' : line && lineRegion ? lineRegion : 'city');
+          // A node fight ends in the dungeon's own dimension: the city stays hidden and the
+          // dungeon's rig and mood come back. Restoring the street here left the dungeon
+          // field standing in the middle of the city under the street camera.
+          if (mode === 'node' && dungeon) {
+            explorer.setVisible(false);
+            remotes.visible(false);
+            ring.visible = false;
+            hud.menu(false);
+            const el = area?.area?.dungeonId ? DUNGEONS.find((d) => d.id === area!.area!.dungeonId)?.element ?? 'void' : 'void';
+            stage.setDungeonMood(moodFor(el));
+            stage.setBounds(null);
+            stage.setRig('dungeon', true);
+            stage.snap();
+            net.loop('profile');
+            paint();
+            setTimeout(showLevelUp, 400);
+            net.loop('area.state');
+            const back = (): void => {
+              if (duel || hud.dialogueOpen) return;
+              if (hud.levelUpOpen) setTimeout(back, 250);
+              else openTab('dungeons');
+            };
+            setTimeout(back, 520);
+return;
+          }
+          // A Line fight ends in the region: the terrain, the `line` rig and its mood all come
+          // back, and the clear is banked. The banked part is a *request* — the server reads the
+          // win off the session it already holds, so the client naming the site is not evidence
+          // of anything.
+          if (line) {
+            const site = fightingSite;
+            if (site) net.loop('line.clear', { encounterId: site });
+            fightingSite = null;
+            /*
+             * Put the region back in the scene.
+             *
+             * `stashLine` runs when the duel opens and it only REMOVES the line group from the
+             * scene — it deliberately does not null `line`, so this branch's guard still passes and
+             * the rig is switched back to 'line'. But nothing ever re-added the group, so the
+             * camera was aimed at a region that was no longer in the scene: a black screen with a
+             * Line HUD, which reads as a crash rather than a missing call.
+             */
+            restoreLine();
+            net.loop('profile');
+            net.loop('line.state');
+            paint();
+            setTimeout(showLevelUp, 400);
+            return;
+          }
+          restoreStreet();
           remotes.visible(true);
           ring.visible = true;
           hud.menu(false);
@@ -891,16 +1392,6 @@ export async function bootShell(): Promise<Shell> {
           net.loop('profile');
           paint();
           setTimeout(showLevelUp, 400);
-          // a dungeon fight ends on the dungeon's map: the next step is right there, not a menu away
-          if (mode === 'node') {
-            net.loop('area.state');
-            const back = (): void => {
-              if (duel || hud.dialogueOpen) return;
-              if (hud.levelUpOpen) setTimeout(back, 250);
-              else openTab('dungeons');
-            };
-            setTimeout(back, 520);
-          }
         },
         toast: (t) => hud.toast({ icon: 'sparkle', ...t }),
         say: (text, cls) => say(text, cls),
@@ -908,6 +1399,7 @@ export async function bootShell(): Promise<Shell> {
       mode,
     );
     duel.start();
+    playMusic('duel');
   };
 
   // ---------------------------------------------------------------- interaction
@@ -939,8 +1431,17 @@ export async function bootShell(): Promise<Shell> {
     return t.hint;
   };
 
-  const markers = () =>
-    explorer.markers({
+  const markers = () => {
+    // Inside a fold the radar shows the dungeon's own nodes, not the street behind it.
+    if (dungeon) {
+      return dungeon.nodes
+        .filter((n) => !n.cleared)
+        .map((n) => ({
+          x: n.x, z: n.z, label: n.label,
+          kind: n.kind === 'boss' ? 'gate' : n.kind === 'elite' ? 'quest' : n.kind === 'chest' ? 'turnin' : n.kind === 'shrine' ? 'door' : 'npc',
+        })) as MapMarker[];
+    }
+    return explorer.markers({
       anomaly: anomalyHere,
       tracked: (() => {
         const qv = net.profile?.quests.find((z) => z.id === tracked);
@@ -948,13 +1449,80 @@ export async function bootShell(): Promise<Shell> {
       })(),
       remotes: remotes.positions(),
     });
+  };
 
   // ---------------------------------------------------------------- input
 
   // Browsers refuse audio until a gesture; the first key or click is the gesture.
-  const wake = (): void => unlock();
+  const wake = (): void => {
+    unlock();
+    unlockMusic();
+  };
   addEventListener('keydown', wake, { once: true });
   addEventListener('pointerdown', wake, { once: true });
+
+  // Right-click another Chog out on the street: who they are, and what you can ask of them. The
+  // Chogs are the only 3D thing on the field you can point at, so the world position of each one
+  // is projected back to the screen and the nearest to the cursor wins — inside a tolerance, so
+  // clicking the empty street still just gives you the browser's quiet back.
+  stage.renderer.domElement.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (duel || inside || dungeon || busy || hud.chatting || hud.dialogueOpen) { closePlayerMenu(); return; }
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    const world = new Map(remotes.positions().map((p) => [p.id, p]));
+    const at = new THREE.Vector3();
+    let best: { id: string; d: number } | null = null;
+    for (const p of social.nearby) {
+      const spot = world.get(p.id);
+      if (!spot) continue;
+      at.set(spot.x, 1.4, spot.z).project(stage.camera);
+      if (at.z > 1) continue; // behind the camera
+      const sx = rect.left + (at.x * 0.5 + 0.5) * rect.width;
+      const sy = rect.top + (-at.y * 0.5 + 0.5) * rect.height;
+      const d = Math.hypot(sx - e.clientX, sy - e.clientY);
+      if (!best || d < best.d) best = { id: p.id, d };
+    }
+    if (!best || best.d > 66) { closePlayerMenu(); return; }
+    const who = social.nearby.find((q) => q.id === best!.id)!;
+    openPlayerMenu(e.clientX, e.clientY,
+      { id: who.id, tokenId: who.tokenId, name: who.name ?? `CHOG #${who.tokenId}`, level: who.level ?? 1 },
+      {
+        invite: (id) => net.send('party', { action: 'invite', with: id }),
+        pvp: (id) => {
+          const who = social.nearby.find((q) => q.id === id);
+          const p = net.profile;
+          if (!p) {
+            net.loop('profile');
+            say('asking the road for your purse — challenge again in a breath', 'sys');
+            return;
+          }
+          openWagerPicker(id, who?.name ?? 'THAT CHOG', p.chog ?? 0, {
+            send: (to, wager) => net.send('pvp', { action: 'challenge', with: to, wager }),
+          });
+        },
+        trade: (id) => {
+          const who = social.nearby.find((q) => q.id === id);
+          const p = net.profile;
+          if (!p) {
+            net.loop('profile');
+            say('asking the road for your deck — trade again in a breath', 'sys');
+            return;
+          }
+          openTradeComposer(id, who?.name ?? 'THAT CHOG', p.cards, p.items, {
+            send: (to, draft) => net.send('trade', { action: 'offer', with: to, ...draft }),
+            note: (text) => say(text, 'sys'),
+          });
+        },
+        whisper: (tokenId) => {
+          hud.chatOpen(true);
+          const input = hud.hud.querySelector<HTMLInputElement>('#hud-log input');
+          if (input) input.value = `/w #${tokenId} `;
+        },
+        note: (text) => { say(text, 'sys'); paint(); },
+      });
+  });
+  // A menu for the moment you asked, not a thing that lingers over the street.
+  stage.renderer.domElement.addEventListener('pointerdown', () => closePlayerMenu());
 
   addEventListener('keydown', (e) => {
     if (duel) return;
@@ -996,14 +1564,18 @@ export async function bootShell(): Promise<Shell> {
       case 'm':
         showTab('map');
         break;
-      case 'j':
+case 'j':
         showTab('jobs');
+        break;
+      case 'l':
+        // The road. Same key the MAPS tile advertises on the home grid.
+        showTab('line');
         break;
       case 'b':
         showTab('bag');
         break;
       case 'f':
-        showTab('folder');
+        showTab('deck');
         break;
       case 'g':
         // Not 'd': D is the strafe key, so a dungeon shortcut bound to it fired every time the
@@ -1014,16 +1586,31 @@ export async function bootShell(): Promise<Shell> {
         showTab('party');
         break;
       case 'y':
-        if (social.invite) partyAct('accept');
+        if (social.asking === 'trade' && social.trade) tradeAct('accept');
+        else if (social.asking === 'brawl' && social.brawl) pvpAct('accept');
+        else if (social.invite) partyAct('accept');
         break;
       case 'n':
         // One case, not two: a second `case 'n'` further down the switch was unreachable, so
         // the mute toggle it carried had never actually fired.
-        if (social.invite) partyAct('decline');
-        else hud.toast({ icon: 'sparkle', title: toggleMute() ? 'SOUND OFF' : 'SOUND ON', colour: 'var(--dim)' });
+        if (social.asking === 'trade' && social.trade) tradeAct('decline');
+        else if (social.asking === 'brawl' && social.brawl) pvpAct('decline');
+        else if (social.invite) partyAct('decline');
+        else {
+          const off = toggleMute();
+          setMusicMuted(off);
+          updateSettings((d) => { d.sound.muted = off; });
+          hud.toast({ icon: 'sparkle', title: off ? 'SOUND OFF' : 'SOUND ON', colour: 'var(--dim)' });
+        }
+        break;
+      case 'k':
+        showTab('ranks');
         break;
       case 'c':
         showTab('career');
+        break;
+      case 'o':
+        showTab('options');
         break;
       case 'tab':
         toggleMenu();
@@ -1077,9 +1664,35 @@ export async function bootShell(): Promise<Shell> {
     say(`build: ${net.me?.build.loadout?.why?.slice(0, 2).join(' · ') ?? ''}`, 't-glitch');
     say(net.me?.traitsSource === 'real' ? 'traits: on-chain metadata' : 'traits: predicted from token id', 't-anomaly');
     hud.setWhere(explorer.layout.name, explorer.areaName(player.pos.x, player.pos.z));
+    // Ask for whatever is already on the street. A reconnect, a reload or a second tab would
+    // otherwise walk into a world whose loot is real on the server and invisible here.
+    net.send('loop', { action: 'drops' });
   };
 
   net.on('welcome', onWelcome);
+
+  // The street's loot. The list arrives whole, so a missed push heals on the next one instead of
+  // leaving a pile that exists only on screen. `take` is answered by the same push, minus the pile.
+  net.on('drops', (m) => {
+    const list = (m as unknown as { drops?: DropView[] }).drops ?? [];
+    drops.set(list);
+  });
+
+  /*
+   * The ambush.
+   *
+   * The server pushes this when `checkLineMobs` engages on proximity. There was NO subscription for
+   * `'line'` at all, so the message was dropped on the floor the instant it arrived — and with it
+   * `fightingSite`, which is the only thing the duel-end handler reads to claim the clear. No claim
+   * means no `line.clear`, no `killLineMob`, and no purse: you win the fight and nothing drops.
+   *
+   * It records exactly what `line.enter` would have, so walking into a mob and pressing E on a site
+   * end in the same place.
+   */
+  net.on('line', (m) => {
+    const msg = m as { kind?: string; encounterId?: string };
+    if (msg.kind === 'ambush' && msg.encounterId) fightingSite = msg.encounterId;
+  });
 
   net.on('profile', () => {
     applyProfile();
@@ -1113,9 +1726,9 @@ export async function bootShell(): Promise<Shell> {
       .filter((p) => p.id !== net.me?.id)
       .map((p) => ({ ...p })) as typeof social.nearby;
     void remotes.sync(
-      ((m.players ?? []) as { id: string; x: number; y: number; facing: number; heading?: number; anim: string }[])
+      ((m.players ?? []) as { id: string; x: number; y: number; facing: number; heading?: number; anim: string; tokenId: number; attributes?: Record<string, string> }[])
         .filter((p) => p.id !== net.me?.id)
-        .map((p) => ({ id: p.id, x: p.x, y: p.y, facing: p.facing, ...(p.heading !== undefined ? { heading: p.heading } : {}), anim: p.anim })),
+        .map((p) => ({ id: p.id, x: p.x, y: p.y, facing: p.facing, ...(p.heading !== undefined ? { heading: p.heading } : {}), anim: p.anim, tokenId: p.tokenId, ...(p.attributes ? { attributes: p.attributes } : {}) })),
     );
   });
 
@@ -1147,12 +1760,18 @@ export async function bootShell(): Promise<Shell> {
 
   // A fight the server started for us — stepping into a fold node — opens the duel by itself.
   net.on('duel', (m) => {
-    if (!duel && m.kind === 'start') startDuel('node');
+    if (!duel && m.kind === 'start') startDuel(m.view?.place?.kind === 'pvp' ? 'pvp' : 'node');
   });
 
   net.on('loop', (m) => {
     switch (m.action) {
       case 'npc.talk':
+        if (!m.ok) {
+          hud.toast({ icon: 'chat', title: 'NO ANSWER', sub: String(m.reason ?? ''), colour: 'var(--dim)' });
+        } else openTalk(m.talk as TalkView);
+        break;
+      case 'line.talk':
+        // The trailhead scout: same dialogue box as the city's chogs, no quest needed.
         if (!m.ok) {
           hud.toast({ icon: 'chat', title: 'NO ANSWER', sub: String(m.reason ?? ''), colour: 'var(--dim)' });
         } else openTalk(m.talk as TalkView);
@@ -1181,13 +1800,115 @@ export async function bootShell(): Promise<Shell> {
       case 'war':
         if (m.ok) war = (m as { war?: WarView }).war ?? null;
         break;
+      case 'ranks':
+        if (m.ok) { ranks = (m as { ranks?: RanksView }).ranks ?? null; ranksProblem = ''; } else { ranksProblem = String(m.reason ?? 'refused'); }
+        if (tab === 'ranks') paint();
+        break;
+      // The Line. Every one of these is a *report* except 	ravel, which is a request the
+      // server's own gate answers � and the answer, not the click, is what moves the player.
+      case 'line.state':
+        if (m.ok) {
+          // FLAT, and that is not a guess: the server's `line.state` answers `{ ok, ...view }`, so
+          // `regions`/`at`/`mobs` sit at the top level of the message. (`line.travel` is the odd
+          // one out — it answers `{ ok, region, state }` with the same payload NESTED — which is
+          // exactly why this case is worth a comment rather than a rewrite.)
+          lineView = {
+            regions: (m.regions ?? []) as LineView['regions'],
+            slots: m.slots ?? 0,
+            cards: (m.cards ?? []) as string[],
+            dungeons: (m.dungeons ?? { open: false, reason: '' }) as LineView['dungeons'],
+            anomalies: (m.anomalies ?? { open: false, reason: '' }) as LineView['anomalies'],
+            at: (m.at ?? 'tolls') as RegionId,
+            onTheLine: !!m.onTheLine,
+          };
+          lineProblem = '';
+          onLine = !!m.onTheLine;
+          // The bodies. setMobs reconciles by id, so a standing figure stays standing and a
+          // fallen one is gone the moment the server says so — the corpse fading out is the only
+          // feedback a win has on the field.
+          //
+          // ORDER MATTERS, and getting it wrong cost a day of "the map has no mobs". This branch is
+          // guarded on `line`, the built field — and the field is built by `enterLine` a few lines
+          // below, on the first `line.state` that follows a travel. So on exactly the message that
+          // carries the mobs, `line` is still null and all eleven of them were dropped on the floor.
+          // Nothing ever re-asked, so the road stayed empty for the whole session.
+          //
+          // So: hand the list over now if the field exists, and again the moment it is built.
+          if (Array.isArray(m.mobs)) lastLineMobs = m.mobs as unknown[];
+          if (line && Array.isArray(m.mobs)) line.setMobs(m.mobs as MobView[]);
+          if (lineView.onTheLine && lineRegion !== lineView.at) {
+            enterLine(lineView.at, lineView.cards, lastLineMobs);
+          }
+          if (tab === 'line') paint();
+        } else {
+          // **Never swallow a refusal here.** An older version of this case was `if (m.ok)` with
+          // no `else`, so when the server did not know the action — which is exactly what a
+          // server from before the Line answers — the tab sat on "asking the road…" with no
+          // explanation at all. A request that can fail must be able to say that it did.
+          say(`the road is not answering: ${String(m.reason ?? 'refused')}`, 't-storm');
+          if (tab === 'line') paint();
+        }
+        break;
+      case 'line.travel':
+        if (m.ok) {
+          // Ask again rather than merging `m.state`. That payload is `Profiles.lineView`, and it
+          // has no `at` and no `onTheLine` — those two only exist on `line.state` — so merging
+          // it in left the tab convinced it was still in the city right after you walked out of
+          // it. One extra round trip is cheaper than a second, divergent copy of the answer.
+          // Flag first, then the place: enterLine reads it, and a fold opened a frame later
+          // must not find a stale value.`r
+          //
+          // **This is the call that actually builds the road.** The `line.state` handler's own
+          // `enterLine` is guarded on `lineRegion !== lineView.at`, and travel has already set both,
+          // so that one never runs on a fresh journey. Which means this line is the only place the
+          // field gets made — and it was passing no mobs, so the road always came up empty no matter
+          // what the server had already sent. The mobs that arrive in the following `line.state`
+          // are handed to whatever field exists then, so this is about the first second on the road
+          // rather than about mobs never appearing at all.
+          if (m.region) { onLine = true; enterLine(m.region as RegionId, lineView?.cards ?? [], lastLineMobs); }
+          else { onLine = false; leaveLine(); }
+          net.loop('line.state');
+          paint();
+        } else if (m.reason) {
+          say(String(m.reason), 't-glitch');
+        }
+        break;
+      case 'line.enter':
+        if (m.ok && lineSite) {
+          // The fight is a normal duel; duel.ts listens on the same channel. Bank the id so the
+          // end message can hand it back to line.clear without the client having to remember.
+          fightingSite = lineSite.id;
+        } else if (m.reason) {
+          say(String(m.reason), 't-glitch');
+        }
+        break;
+      case 'line.clear':
+        if (m.ok) {
+          const cards = (m.cards ?? []) as string[];
+          if (cards.length) {
+            sfx.wave();
+            hud.toast({ icon: 'sparkle', title: 'CARDS ON THE GROUND', sub: `${cards.map((c) => anyCard(c)?.name ?? c).join(' · ')} — walk over and click to take`, colour: 'var(--frost)' });
+          }
+          fightingSite = null;
+          // Same reasoning as `travel`: the marker greying and the tab both want the server's
+          // own list of what is banked, and asking for it is cheaper than assembling a second
+          // one out of a payload that does not carry every field the page reads.
+          net.loop('line.state');
+          paint();
+        } else if (m.reason) {
+          say(String(m.reason), 't-glitch');
+        }
+        break;
       case 'area.state':
         if (m.ok) {
           area = { area: m.area ?? null, run: m.run ?? null, dungeons: m.dungeons ?? [], level: m.level ?? 1 };
-          // A run that was already open when we walked in (a reload, a rejoin)
-          // still has to put us in the place it is about.
-          if (area.area && area.run && !area.run.done && !area.run.failed) enterDungeon(area);
-          else if (dungeon) leaveDungeon();
+          // A run that was already open when we walked in (a reload, a rejoin) still has to put us
+          // in the place it is about. Already inside one, re-lay the field so a node we just cleared
+          // stops being a target and the rooms ahead open up — `enterDungeon` early-returns when a
+          // field exists, so the re-lay is what actually moves it.
+          if (area.area && area.run && !area.run.done && !area.run.failed) {
+            if (dungeon) refreshDungeon(); else enterDungeon(area);
+          } else if (dungeon) leaveDungeon();
         }
         break;
       case 'area.open':
@@ -1220,14 +1941,14 @@ export async function bootShell(): Promise<Shell> {
           // A card you already hold is sold on the spot, and that is worth saying before the purse
           // moves — otherwise the WAV line looks like the tile rolled generous.
           const g = m.grant as
-            | { xp: number; wav: number; chips: string[]; refunded: { name: string; wav: number }[] }
+            | { xp: number; wav: number; cards: string[]; refunded: { name: string; wav: number }[] }
             | undefined;
           if (g) {
             sfx.wave();
-            const found = g.chips.length
-              ? g.chips.length === 1
-                ? `NEW CARD · ${anyChip(g.chips[0]!)?.name ?? g.chips[0]}`
-                : `${g.chips.length} NEW CARDS`
+            const found = g.cards.length
+              ? g.cards.length === 1
+                ? `NEW CARD · ${anyCard(g.cards[0]!)?.name ?? g.cards[0]}`
+                : `${g.cards.length} NEW CARDS`
               : '';
             const dup = g.refunded[0];
             hud.toast({
@@ -1239,6 +1960,33 @@ export async function bootShell(): Promise<Shell> {
               colour: 'var(--gold)',
             });
           }
+        }
+      case 'area.shrine':
+        if (!m.ok) say(`the fold refuses: ${m.reason}`, 't-storm');
+        else {
+          if (m.run) area = { ...area, run: m.run as AreaRun } as AreaView;
+          const cut = (m as { removed?: string }).removed;
+          sfx.wave();
+          hud.toast({
+            icon: 'pack',
+            title: 'THINNED',
+            sub: cut ? `${anyCard(cut)?.name ?? cut} leaves the collection` : 'one card leaves the collection',
+            colour: 'var(--gold)',
+          });
+        }
+        break;
+      case 'area.draft':
+        if (!m.ok) say(`the fold refuses: ${m.reason}`, 't-storm');
+        else {
+          if (m.run) area = { ...area, run: m.run as AreaRun } as AreaView;
+          const took = (m.cards as string[] | undefined)?.[0];
+          sfx.wave();
+          hud.toast({
+            icon: 'pack',
+            title: 'DRAFT TAKEN',
+            sub: took ? `${anyCard(took)?.name ?? took} joins the collection` : 'the collection grows',
+            colour: 'var(--gold)',
+          });
         }
         break;
       default:
@@ -1274,16 +2022,29 @@ export async function bootShell(): Promise<Shell> {
     const s = m.signal;
     if (s.type === 'anomaly' || s.type === 'spawn') {
       say(`${s.boss.archetype ?? s.boss.tier.toUpperCase()} over the city — ${(s.boss.hp / 1000).toFixed(0)}k HP`, `t-${s.boss.tier}`);
-      hud.toast({ icon: 'skull', title: `${String(s.boss.archetype ?? s.boss.tier).toUpperCase()} · RIFT`, sub: `${(s.boss.hp / 1000).toFixed(0)}k HP anomaly`, colour: 'var(--rose)' });
+      hud.toast({ icon: 'skull', title: `${String(s.boss.archetype ?? s.boss.tier).toUpperCase()} · RIFT`, sub: `${(s.boss.hp / 1000).toFixed(0)}k HP battle rift`, colour: 'var(--rose)' });
     } else if (s.type === 'cleared') say('the rift is deleted', 't-glitch');
     else if (s.type === 'ravaged') say('the city was ravaged', 't-storm');
-    else if (s.type === 'reward') say(`loot → #${s.tokenId}: ${s.chips.join(', ') || 'nothing'}`, 't-anomaly');
+    else if (s.type === 'reward') say(`loot → #${s.tokenId}: ${s.cards.join(', ') || 'nothing'}`, 't-anomaly');
   });
 
   // ---------------------------------------------------------------- the frame
 
   const resize = (): void => stage.resizeTo(hud.top);
-  new ResizeObserver(resize).observe(hud.top);
+  // Count the observer's callbacks separately from what `resizeTo` actually did with them. A
+  // callback that delivers the size we already hold is one that used to rebuild the bloom chain
+  // for nothing, and it is invisible unless it is counted on its own.
+  let observeHits = 0;
+  const observe = (): void => { observeHits += 1; resize(); };
+  let observeQueued = false;
+  const observeOnFrame = (): void => {
+    if (observeQueued) return;
+    observeQueued = true;
+    // One frame, one resize. The observer delivers a burst when a layout settles, and every
+    // callback in the burst used to run `resizeTo` — thirteen render targets each time.
+    requestAnimationFrame(() => { observeQueued = false; observe(); });
+  };
+  new ResizeObserver(observeOnFrame).observe(hud.top);
   resize();
 
   hud.minimap.setCity(explorer.layout, DISTRICTS[sector]);
@@ -1326,12 +2087,20 @@ export async function bootShell(): Promise<Shell> {
       return;
     }
     const lock = busy || hud.dialogueOpen || hud.chatting;
-    const walk = dungeon
-      ? { solids: dungeon.solids, bounds: dungeon.bounds }
-      : inside && room
-        ? { solids: room.solids, bounds: room.bounds }
-        : explorer.walk;
-    stepPlayer(player, dt, walk, lock, inside || dungeon ? 0 : stage.director.yaw);
+// The Line is the fourth place and sits at the top of the cascade: a region is not a room,
+    // and the street is not walkable while one is open. Its `walk` already carries `groundY`, so
+    // the Chog follows the terrain under its feet.
+    const walk = line
+      ? line.walk
+      : dungeon
+        ? { solids: dungeon.solids, bounds: dungeon.bounds }
+        : inside && room
+          ? { solids: room.solids, bounds: room.bounds }
+          : explorer.walk;
+    // One mapping everywhere: keys mean "up the screen", and only the camera's yaw knows
+    // where that points. Dungeons and rooms used to pin this to 0 while the camera sat at
+    // whatever yaw it already had, so W walked off at an angle from screen-up.
+    stepPlayer(player, dt, walk, lock, stage.director.yaw);
 
     // Footsteps, soft, on the beat of the stride.
     if (player.moving) {
@@ -1353,7 +2122,31 @@ export async function bootShell(): Promise<Shell> {
       dungeonTarget = room && !room.cleared && room.reachable ? room : null;
       target = null;
       roomTarget = null;
+    } else if (line) {
+      // The Line's only interaction is the site you are standing on. This is the client half of
+      // a question the server answers again for itself � world.siteUnder � so walking up to a
+      // site and saying so are two independent checks, not one.
+      // No prompt and no key: walking into a mob starts the fight server-side, so the only
+      // thing the shell does on the Line is report where it stands.
+      lineSite = null;
+      target = null;
+      roomTarget = null;
+      // The scout talks to whoever stands by the fire. Same coordinates both sides.
+      scoutNear = !!lineRegion && Math.hypot(player.pos.x - campOf(lineRegion).npc.x, player.pos.z - campOf(lineRegion).npc.z) < 4;
+      line.update(now / 1000, stage.director.focusPoint());
+      // The bodies, fed every frame until they land. The field is built inside a fade, and the mob
+      // list arrives on a later round trip, so neither "hand it over when the message lands" nor
+      // "hand it over when the field is built" can be the only one — whichever happens second
+      // arrives to find the other not ready yet.  overwrites rather than blends, so
+      // calling it every frame with the same list is free and cannot drift.
+      if (lastLineMobs.length) line.setMobs(lastLineMobs as MobView[]);
+      remotes.update(dt);
+      stage.follow(player.pos.x, player.pos.z, player.facing, player.moving, dt, line.groundY(player.pos.x, player.pos.z));
+      hud.frame(player.pos.x, player.pos.z, stage.director.yaw, player.facing, markers(), now / 1000);
     } else if (inside && room) {
+      // Keep whoever works here alive: a perfectly still figure behind the counter reads as
+      // furniture, not as someone serving you.
+      for (const actor of room.actors) actor.update(dt);
       roomTarget = null;
       for (const it of room.interactables) {
         if (Math.hypot(player.pos.x - it.x, player.pos.z - it.z) < 3.4) {
@@ -1366,8 +2159,11 @@ export async function bootShell(): Promise<Shell> {
       target = explorer.nearest(player.pos.x, player.pos.z);
       roomTarget = null;
     }
-    const key = dungeonTarget
-      ? `dg:${dungeonTarget.id}`
+    const scoutE = !!line && scoutNear;
+    const key = scoutE && !lineSite ? 'line:scout' : lineSite
+      ? (lineSite ? `line:${lineSite.id}` : 'line:scout')
+      : dungeonTarget
+        ? `dg:${dungeonTarget.id}`
       : target
         ? `${target.id}:${target.mark ?? ''}:${anomalyHere}`
         : roomTarget
@@ -1375,15 +2171,25 @@ export async function bootShell(): Promise<Shell> {
           : '';
     if (key !== promptKey && !hud.dialogueOpen) {
       promptKey = key;
-      if (dungeonTarget) hud.setPrompt({ key: 'E', title: dungeonTarget.label, sub: dungeonTarget.kind === 'boss' ? 'the core — this is the fight' : 'step into this room', icon: 'gate', colour: 'var(--violet)' });
+      if (lineSite) hud.setPrompt({ key: 'E', title: lineSite.name, sub: lineSite.kind === 'warden' ? 'the warden � this is the gate' : lineSite.kind === 'post' ? 'something is waiting here' : 'a drift', icon: 'gate', colour: lineSite.kind === 'warden' ? 'var(--rose)' : 'var(--frost)' });
+      else if (dungeonTarget) hud.setPrompt({ key: 'E', title: dungeonTarget.label, sub: dungeonTarget.kind === 'boss' ? 'the core — this is the fight' : 'step into this room', icon: 'gate', colour: 'var(--violet)' });
       else if (target) hud.setPrompt({ key: 'E', title: target.label, sub: hintFor(target), icon: target.icon, colour: target.colour });
-      else if (roomTarget) hud.setPrompt({ key: 'E', title: roomTarget.label, sub: roomTarget.hint, icon: roomTarget.kind === 'gate' ? 'gate' : 'chat' });
+      else if (roomTarget) hud.setPrompt({ key: 'E', title: roomTarget.label, sub: roomTarget.hint, icon: roomTarget.kind === 'gate' || inside?.kind === 'dungeon' ? 'gate' : 'chat' });
+      else if (scoutE) hud.setPrompt({ key: 'E', title: 'SCOUT', sub: 'a chog by the fire — flag them down', icon: 'chat', colour: 'var(--frost)' });
       else hud.setPrompt(null);
     }
     if (hud.dialogueOpen) hud.setPrompt(null);
-    touch?.setReach((!!target || !!roomTarget || !!dungeonTarget) && !lock);
+    touch?.setReach((!!target || !!roomTarget || !!dungeonTarget || !!lineSite || scoutE) && !lock);
     if (interactAsked && !lock) {
-      if (dungeonTarget) net.loop('area.step', { nodeId: dungeonTarget.id });
+      // The Line answers E too. The comment here used to say walking into a mob started the fight
+      // server-side so there was "nothing to ask for" — and the prompt three lines above was still
+      // telling the player to press E for exactly that. A button the HUD advertises and the handler
+      // ignores is worse than no button: the player stands on a drift, presses the key the game told
+      // them to press, and nothing happens, which reads as a broken map rather than a missing branch.
+      // The server re-checks proximity for itself (`siteUnder`), so this asks rather than asserts.
+      if (scoutE) net.loop('line.talk', {});
+      else if (lineSite) net.loop('line.enter', { encounterId: lineSite.id });
+      else if (dungeonTarget) net.loop('area.step', { nodeId: dungeonTarget.id });
       else if (target) interact(target);
       else if (roomTarget) (roomTarget.kind === 'gate' ? exitRoom : useCounter)();
     }
@@ -1403,13 +2209,14 @@ export async function bootShell(): Promise<Shell> {
         heading: player.facing,
         anim: player.moving ? 'walk' : 'idle',
         hp: 100,
-        place: inside ? 'room' : 'street',
+        // The Line shares the street's screen-relative yaw, and the server re-reads its own
+        // position rather than this flag � see world.move.
       });
     }
 
     if (!inside) {
       explorer.update(dt, player.pos.x, player.pos.z, stage.director.focusPoint());
-      stage.follow(player.pos.x, player.pos.z, player.facing, player.moving, dt);
+      stage.follow(player.pos.x, player.pos.z, player.facing, player.moving, dt, explorer.city?.groundY(player.pos.x, player.pos.z) ?? 0);
       remotes.update(dt);
       const a = explorer.areaChanged(player.pos.x, player.pos.z);
       if (a) {
@@ -1428,6 +2235,11 @@ export async function bootShell(): Promise<Shell> {
       }
       hud.frame(player.pos.x, player.pos.z, stage.director.yaw, player.facing, markers(), now / 1000);
     }
+    // Loot lives on the street and nowhere else. Derived from the same three flags every frame
+    // rather than mirrored into seven enter/leave branches, where one missed call means beams
+    // hanging in a dungeon or a room that has no ground to fall on.
+    drops.setVisible(!inside && !dungeon && !duel);
+    drops.update(dt);
     placeBubbles();
     if (social.invite && performance.now() - social.invite.at > 45_000) {
       social.invite = null;
@@ -1450,21 +2262,45 @@ export async function bootShell(): Promise<Shell> {
   };
 
   let arrowClock = 0;
+  /**
+   * The last thing that went wrong in a frame, and the field events around it.
+   *
+   * A throw inside the frame used to kill the loop outright — it skipped both `stage.render` and
+   * the re-schedule, and a WebGL canvas that stops drawing goes black and STAYS black. That is
+   * almost certainly the whole "dodge gives a black screen" report, and it is invisible under a
+   * software renderer where nothing throws. So the loop now survives a bad frame, and the frame
+   * keeps a receipt: the error, and the field events that were in flight when it happened.
+   */
+  let lastFrameError: { at: number; message: string; events: string[] } | null = null;
+  const recentEvents: string[] = [];
+  const recordFrameError = (err: unknown): void => {
+    if (lastFrameError && now - lastFrameError.at < 4000) return;
+    lastFrameError = {
+      at: Math.round(now),
+      message: err instanceof Error ? `${err.message}\n${(err.stack ?? '').split('\n').slice(1, 4).join('\n')}` : String(err),
+      events: [...recentEvents],
+    };
+  };
   const frame = (t: number): void => {
     const dt = Math.min(0.05, (t - last) / 1000);
     last = t;
     now = t;
-    step(dt);
-    // The GPS arrow is the one thing that must not wait for a profile event:
-    // it is the player asking "which way, how far" every step they take.
-    arrowClock += dt;
-    if (arrowClock > 0.15 && !duel && !hud.dialogueOpen && !inside && !hud.menuOpen) {
-      arrowClock = 0;
-      const txt = currentArrow();
-      if (txt) hud.setArrow(txt);
-    }
-    stage.render(dt);
+    // Re-schedule BEFORE the work. A throw in the frame body then costs one frame instead of the
+    // rest of the session, and the canvas never goes dark because nothing stopped drawing.
     requestAnimationFrame(frame);
+    try {
+      step(dt);
+      // The GPS arrow is the one thing that must not wait for a profile event:
+      // it is the player asking "which way, how far" every step they take.
+      arrowClock += dt;
+      if (arrowClock > 0.15 && !duel && !hud.dialogueOpen && !inside && !hud.menuOpen) {
+        arrowClock = 0;
+        hud.setArrow(currentArrow());
+      }
+      stage.render(dt);
+    } catch (err) {
+      recordFrameError(err);
+    }
   };
   requestAnimationFrame(frame);
 
@@ -1505,6 +2341,54 @@ export async function bootShell(): Promise<Shell> {
   g.__zoom = (v?: number) => (v === undefined ? stage.zoom : stage.setZoom(v));
   g.__debug = () => stage.debug();
   g.__town = () => ({ sector, name: explorer.layout.name, areas: explorer.layout.areas.map((a) => a.name), anchors: explorer.layout.anchors.length, solids: explorer.layout.solids.length, tris: explorer.city?.triangles, buildMs: explorer.city?.buildMs, extent: cityOf(sector).extent });
+  // **The Line's state, in one paste.** `g.__line()` with no argument returns everything needed
+  // to tell a live failure apart from a wrong theory: which region, where the player stands and
+  // on what ground height, what the camera is posed at, how much geometry is in the scene and
+  // where its bounding box sits, and the last render error. If the map is black, this says why.
+  g.__line = () => {
+    const out: Record<string, unknown> = {
+      line: line ? `${lineRegion}` : null,
+      player: { x: +player.pos.x.toFixed(1), y: +player.pos.y.toFixed(1), z: +player.pos.z.toFixed(1) },
+      groundHere: line ? +line.groundY(player.pos.x, player.pos.z).toFixed(1) : null,
+      rig: stage.rig,
+      cam: stage.director.describe(),
+      sceneChildren: stage.scene.children.length,
+    };
+    if (line) {
+      let meshes = 0;
+      const box = new THREE.Box3();
+      line.group.updateWorldMatrix(true, true);
+      line.group.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) {
+          meshes++;
+          box.expandByObject(o as THREE.Object3D);
+        }
+      });
+      out.lineGroup = {
+        meshes,
+        children: line.group.children.length,
+        visible: line.group.visible,
+        bbox: box.isEmpty() ? 'EMPTY' : box.min.toArray().map((n) => +n.toFixed(1)).concat(box.max.toArray().map((n) => +n.toFixed(1))),
+        markers: line.sites.length,
+        // How many mob figures the renderer actually built, and how many the server said exist.
+        // These two numbers disagreeing is the whole diagnosis in one line: mobs missing on the road
+        // is either a server that never sent them or a renderer that never drew them.
+        serverSent: lastLineMobs.length,
+        mobCount: (() => {
+          let n = 0;
+          line.group.traverse((o) => { if (o.name.startsWith('mob:')) n++; });
+          return n;
+        })(),
+        cleared: net.profile ? undefined : undefined,
+      };
+    }
+    // WebGL in numbers: is the context lost, did a program fail, how big is the drawing buffer.
+    // `stage.debug()` is what draw calls and real triangles the renderer submitted last frame —
+    // if the scene holds 87 meshes and the renderer submitted 0, it never asked the card.
+    const dbg = stage.debug();
+    out.render = { calls: dbg.calls, triangles: dbg.triangles, camFar: dbg.camFar, fogFar: dbg.fogFar };
+    return out;
+  };
   g.__anchors = () => explorer.layout.anchors.map((a) => ({ id: a.id, kind: a.kind, x: +a.x.toFixed(1), z: +a.z.toFixed(1), sub: a.sub, area: a.area }));
   g.__key = (k: string) => {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: k }));
@@ -1543,6 +2427,43 @@ export async function bootShell(): Promise<Shell> {
     return 'enter requested';
   };
   g.__busy = () => busy;
+  /**
+   * The drawing buffers' health, read while something visual misbehaves.
+   *
+   * `count` is how many times the bloom chain's thirteen render targets were actually rebuilt;
+   * `observeHits` is how many times the ResizeObserver callback ran. `observeHits` climbing while
+   * `count` stays flat is the guard working; both climbing together mid-fight is the black canvas.
+   */
+  g.__resizes = () => ({ count: stage.resizes, size: stage.size, observeHits });
+  /**
+   * The last frame that threw, with the field events that were in flight.
+   *
+   * Read this after the picture goes wrong. `null` means nothing threw, which rules the loop out
+   * and points at the GPU. A message here names the line that killed the frame.
+   */
+  g.__lastFrameError = () => lastFrameError;
+  /** Feed the frame's memory: the duel's field events, so a throw can be read in context. */
+  let lastLineMobs: unknown[] = [];
+  g.__lastMobs = () => lastLineMobs;
+  g.__noteFieldEvent = (text: string) => {
+    recentEvents.push(`${Math.round(now)} ${text}`);
+    if (recentEvents.length > 24) recentEvents.shift();
+  };
+  /**
+   * Put fake loot on the street, for looking at the renderer without winning a fight first.
+   *
+   * Deliberately local: it drives `drops.set` directly and never touches the server, so a debug
+   * poke cannot mint a card. The server's own list is what the next push restores.
+   */
+  g.__drops = (spec?: Partial<DropView>[]) => {
+    const base = { x: player.pos.x, z: player.pos.z + 2.6, kind: 'card' as const, key: 'cinderfang', name: 'Cinder Fang', element: 'burn' as const, klass: 'S' as const, rarity: 'common' as const, ttl: 90, owner: 'debug' };
+    const rows: DropView[] = (spec?.length ? spec : [{}, { rarity: 'rare', key: 'magmachog', name: 'Magma Chog', klass: 'M', element: 'burn' }, { rarity: 'epic', key: 'chognova', name: 'Chog Nova', klass: 'G', element: 'prism' }]).map((over, i) => ({
+      id: `dbg${i}`, ...base, ...over, x: player.pos.x + (i - 1) * 1.5, z: player.pos.z + 2.6,
+    })) as DropView[];
+    drops.set(rows);
+    return `${rows.length} piles`;
+  };
+  g.__dropsobj = () => drops;
   g.__duelcam = DUEL_CAM;
   g.__voice = voice;
   g.__social = social;

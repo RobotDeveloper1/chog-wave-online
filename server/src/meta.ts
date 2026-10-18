@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { CFG } from './config.ts';
-import { ALBUM_UNIVERSE } from '@chog/shared';
+import { ALBUM_UNIVERSE, CHOG_GENESIS_ADDRESS } from '@chog/shared';
 
 /**
  * The trait index.
@@ -145,4 +145,16 @@ export class TraitIndex {
   }
 }
 
-export const traits = new TraitIndex();
+/**
+ * Which map the world reads. The replica's ids start at 1, exactly where
+ * mainnet's do, so sharing one map would hand testnet #1 mainnet #1's face.
+ * The contract address is fixed before boot (the server restarts to switch
+ * chains), so choosing here, once, cannot drift mid-session.
+ */
+function traitDir(): string {
+  const contract = (process.env.CHOG_GENESIS_CONTRACT ?? '').toLowerCase();
+  if (contract && contract !== CHOG_GENESIS_ADDRESS.toLowerCase()) return CFG.metaTestnetDir;
+  return CFG.metaDir;
+}
+
+export const traits = new TraitIndex(traitDir());

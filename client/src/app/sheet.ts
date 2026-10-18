@@ -1,9 +1,13 @@
-import { ITEMS, SECTOR_NAME, chip as chipOf, cityOf, type AreaRun, type DataArea, type DungeonView, type ProfileView, type SectorId, type SectorState } from '@chog/shared';
+import { ITEMS, SECTOR_NAME, card as cardOf, cityOf, type AreaRun, type DataArea, type DungeonView, type ProfileView, type RanksView, type SectorId, type SectorState } from '@chog/shared';
 import { ICON } from './hud/icons.ts';
+import { linePage } from './linePage.ts';
+import { renderRanks } from './ranksPage.ts';
 import { renderCareer } from './careerPage.ts';
-import { renderFolder, renderLibrary } from './deckPages.ts';
+import { renderDeck, renderLibrary } from './deckPages.ts';
 import { renderDungeons } from './dungeonPage.ts';
 import { renderParty } from './partyPage.ts';
+import { renderOptions } from './sheet/optionsPage.ts';
+import { cardImg } from './cardArt.ts';
 
 /**
  * The bottom screen's tab sheet.
@@ -15,7 +19,7 @@ import { renderParty } from './partyPage.ts';
  * the server computed, which is the only reason the screen can be trusted.
  */
 
-export type Tab = 'home' | 'map' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'folder' | 'library' | 'party';
+export type Tab = 'home' | 'map' | 'line' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'deck' | 'library' | 'party' | 'ranks' | 'options';
 
 export interface TabDef {
   id: Exclude<Tab, 'home'>;
@@ -29,16 +33,19 @@ export interface TabDef {
 
 export const TABS: TabDef[] = [
   { id: 'map', label: 'MAP', icon: 'pin', colour: 'var(--wave)', key: 'M' },
+  { id: 'line', label: 'THE LINE', icon: 'pin', colour: 'var(--frost)', key: 'L' },
   { id: 'jobs', label: 'QUESTS', icon: 'scroll', colour: 'var(--gold)', key: 'J' },
   { id: 'career', label: 'CAREER', icon: 'bolt', colour: 'var(--gold)', key: 'C' },
   { id: 'bag', label: 'BAG', icon: 'bag', colour: 'var(--frost)', key: 'B' },
   { id: 'party', label: 'PARTY', icon: 'heart', colour: 'var(--rose)', key: 'P' },
-  { id: 'folder', label: 'FOLDER', icon: 'pack', colour: 'var(--burn)', key: 'F' },
+  { id: 'deck', label: 'DECK', icon: 'pack', colour: 'var(--burn)', key: 'F' },
   { id: 'library', label: 'LIBRARY', icon: 'sparkle', colour: 'var(--cyan)' },
   { id: 'shop', label: 'SHOP', icon: 'wav', colour: 'var(--volt)' },
   { id: 'album', label: 'ALBUM', icon: 'star', colour: 'var(--prism)' },
   { id: 'war', label: 'WAR', icon: 'skull', colour: 'var(--rose)' },
   { id: 'dungeons', label: 'DUNGEONS', icon: 'gate', colour: 'var(--void)', key: 'G' },
+  { id: 'ranks', label: 'RANKS', icon: 'bolt', colour: 'var(--gold)', key: 'K' },
+  { id: 'options', label: 'OPTIONS', icon: 'repair', colour: 'var(--dim)', key: 'O' },
 ];
 
 /** The menu's first page: the DS touch menu's grid of big buttons. */
@@ -56,6 +63,13 @@ export interface SheetCtx {
   debug: boolean;
   tracked: string | null;
   area: string;
+  /** What the Line knows about this token, for the MAPS tab. Refreshed on demand. */
+  line: import('./linePage.ts').LineView | null;
+  /** Why there is no line yet, if the last ask was refused. Printed, never swallowed. */
+  lineProblem: string;
+  /** The four RANKS boards. Asked on tab-open, like the war board. */
+  ranks: RanksView | null;
+  ranksProblem: string;
 }
 
 export interface WarView {
@@ -75,13 +89,20 @@ export interface AreaView {
 }
 
 export interface SheetApi {
-  buy(kind: 'chip' | 'item', stockId: string): void;
-  sell(chipId: string): void;
+  buy(kind: 'card' | 'item', stockId: string): void;
+  sell(cardId: string): void;
   use(id: string): void;
   track(questId: string): void;
   openDungeon(id: string): void;
   stepArea(nodeId: string): void;
   closeArea(): void;
+  /** Take 1 of the 3 cards the last combat node dealt. */
+  takeDraft(cardId: string): void;
+  /** Thin one held card at a shrine rest. */
+  shrineRemove(cardId: string): void;
+  /** Take the road to a region, or 
+ull to walk back into the city. */
+  travel(region: string | null): void;
 }
 
 const esc = (s: string): string =>
@@ -133,6 +154,7 @@ export function renderSheet(
   if (tab === 'home') return renderHome();
   if (tab === 'party') return renderParty();
   if (tab === 'map') return worldMap(ctx);
+  if (tab === 'options') return renderOptions();
   if (!p) return `<div class="sheet"><span class="idle">no profile yet — the link is still opening</span></div>`;
 
   switch (tab) {
@@ -146,12 +168,16 @@ export function renderSheet(
       return album(p);
     case 'war':
       return warBoard(war, p);
+    case 'ranks':
+      return renderRanks(ctx.ranks, ctx.ranksProblem);
+    case 'line':
+      return linePage(ctx.line, ctx.lineProblem);
     case 'dungeons':
-      return renderDungeons(area);
+      return renderDungeons(area, p, ctx);
     case 'career':
       return renderCareer(p);
-    case 'folder':
-      return renderFolder(p);
+    case 'deck':
+      return renderDeck(p);
     case 'library':
       return renderLibrary(p);
     default:
@@ -167,6 +193,7 @@ function head(p: ProfileView, right: string): string {
     <span class="xpwrap"><i style="width:${pct(p.pct)}"></i></span>
     <span class="xp">${p.into}/${p.need} xp</span>
     <span class="wav">${p.wav.toLocaleString()} WAV</span>
+    <span class="chog">${(p.chog ?? 0).toLocaleString()} $CHOG</span>
     <span class="right">${right}</span>
   </div>`;
 }
@@ -176,25 +203,25 @@ function bag(p: ProfileView): string {
     .map(([id, def]) => {
       const n = p.items[id as keyof typeof p.items] ?? 0;
       if (!n) return '';
-      return `<div class="line"><b>${esc(def.name)}</b><span class="x">x${n}</span>
+      return `<div class="line has-art"><img class="item-art" src="/items/item-${id}.svg" alt=""><span class="line-main"><b>${esc(def.name)}</b><span class="x">x${n}</span></span>
         <span class="d">${esc(def.desc)}</span>
         <button data-a="use" data-id="${id}">USE</button></div>`;
     })
     .join('');
   const sig = new Set(p.signatureIds);
-  const chips = p.chips
+  const cards = p.cards
     .slice(0, p.bagCap)
     .map((id) => {
-      const c = chipOf(id);
+      const c = cardOf(id);
       const price = p.sellPrices[id] ?? 0;
       const locked = sig.has(id);
-      return `<span class="chip ${locked ? 'sig' : ''}" title="${esc(c.name)} · ${c.element} · ${c.power}x${c.hits}">
-        ${esc(c.name.slice(0, 13))}${locked ? ' ◆' : price ? ` <em data-a="sell" data-id="${id}">▸${price}</em>` : ''}
+      return `<span class="card ${locked ? 'sig' : ''}" title="${esc(c.name)} · ${c.element} · ${c.power}x${c.hits}">
+        ${cardImg(id, c.element, 'card-art')}${esc(c.name.slice(0, 13))}${locked ? ' ◆' : price ? ` <em data-a="sell" data-id="${id}">▸${price}</em>` : ''}
       </span>`;
     })
     .join('');
   const flags = [p.amp && 'AMP READY', p.ward && 'WARD HELD', p.scanned && 'SCANNED'].filter(Boolean).join(' · ');
-  return `<div class="sheet">${head(p, `bag ${p.chips.length}/${p.bagCap}`)}
+  return `<div class="sheet">${head(p, `bag ${p.cards.length}/${p.bagCap}`)}
     <div class="cols">
       <div>
         <div class="lbl">SUPPLIES</div>
@@ -203,7 +230,7 @@ function bag(p: ProfileView): string {
       </div>
       <div>
         <div class="lbl">CARDS · ◆ belongs to your Chog and cannot be sold</div>
-        <div class="chips">${chips || '<span class="idle">no cards yet</span>'}</div>
+        <div class="cards">${cards || '<span class="idle">no cards yet</span>'}</div>
       </div>
     </div>
     <div class="stats">clears ${p.stats.clears} · storm ${p.stats.stormClears} · nodes ${p.stats.rooms} · areas ${p.stats.areas} · trades ${p.stats.trades} · linked ${p.stats.links} · sightings ${p.stats.sightings} · best ${Math.round(p.stats.bestProgram).toLocaleString()} dmg · chain x${p.stats.bestChain}</div>
@@ -211,13 +238,13 @@ function bag(p: ProfileView): string {
 }
 
 function shop(p: ProfileView): string {
-  const line = (l: { stockId: string; name: string; price: number; desc?: string; klass?: string; element?: string }, kind: 'chip' | 'item'): string =>
-    `<div class="line"><b>${esc(l.name)}</b><span class="x">${l.klass ?? ''}${l.element ? ` ${l.element}` : ''}</span>
+  const line = (l: { stockId: string; name: string; price: number; desc?: string; klass?: string; element?: string }, kind: 'card' | 'item'): string =>
+    `<div class="line has-art">${kind === 'item' ? `<img class="item-art" src="/items/item-${l.stockId}.svg" alt="">` : cardImg(l.stockId, l.element, 'item-art')}<span class="line-main"><b>${esc(l.name)}</b><span class="x">${l.klass ?? ''}${l.element ? ` ${l.element}` : ''}</span></span>
       <span class="d">${esc(l.desc ?? '')}</span>
       <button data-a="buy" data-kind="${kind}" data-id="${l.stockId}">${l.price} WAV</button></div>`;
   return `<div class="sheet">${head(p, `floor factor x${p.shops.factor.toFixed(2)} · turns in ${p.shops.refreshesIn}`)}
     <div class="cols">
-      <div><div class="lbl">CHIP SHOP</div>${p.shops.chips.map((c) => line(c, 'chip')).join('')}</div>
+      <div><div class="lbl">CARD SHOP</div>${p.shops.cards.map((c) => line(c, 'card')).join('')}</div>
       <div><div class="lbl">SUPPLY COUNTER</div>${p.shops.supply.map((c) => line(c, 'item')).join('')}</div>
     </div>
     <div class="hint">prices move with the collection's real volume — a hot floor is an expensive floor</div>
@@ -283,14 +310,23 @@ export function bindSheet(el: HTMLElement, api: SheetApi): void {
   el.querySelectorAll<HTMLElement>('[data-a]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const a = btn.dataset.a ?? '';
+      // `data-id`, not the action's own attribute name. The MAPS tab's travel button used to
+      // carry `data-travel`, so this read an empty id, every region row sent "leave the Line"
+      // instead of "travel to Tolls", and the click did nothing at all with nothing to show for
+      // it. The last line of this function is the part that would have caught it.
       const id = btn.dataset.id ?? '';
-      if (a === 'buy') api.buy(btn.dataset.kind as 'chip' | 'item', id);
+      if (a === 'buy') api.buy(btn.dataset.kind as 'card' | 'item', id);
       else if (a === 'sell') api.sell(id);
       else if (a === 'use') api.use(id);
       else if (a === 'track') api.track(id);
       else if (a === 'dungeon') api.openDungeon(id);
       else if (a === 'step') api.stepArea(id);
       else if (a === 'leave') api.closeArea();
+      else if (a === 'draft') api.takeDraft(id);
+      else if (a === 'shrine') api.shrineRemove(id);
+      // The Line's road buttons. `''` is "leave the Line", which is what the header button sends.
+      else if (a === 'travel') api.travel(id || null);
+      else console.warn('[sheet] no handler for action', a, btn.outerHTML.slice(0, 120));
     });
   });
 }

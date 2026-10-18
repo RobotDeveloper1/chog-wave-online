@@ -1,0 +1,9 @@
+"Five Armies" by Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution (CC-BY).
+Commercial use allowed with credit.
+
+Source page: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN100875
+Direct file: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Five%20Armies.mp3
+
+Used in CHOG Wave Online as duel.mp3 (duel music).
+See docs/MUSIC.md for the slot table and rules.

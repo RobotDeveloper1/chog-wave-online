@@ -1,7 +1,7 @@
-import type { Chip, Element } from './types.ts';
+import type { Card, Element } from './types.ts';
 import type { SectorId } from './wave.ts';
 import type { CollectionVolume } from './anomaly.ts';
-import { CHIP_BY_ID } from './chips.ts';
+import { CARD_BY_ID } from './cards.ts';
 
 /**
  * The economy: WAV credits, a bag, and two shops that are actually connected to the
@@ -10,7 +10,7 @@ import { CHIP_BY_ID } from './chips.ts';
  * There was no reason to win a fight until this existed — loot went into a set and
  * the set had no uses. WAV is the sink-and-source that makes the loop close: clears
  * pay, the shop spends, and the shop's *stock and prices move with the collection's
- * real trading volume*. When the floor is hot, chips are expensive and rare stock
+ * real trading volume*. When the floor is hot, cards are expensive and rare stock
  * appears; when it is dead, the dealer is discounting. That is the same signal that
  * opens anomalies, so one real-world event now drives both the danger and the market.
  */
@@ -91,9 +91,9 @@ export function rarityBias(volume: Pick<CollectionVolume, 'mon'>): number {
   return clamp(Math.log10(1 + ratio) * 0.62, 0, 0.85);
 }
 
-const CLASS_MULT: Record<NonNullable<Chip['klass']>, number> = { S: 1, M: 1.7, G: 2.6 };
+const CLASS_MULT: Record<NonNullable<Card['klass']>, number> = { S: 1, M: 1.7, G: 2.6 };
 
-export function chipValue(c: Chip): number {
+export function cardValue(c: Card): number {
   // Bleeding the Wave Index is a bonus, so it prices up — but a void card's *negative*
   // drain must not drag the value below its raw damage, which is what happened when
   // the factor was allowed to go sub-zero and every void card hit the floor price.
@@ -103,13 +103,13 @@ export function chipValue(c: Chip): number {
   return Math.round(raw * (CLASS_MULT[c.klass ?? 'S'] ?? 1) * 0.42);
 }
 
-export function chipPrice(c: Chip, factor: number): number {
-  return Math.max(15, Math.round(chipValue(c) * factor));
+export function cardPrice(c: Card, factor: number): number {
+  return Math.max(15, Math.round(cardValue(c) * factor));
 }
 
 /** Selling always loses you money — otherwise the shop is an XP machine. */
-export function sellPrice(c: Chip): number {
-  return Math.max(6, Math.round(chipValue(c) * 0.45));
+export function sellPrice(c: Card): number {
+  return Math.max(6, Math.round(cardValue(c) * 0.45));
 }
 
 export function itemPrice(def: ItemDef, factor: number): number {
@@ -121,20 +121,20 @@ export function itemPrice(def: ItemDef, factor: number): number {
 // ---------------------------------------------------------------------------
 
 export interface ShopLine {
-  kind: 'chip' | 'item';
-  /** Chip id or ItemId. */
+  kind: 'card' | 'item';
+  /** Card id or ItemId. */
   stockId: string;
   name: string;
   price: number;
   element?: Element;
-  klass?: NonNullable<Chip['klass']>;
+  klass?: NonNullable<Card['klass']>;
   desc?: string;
   /** Sold out for the day once bought; the shop is a daily rhythm, not a menu. */
   limited: boolean;
 }
 
 export interface Shop {
-  id: 'chips' | 'supply';
+  id: 'cards' | 'supply';
   name: string;
   /** Rotates on this seed, so the shop refreshes on a schedule the player can learn. */
   seed: number;
@@ -170,7 +170,7 @@ export function refreshLabel(now: number): string {
 }
 
 /**
- * The chip dealer. Six lines: three commons, two mid, one high roll that only
+ * The card dealer. Six lines: three commons, two mid, one high roll that only
  * appears when the floor is busy — so the anomaly-driven market is visible as
  * inventory, not just as a number on a ticker.
  */
@@ -178,8 +178,8 @@ export function stockForChips(seed: number, volume: Pick<CollectionVolume, 'mon'
   const factor = priceFactor(volume);
   const bias = rarityBias(volume);
   // Power ordering gives the tiers real meaning instead of a random strong card.
-  const ranked = [...CHIP_BY_ID.values()].sort((a, b) => a.power * a.hits - b.power * b.hits);
-  const fromBand = (q: number, salt: number): Chip => {
+  const ranked = [...CARD_BY_ID.values()].sort((a, b) => a.power * a.hits - b.power * b.hits);
+  const fromBand = (q: number, salt: number): Card => {
     const center = clamp(Math.round(q * (ranked.length - 1)), 0, ranked.length - 1);
     const spread = Math.max(2, Math.round(ranked.length * 0.11));
     const offset = Math.floor(mix(seed * 31 + salt * 7) * (spread * 2 + 1)) - spread;
@@ -190,10 +190,10 @@ export function stockForChips(seed: number, volume: Pick<CollectionVolume, 'mon'
   bands.forEach((q, i) => {
     const c = fromBand(Math.min(1, q + bias * 0.15), i);
     lines.push({
-      kind: 'chip',
+      kind: 'card',
       stockId: c.id,
       name: c.name,
-      price: chipPrice(c, factor),
+      price: cardPrice(c, factor),
       element: c.element,
       klass: c.klass ?? 'S',
       desc: `${c.power} x${c.hits}${c.effect !== 'none' ? ` ${c.effect}` : ''}`,
@@ -221,7 +221,7 @@ export function stockForSupply(seed: number, volume: Pick<CollectionVolume, 'mon
 
 export function makeShops(seed: number, volume: Pick<CollectionVolume, 'mon'>, sector: SectorId, now: number): Shop[] {
   return [
-    { id: 'chips', name: 'CHIP SHOP', seed, factor: priceFactor(volume), lines: stockForChips(seed, volume, sector), refreshesIn: refreshLabel(now) },
+    { id: 'cards', name: 'CHIP SHOP', seed, factor: priceFactor(volume), lines: stockForChips(seed, volume, sector), refreshesIn: refreshLabel(now) },
     { id: 'supply', name: 'SUPPLY COUNTER', seed, factor: priceFactor(volume), lines: stockForSupply(seed, volume), refreshesIn: refreshLabel(now) },
   ];
 }
@@ -254,16 +254,16 @@ export function wavForChest(areaTier: number, luck = 0.5): number {
 }
 
 /** Selling a Chog's own signature card is not allowed — the token owns it, not you. */
-export function canSell(c: Chip, signatureIds: string[]): boolean {
+export function canSell(c: Card, signatureIds: string[]): boolean {
   return !signatureIds.includes(c.id);
 }
 
 export type BuyResult = { ok: true; bag: Bag; wav: number; line: ShopLine } | { ok: false; reason: string };
 
-/** Buy a stock line. Chips land wherever the caller wants them; items go in the bag. */
+/** Buy a stock line. Cards land wherever the caller wants them; items go in the bag. */
 export function buy(line: ShopLine, bag: Bag, ownedChips: string[]): BuyResult {
   if (bag.wav < line.price) return { ok: false, reason: 'not enough WAV' };
-  if (line.kind === 'chip' && line.limited && ownedChips.includes(line.stockId)) {
+  if (line.kind === 'card' && line.limited && ownedChips.includes(line.stockId)) {
     return { ok: false, reason: 'already carrying that card' };
   }
   if (line.kind === 'item') {
@@ -271,4 +271,18 @@ export function buy(line: ShopLine, bag: Bag, ownedChips: string[]): BuyResult {
     if (def?.unique && itemCount(bag, def.id) > 0) return { ok: false, reason: 'already reserved' };
   }
   return { ok: true, bag: { ...bag, wav: bag.wav - line.price }, wav: line.price, line };
+}
+
+/** What a fresh token carries in $CHOG: paper money until deposits exist. */
+export const STARTING_CHOG = 1000;
+/** The team's cut of every wagered pot, in basis points. */
+export const WAGER_RAKE_BPS = 500;
+/** A wager outside this is a typo, not a bet. */
+export const MAX_WAGER = 1_000_000;
+
+/** Split a matched stake into the pot, the rake and the prize. One formula, both sides. */
+export function wagerPayout(stake: number): { pot: number; rake: number; prize: number } {
+  const pot = Math.max(0, Math.floor(stake)) * 2;
+  const rake = Math.floor((pot * WAGER_RAKE_BPS) / 10_000);
+  return { pot, rake, prize: pot - rake };
 }

@@ -73,7 +73,7 @@ export interface Panel {
 export interface Shot {
   id: number;
   owner: string;
-  chipId: string;
+  cardId: string;
   element: Element;
   cls: CardClass;
   kind: CardKind;
@@ -109,6 +109,10 @@ export interface Hazard {
    * player for standing on the one file the attack never looked at.
    */
   on: string[];
+  /** Who fired it. Null is the anomaly; a body id is a rival's program in PvP. */
+  owner: string | null;
+  /** Share of the landed damage paid back to the owner. DRAIN cards, PvP only. */
+  drain: number;
 }
 
 export interface WaveField {
@@ -116,28 +120,32 @@ export interface WaveField {
   cols: number;
   boss: FieldBody;
   shots: Shot[];
-  /** The warning currently on the floor, if any. This is the counter-hit window. */
-  hazard: Hazard | null;
+  /** The warnings on the floor: one at most outside PvP, one per side inside it. */
+  hazards: Hazard[];
   /** A file the anomaly has walled off: cards anchored on it are absorbed. */
   blocked: number | null;
 }
 
 export type FieldEvent =
-  | { type: 'shot-fired'; owner: string; chipId: string; files: number[]; damage: number; counter: boolean; cls: CardClass; kind: CardKind; element: Element }
-  | { type: 'hit'; owner: string; chipId: string; damage: number; counter: boolean; weak: number; chain: number; element: Element; cls: CardClass; kind: CardKind }
-  | { type: 'miss'; owner: string; chipId: string; files: number[] }
-  | { type: 'blocked'; owner: string; chipId: string; file: number }
+  | { type: 'shot-fired'; owner: string; cardId: string; files: number[]; damage: number; counter: boolean; cls: CardClass; kind: CardKind; element: Element }
+  | { type: 'hit'; owner: string; cardId: string; damage: number; counter: boolean; weak: number; chain: number; element: Element; cls: CardClass; kind: CardKind }
+  | { type: 'miss'; owner: string; cardId: string; files: number[] }
+  | { type: 'blocked'; owner: string; cardId: string; file: number }
   | { type: 'telegraph'; panels: Panel[]; files: number[]; ms: number; move: string; label: string; damage: number; atFile: number }
   | { type: 'strike'; panels: Panel[]; files: number[]; move: string; label: string }
   | { type: 'took-hit'; owner: string; damage: number; file: number }
   | { type: 'dodge'; owner: string; file: number }
   | { type: 'drain'; owner: string; amount: number }
   | { type: 'stun'; owner: string; ms: number }
+  | { type: 'burn'; owner: string; ticks: number; damage: number }
+  | { type: 'burn-tick'; damage: number; left: number }
+  | { type: 'freeze'; owner: string; ms: number }
+  | { type: 'barrier'; owner: string; charges: number }
+  | { type: 'ward'; owner: string; left: number }
   | { type: 'knock'; owner: string; file: number }
   | { type: 'guard-break'; owner: string }
   | { type: 'bonus-card'; owner: string }
-  | { type: 'buster'; owner: string; damage: number; charged: boolean }
-  | { type: 'custom'; owner: string; open: boolean }
+  | { type: 'hand'; owner: string; open: boolean }
   | { type: 'phase'; phase: number }
   | { type: 'boss-down' }
   | { type: 'down'; owner: string; left: number }
@@ -186,7 +194,7 @@ export function makeBoss(args: { hp: number; element: Element; file: number; col
     team: 'boss',
     file: clampFile(args.file, args.cols),
     // The anomaly holds the near edge of its own half, so every part of a card's footprint
-    // can reach it: what the Custom Screen promises is what lands.
+    // can reach it: what the Hand promises is what lands.
     lane: ENEMY_LANES - 1,
     hp: args.hp,
     maxHp: args.hp,
@@ -195,7 +203,7 @@ export function makeBoss(args: { hp: number; element: Element; file: number; col
 }
 
 export function makeField(boss: FieldBody, cols: number): WaveField {
-  return { cols: clampCols(cols), boss, shots: [], hazard: null, blocked: null };
+  return { cols: clampCols(cols), boss, shots: [], hazards: [], blocked: null };
 }
 
 /**
@@ -212,6 +220,12 @@ export function widen(field: WaveField, cols: number): number {
 
 /** Is this panel in a player's half? */
 export const isPlayerLane = (lane: number): boolean => lane >= FIRST_PLAYER_LANE;
+
+/** A 1..4 phase from any health bar — the boss's, or a rival's across a PvP field. */
+export const phaseOf = (hp: number, maxHp: number): number => {
+  const frac = 1 - hp / Math.max(1, maxHp);
+  return Math.max(1, Math.min(4, 1 + Math.floor(frac * 4)));
+};
 
 /** The anomaly's phase, 1..4: a dying boss swings sooner. */
 export function bossPhase(boss: FieldBody): number {

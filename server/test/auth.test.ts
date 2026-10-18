@@ -84,6 +84,7 @@ let Auth: typeof import('../src/auth.ts').Auth;
 let Ownership: typeof import('../src/owners.ts').Ownership;
 let ownership: typeof import('../src/owners.ts').ownership;
 let holdingsView: typeof import('../src/wallet.ts').holdingsView;
+let verifyPrivyLogin: typeof import('../src/privy.ts').verifyPrivyLogin;
 
 const NONCE_MS = 5 * 60 * 1000;
 const SESSION_MS = 6 * 60 * 60 * 1000;
@@ -101,6 +102,7 @@ beforeAll(async () => {
   ({ Auth } = await import('../src/auth.ts'));
   ({ Ownership, ownership } = await import('../src/owners.ts'));
   ({ holdingsView } = await import('../src/wallet.ts'));
+  ({ verifyPrivyLogin } = await import('../src/privy.ts'));
 });
 
 afterAll(() => {
@@ -248,7 +250,15 @@ describe('sign-in', () => {
     const r = await signIn(auth, account());
     if (!r.ok) throw new Error(r.reason);
     expect(r.token).not.toContain(r.address);
-    expect(auth.addressFor(`${r.token.slice(0, -1)}0`)).toBeNull();
+    // Flip the last character to something it demonstrably is not. This used to write `'0'` over
+    // it unconditionally, which is a no-op for one hex token in sixteen — measured at 6.18% over
+    // 200k draws — so the suite failed that many times for the wrong reason: not because the
+    // forged token was accepted, but because the forged token was the real one.
+    const last = r.token.slice(-1);
+    const other = last === '0' ? '1' : '0';
+    const forged = `${r.token.slice(0, -1)}${other}`;
+    expect(forged).not.toBe(r.token);
+    expect(auth.addressFor(forged)).toBeNull();
     expect(auth.addressFor(undefined)).toBeNull();
     expect(auth.addressFor('')).toBeNull();
   });
@@ -406,5 +416,28 @@ describe('the picker’s cards', () => {
     expect(view.ready).toBe(false);
     expect(view.tokens.length).toBe(2);
     expect(view.coverage).toBeLessThanOrEqual(GENESIS_SUPPLY);
+  });
+});
+
+describe('privy adoption', () => {
+  it('hands a verified address a session with no signature of its own', () => {
+    const auth = new Auth(new Ownership());
+    const w = account();
+    const token = auth.adoptPrivy(w.address);
+    expect(auth.addressFor(token)).toBe(w.address.toLowerCase());
+    auth.signOut(token);
+    expect(auth.addressFor(token)).toBeNull();
+  });
+
+  it('refuses an empty-handed login', async () => {
+    expect(await verifyPrivyLogin('', '')).toMatchObject({ ok: false });
+    expect(await verifyPrivyLogin(null, null)).toMatchObject({ ok: false });
+  });
+
+  it('says plainly when privy was never configured', async () => {
+    // No PRIVY_APP_ID/SECRET in this process: the refusal is the feature.
+    const r = await verifyPrivyLogin('aaa', 'bbb');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain('not configured');
   });
 });

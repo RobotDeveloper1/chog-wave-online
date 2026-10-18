@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { reduceMotion } from '../settings.ts';
 
 /**
  * The 2.5D camera.
@@ -21,7 +22,7 @@ import * as THREE from 'three';
  * both frame the same part of the world around the player.
  */
 
-export type RigName = 'street' | 'indoor' | 'battle' | 'dungeon';
+export type RigName = 'street' | 'indoor' | 'battle' | 'dungeon' | 'line';
 
 export interface Rig {
   /** Vertical field of view in degrees. Narrow on purpose. */
@@ -61,6 +62,15 @@ export const RIGS: Record<RigName, Rig> = {
   // a wall. This one rides high enough to look *over* the rock into the next room,
   // and follows the chog through the corridor so the next doorway is always in view.
   dungeon: { fov: 36, pitch: 34, span: 30, minWidth: 34, lead: 1.2, frame: 0.18, focusY: 2.2, follow: true, zoomable: true },
+  // Open country. Follows and zooms like the street, but wider and pitched a little flatter so the
+// horizon stays in frame — at 44° looking down with a 15° half-lens the horizon sits off the top
+  // of the screen and the whole shot becomes floor.
+  //
+  // `frame` is near zero, unlike the dungeon's 0.18. A dungeon is a corridor with one way to go
+  // and wants the camera looking into it; here the road is under your feet and the terrain's own
+  // relief does the work of showing depth. Pushing the aim ten units forward put the Chog off
+  // the bottom edge of the frame on flat ground before the terrain even came into it.
+  line: { fov: 30, pitch: 38, span: 40, minWidth: 48, lead: 3.2, frame: 0.04, focusY: 1.5, follow: true, zoomable: true },
 };
 
 const DEG = Math.PI / 180;
@@ -119,6 +129,8 @@ export class CameraDirector {
   private ready = false;
 
   /** The pose the last frame actually drew, which a rig change blends *from*. */
+  /** The ground height under the player, so ocusY means "above the floor" and not "above y=0". */
+  private ground = 0;
   private shown: Pose = { pos: new THREE.Vector3(), look: new THREE.Vector3(), fov: 30 };
   private from: Pose | null = null;
   private blend = 1;
@@ -198,6 +210,7 @@ export class CameraDirector {
   }
 
   shake(amplitude: number, seconds: number): void {
+    if (reduceMotion()) return;
     this.shakeAmp = Math.max(this.shakeAmp * (this.shakeLeft / Math.max(0.001, this.shakeTotal)), amplitude);
     this.shakeLeft = this.shakeTotal = Math.max(this.shakeLeft, seconds);
   }
@@ -218,7 +231,7 @@ export class CameraDirector {
    * only engages while moving, so standing still settles on the Chog instead of
    * drifting off to one side.
    */
-  follow(x: number, z: number, facing: number, moving: boolean, dt: number): void {
+  follow(x: number, z: number, facing: number, moving: boolean, dt: number, groundY = 0): void {
     const rig = this.active();
     if (!rig.follow) return;
     const want = moving ? rig.lead : 0;
@@ -227,6 +240,7 @@ export class CameraDirector {
     // lead because the screen is wide and shallow.
     this.target.x = x + Math.sin(facing) * this.lead;
     this.target.z = z + Math.cos(facing) * this.lead * 0.45;
+    this.ground = groundY;
   }
 
   /** The span the screen is actually framing, after aspect and zoom. */
@@ -263,10 +277,22 @@ export class CameraDirector {
     const far = (rig.frame * span) / sp;
     const ax = fx - Math.sin(yaw) * far;
     const az = fz - Math.cos(yaw) * far;
-    const look = new THREE.Vector3(ax, rig.focusY, az);
+    // **`focusY` is above the ground under the player, not above the world's zero.**
+    //
+    // Every rig that existed before the Line was written for a flat place at y = 0 — the city
+    // and all six dungeons — so an absolute 1.1 meant "chest height off the pavement". The Line
+    // is not flat: its terrain runs 0 to 14 units. Computed off the rig's own numbers, a player
+    // standing on ground 6 units up was framed at **480% of the screen height** — entirely off
+    // the top — because the camera was still aiming at y = 1.6, which by then was inside the
+    // hillside. The player saw dirt, which is what "the map is empty" turned out to be.
+    //
+    // So the height the rig frames is relative to where the player is standing, and any place
+    // with hills gets this for free.
+    const eye = this.ground + rig.focusY;
+    const look = new THREE.Vector3(ax, eye, az);
     const pos = new THREE.Vector3(
       ax + Math.sin(yaw) * dist * cp,
-      rig.focusY + dist * sp,
+      eye + dist * sp,
       az + Math.cos(yaw) * dist * cp,
     );
     return { pos, look, fov: rig.fov };

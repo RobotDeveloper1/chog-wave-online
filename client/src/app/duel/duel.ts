@@ -1,16 +1,18 @@
 import * as THREE from 'three';
-import { SF, type DuelStartMsg, type DuelTickMsg, type DuelEndMsg, type DuelPickMsg, type DuelCoverMsg, type DuelProgramMsg, type DuelBusterMsg, type DuelMsg, type SectorId } from '@chog/shared';
+import { ENCOUNTER_BY_ID, SF, type DuelStartMsg, type DuelTickMsg, type DuelEndMsg, type DuelPickMsg, type DuelCoverMsg, type DuelProgramMsg, type DuelMsg, type SectorId } from '@chog/shared';
 import { sfx } from '../../audio.ts';
 import { net } from '../../net.ts';
 import type { DistrictArt } from '../art.ts';
-import type { Chog } from '../chogLoader.ts';
+import { loadChogNFT, type Chog } from '../chogLoader.ts';
 import type { Hud } from '../hud/hud.ts';
 import type { Stage, DuelMood } from '../stage.ts';
 import { Arena } from './arena.ts';
 import { buildBoss, type BossAvatar } from './boss.ts';
+import { buildCritter } from '../line/critters.ts';
 import { Floaters } from './fx.ts';
 import { ELEMENT_HEX, ELEMENT_PALETTES, FILES, PALETTES, clamp, easeOut, fileX, laneZ } from './theme.ts';
 import { DuelUi, escapeHtml } from './ui.ts';
+import { reduceMotion } from '../../settings.ts';
 
 export interface DuelHost {
   stage: Stage;
@@ -25,9 +27,9 @@ export interface DuelHost {
   say: (text: string, cls?: string) => void;
 }
 
-type Mode = 'anomaly' | 'train' | 'node';
+type Mode = 'anomaly' | 'train' | 'node' | 'pvp';
 type Message = DuelStartMsg | DuelTickMsg | DuelEndMsg | DuelPickMsg | DuelCoverMsg
-  | DuelProgramMsg | DuelBusterMsg | { kind: 'refused'; reason?: string };
+  | DuelProgramMsg | { kind: 'refused'; reason?: string };
 
 function look(bloom = 0.4): DuelMood['look'] {
   return { bloom: { strength: bloom, radius: 0.5, threshold: 0.86 }, exposure: 0.95,
@@ -69,6 +71,61 @@ const ELEMENT_MOODS: Record<string, DuelMood> = {
  */
 export const DUEL_CAM = { az: 90, el: 34, half: 3.85, minDist: 16, fz: -0.1, fy: 1.15, up: 0.92, fov: 50, chog: 1.45, roomZoom: 0.18, roomShift: 0.23 };
 const CHOG_FACING = Math.PI - 0.5;
+/** The rival faces down-screen, toward the player. */
+const RIVAL_FACING = 0.5;
+/** Same manifests as the shell's MODEL: one collection, one set of parts. */
+const RIVAL_MODEL = {
+  baseUrl: '/models/chog-base.glb',
+  partsUrl: '/models/trait-parts.json',
+  colorsUrl: '/models/trait-colors.json',
+  skinsUrl: '/models/skins.json',
+};
+
+/**
+ * A Chog wearing the boss avatar's contract, so the duel loop never learns the
+ * difference: position tracks the rival view, hurt/lunge play one-shots, death tips over.
+ */
+function chogAsAvatar(chog: Chog): BossAvatar {
+  let dead = false;
+  let targetX = chog.root.position.x;
+  let hitAt = -Infinity;
+  let pose: 'idle' | 'hit' = 'idle';
+  return {
+    root: chog.root,
+    update(dt: number) {
+      chog.root.position.x += (targetX - chog.root.position.x) * (1 - Math.exp(-dt * 10));
+      chog.setSpeed(Math.abs(targetX - chog.root.position.x) > 0.05 ? 1 : 0);
+      chog.update(dt);
+      if (dead) {
+        chog.root.rotation.z += (1.25 - chog.root.rotation.z) * (1 - Math.exp(-dt * 7));
+        return;
+      }
+      const next = performance.now() - hitAt < 350 ? 'hit' : 'idle';
+      if (next !== pose) { pose = next; chog.play(next); }
+    },
+    moveTo(x: number) { targetX = x; },
+    hurt() { hitAt = performance.now(); chog.impulse(); },
+    lunge() { chog.impulse(0.4); },
+    die() { dead = true; },
+    get dead() { return dead; },
+    eye() { return chog.root.position.clone().add(new THREE.Vector3(0, 1.6, 0)); },
+    dispose() { chog.root.parent?.remove(chog.root); },
+  };
+}
+
+/**
+ * Why the body cannot step, in a sentence.
+ *
+ * `frozen` on the wire covers three different states — the Hand is open, a program is in flight,
+ * the Hand is holding you — and they read very differently to a player deciding what to
+ * press next. The wire carries one boolean, so the reason is reconstructed from the rest of the
+ * view. When the reason is not in the wire yet, the message still has to be actionable.
+ */
+// Only a program in flight locks the boots. An open screen no longer does: the server
+// steps the body out of the safe room instead of refusing, so this message only ever
+// fires for the firing state (`frozen && !open`).
+const frozenWhy = (_you: SF.YouView): string =>
+  'A program is firing — movement is locked for a moment.';
 const KEY_DIR: Record<string, SF.StepDir> = {
   a: 'left', arrowleft: 'left', d: 'right', arrowright: 'right',
   w: 'back', arrowup: 'back', s: 'forward', arrowdown: 'forward',
@@ -86,13 +143,17 @@ export class Duel {
   private started = false;
   private disposed = false;
   private leaving = false;
+  /** The last freeze reason this client told the player, so one freeze is one notice. */
+  private toldFreeze: string | null = null;
   private readonly off: (() => void)[] = [];
   private readonly timers = new Set<number>();
-  private readonly busterSources = new Set<string>();
   private readonly keys = new Map<string, number>();
   private coverTarget: string | null = null;
   private coverSource: string | null = null;
   private files = FILES;
+  /** PvP side: side 1 sees every lane mirrored, self-near. Events arrive absolute. */
+  private mySide: 0 | 1 = 0;
+  private startMsg: DuelStartMsg | null = null;
   private t = 0;
   private myX = 0;
   private myZ = 0;
@@ -124,9 +185,8 @@ export class Duel {
       fov: stage.camera.fov, near: stage.camera.near, far: stage.camera.far };
     this.ui = new DuelUi(host.hud.top, host.hud.csEl, {
       step: (dir) => this.step(dir), pick: (cell) => this.pick(cell),
-      undo: () => this.customAction('undo'), clear: () => this.customAction('clear'),
-      execute: () => this.customAction('execute'),
-      buster: (down, source) => this.buster(down, source),
+      undo: () => this.handAction('undo'), clear: () => this.handAction('clear'),
+      execute: () => this.handAction('execute'),
       cover: (target, source) => this.cover(target, source),
       leave: () => this.askLeave(), close: () => this.finish(),
     });
@@ -143,7 +203,7 @@ export class Duel {
     window.addEventListener('blur', this.releaseControls);
     document.addEventListener('visibilitychange', this.onVisibility);
     // A node is already entered by the server. The shell creates us while dispatching its start.
-    if (this.mode !== 'node') this.send({ action: 'enter', mode: this.mode });
+    if (this.mode !== 'node' && this.mode !== 'pvp') this.send({ action: 'enter', mode: this.mode });
   }
 
   get active(): boolean { return !this.disposed; }
@@ -159,6 +219,7 @@ export class Duel {
     switch (m.kind) {
       case 'start': {
         if (this.phase !== 'wait') return;
+        this.startMsg = m;
         this.training = m.view.boss.training;
         if (!this.arena) this.build(m.view);
         this.phase = 'field';
@@ -180,13 +241,7 @@ export class Duel {
         if (!m.ok) this.ui.notice('The server could not execute this screen.');
         // Programs do not launch projectiles here; shot-fired events own each actual shot.
         break;
-      case 'buster':
-        if (!m.ok) {
-          this.busterSources.clear();
-          this.ui.setBusterHeld(false);
-          this.ui.notice('Buster unavailable: wait for the field to unlock.');
-        }
-        break;
+
       case 'cover':
         if (!m.ok) {
           this.coverTarget = this.coverSource = null;
@@ -219,11 +274,19 @@ export class Duel {
     this.files = v.boss.cols;
     this.arena.setFiles(this.files);
     stage.scene.add(this.arena.group);
-    this.boss = buildBoss(v.boss.archetype, v.boss.element, v.boss.tier);
-    this.arena.group.add(this.boss.root);
-    this.boss.root.position.x = fileX(v.boss.file, this.files);
-    this.boss.moveTo(this.boss.root.position.x);
-    this.boss.root.position.z = laneZ(v.boss.lane);
+    // A Line fight shows the same animal that was standing on the road: the session id
+    // carries the encounter (`line:tolls.1`), and the roster, the region and the kind all
+    // follow from it. Everywhere else — anomalies, dungeons, the Training Sim — the signal
+    // keeps its mask.
+    const lineEnc = v.session.startsWith('line:') ? ENCOUNTER_BY_ID.get(v.session.slice(5)) : undefined;
+    this.boss = v.boss.archetype === 'rival' ? null : lineEnc
+      ? buildCritter(lineEnc.region, lineEnc.kind, v.boss.element, v.session, 'duel')
+      : buildBoss(v.boss.archetype, v.boss.element, v.boss.tier);
+    if (this.boss) this.arena.group.add(this.boss.root);
+    if (this.boss) this.boss.root.position.x = fileX(v.boss.file, this.files);
+    if (this.boss) this.boss.moveTo(this.boss.root.position.x);
+    if (this.boss) this.boss.root.position.z = laneZ(v.boss.lane);
+    if (v.boss.archetype === 'rival') void this.buildRival();
     this.myX = fileX(v.you?.file ?? 1, this.files);
     this.myZ = laneZ(v.you?.lane ?? SF.LANES - 1);
     chog.root.visible = true;
@@ -249,9 +312,52 @@ export class Duel {
     // across to the duel pose and every frame of that swing is black void — the player
     // reads it as the screen dying when the anomaly hits. Cut, do not travel.
     stage.snap();
+    // The warmup renders below pose the duel camera, which needs the first view.
+    this.view = v;
+    this.prewarm();
+  }
+
+  /**
+   * Warm every GL program the duel can need before the first presented frame.
+   *
+   * Pooled effects (rings, marks) are born invisible, shots are born per trigger,
+   * and the first of each used to compile its program mid-fight — on D3D a mid-fight
+   * compile stalls the WebGL surface and the field flashes black for a beat right on the
+   * dodge or the strike. One of everything is built and really rendered here (a compile
+   * kick can still link lazily, a render cannot), the warmup shots are cleared, and the
+   * true state renders over it — all synchronously inside `build`, so no presented frame
+   * ever shows the warmup state.
+   */
+  private prewarm(): void {
+    if (!this.arena) return;
+    const { stage } = this.host;
+    // Shots are born per trigger, so none exist yet — and the first shot of each element
+    // used to compile its program mid-fight. Fire one of every element plus the ring and
+    // the burst the dodge plays, render them warm, then clear the shots before the true
+    // state renders: nothing warmed is ever presented.
+    const at = new THREE.Vector3(0, 0.6, 0);
+    const white = new THREE.Color(1.6, 1.6, 1.6);
+    for (const el of ['frost', 'wave', 'prism', 'void', 'volt', 'burn', 'none']) {
+      this.arena.shots.fire({ cardId: `warm-${el}`, element: el, from: at, to: at, big: false, fused: false, flight: 60 });
+    }
+    this.arena.rings.spawn(at, white, 0.01, 0.01, true);
+    this.arena.particles.burst(at, white, 1, 0.1, 0.01, 0.01);
+    const hidden: THREE.Object3D[] = [];
+    this.arena.group.traverse((o) => {
+      if (!o.visible) { o.visible = true; hidden.push(o); }
+    });
+    try {
+      stage.render(1 / 60);
+    } catch { /* a failed warmup must never block entering the field */ }
+    this.arena.shots.clear();
+    for (const o of hidden) o.visible = false;
+    try {
+      stage.render(1 / 60);
+    } catch { /* a failed warmup must never block entering the field */ }
   }
 
   private applyView(v: SF.DuelView, first = false): void {
+    this.mySide = v.you?.side ?? 0;
     const previous = this.view;
     this.previousPlayers = previous?.players ?? [];
     this.view = v;
@@ -274,10 +380,12 @@ export class Duel {
     this.warn = v.hazard ? { hazard: v.hazard, at: performance.now() } : null;
     this.arena?.setTelegraph(v.hazard?.panels ?? null);
     this.ui.setView(v);
-    this.host.hud.deck.classList.toggle('customopen', !!v.you?.custom);
-    if (!previous?.you?.custom && v.you?.custom) sfx.customOpen();
-    if (previous?.you?.custom && !v.you?.custom) sfx.customClose();
-    if (!v.you || v.you.custom || v.you.down || v.you.frozen) this.releaseControls();
+    this.host.hud.deck.classList.toggle('handopen', !!v.you?.hand);
+    if (!previous?.you?.hand && v.you?.hand) sfx.handOpen();
+    if (previous?.you?.hand && !v.you?.hand) sfx.handClose();
+    // The D-pad survives an open Hand (seamless movement); it is only released when the
+    // boots are truly locked — down, or a program in flight (`frozen && !open`).
+    if (!v.you || v.you.down || (v.you.frozen && !v.you.hand?.open)) this.releaseControls();
     if (this.coverTarget && (previous?.you?.revive && !v.you?.revive
       || !v.players.some((p) => p.id === this.coverTarget && p.down))) {
       this.coverTarget = this.coverSource = null;
@@ -300,21 +408,39 @@ export class Duel {
     this.floaters.add(at, escapeHtml(text), cls, life);
   }
 
+  /**
+   * Play the field's events.
+   *
+   * Each one is isolated. These are the only place where a number the server sent becomes a
+   * position on the screen, and a single malformed event used to take the whole frame with it —
+   * which, in the old frame order, meant the render loop stopped and the canvas went black for the
+   * rest of the session. A bad event now costs its own presentation.
+   */
   private applyEvents(events: SF.FieldEvent[]): void {
     for (const e of events) {
-      this.ui.event(e);
-      const mine = 'owner' in e && e.owner === this.view?.you?.id;
+      try {
+        this.ui.event(e);
+        const mine = 'owner' in e && e.owner === this.view?.you?.id;
+        this.playEvent(e, mine);
+      } catch (err) {
+        console.warn(`[duel] event ${e.type} failed to play`, err);
+      }
+    }
+  }
+
+  private playEvent(e: SF.FieldEvent, mine: boolean): void {
+    if (this.disposed) return;
       switch (e.type) {
         case 'shot-fired': {
           const from = this.bodyPoint(e.owner, 1.5);
           const to = this.bossPoint();
           to.x = fileX(e.files.includes(this.view!.boss.file) ? this.view!.boss.file : (e.files[0] ?? this.view!.boss.file), this.files);
-          const key = `${e.owner}:${e.chipId}`;
+          const key = `${e.owner}:${e.cardId}`;
           const id = `sf-shot-${++this.shotSerial}`;
           const queue = this.shots.get(key) ?? [];
           queue.push(id);
           this.shots.set(key, queue);
-          this.arena?.shots.fire({ chipId: id, element: e.element, from, to,
+          this.arena?.shots.fire({ cardId: id, element: e.element, from, to,
             big: e.cls !== 'standard', fused: false, flight: SF.SHOT_FLIGHT_MS / 1000 });
           sfx.shot(e.element);
           if (mine) this.animate('attack');
@@ -322,23 +448,30 @@ export class Duel {
           break;
         }
         case 'hit':
-          this.resolveShot(e.owner, e.chipId, { hit: true, damage: e.damage, weak: e.weak, chain: e.chain });
+          this.resolveShot(e.owner, e.cardId, { hit: true, damage: e.damage, weak: e.weak, chain: e.chain });
           this.landed(e.damage, e.weak, e.chain, e.element, mine);
           if (e.counter) this.floater(this.bossPoint(1.4), 'COUNTER', 'chain');
           break;
         case 'miss':
-          this.resolveShot(e.owner, e.chipId, { hit: false });
+          this.resolveShot(e.owner, e.cardId, { hit: false });
           this.floater(this.bossPoint(), 'MISS', 'miss');
           break;
         case 'blocked':
-          this.resolveShot(e.owner, e.chipId, { hit: false, blocked: true });
+          this.resolveShot(e.owner, e.cardId, { hit: false, blocked: true });
           this.floater(this.bossPoint(), 'BLOCKED', 'miss');
           break;
         case 'telegraph':
           sfx.warn();
           break;
         case 'strike':
-          for (const p of e.panels) this.arena?.strike(p);
+          // Strikes read through the panel pulse plus a red ring per struck panel: the
+          // beam quads retired here flashed the field black on this machine every time
+          // they activated, and every bisect round without them stayed clean.
+          const ml = this.mySide === 1 ? (lane: number): number => SF.LANES - 1 - lane : (lane: number): number => lane;
+          for (const p of e.panels) {
+            this.arena?.flash(p.file, ml(p.lane), 1.0);
+            this.arena?.rings.spawn(new THREE.Vector3(fileX(p.file, this.files), 0.5, laneZ(ml(p.lane))), new THREE.Color(1.5, 0.3, 0.4), 3.5, 0.5, false);
+          }
           this.boss?.lunge();
           this.shake = Math.max(this.shake, 0.35);
           sfx.strike();
@@ -353,29 +486,27 @@ export class Duel {
           }
           this.arena?.particles.burst(this.bodyPoint(e.owner, 1.2), new THREE.Color(2.4, 0.4, 0.5), 22, 6, 0.6, 0.26);
           break;
-        case 'dodge':
-          this.floater(this.bodyPoint(e.owner), 'DODGED', 'dodge');
-          if (mine) sfx.dodge();
-          break;
-        case 'buster': {
-          const from = this.bodyPoint(e.owner, 1.4);
-          const to = this.bossPoint();
-          const body = this.view?.players.find((p) => p.id === e.owner);
-          to.x = fileX(body?.file ?? this.view?.you?.file ?? 1, this.files);
-          const id = `sf-buster-${++this.shotSerial}`;
-          this.arena?.shots.fire({ chipId: id, element: 'prism', from, to, big: e.charged, fused: false, flight: 0.16 });
-          this.arena?.shots.resolve(id, { hit: e.damage > 0, damage: e.damage });
-          if (e.damage > 0) this.landed(e.damage, 1, 0, 'prism', mine);
-          else this.floater(to, 'BUSTER MISS', 'miss');
-          if (mine) this.animate('attack');
-          sfx.shot('prism');
-          break;
+      case 'dodge': {
+        this.floater(this.bodyPoint(e.owner), 'DODGED', 'dodge');
+        // A ring at the body, so the escape has a shape on the field and not just a word.
+        const at = this.bodyPoint(e.owner, 0.7);
+        this.arena?.rings.spawn(at, new THREE.Color(0.45, 1.5, 1.1), 4.2, 0.42, false);
+        if (mine) {
+          sfx.dodge();
+          this.ui.dodgeFlash();
         }
+        break;
+      }        
         case 'drain': this.floater(this.bodyPoint(e.owner), `+${e.amount} INTEGRITY`, 'heal'); break;
         case 'bonus-card': this.floater(this.bodyPoint(e.owner, 3.2), 'BONUS CARD', 'chain'); break;
         case 'guard-break': this.floater(this.bossPoint(1), 'GUARD BROKEN', 'big'); break;
         case 'stun': this.floater(this.bossPoint(1), `STUN ${Math.round(e.ms)}ms`, 'dodge'); break;
         case 'knock': this.floater(this.bossPoint(1), `BREAK · FILE ${e.file + 1}`, 'dodge'); break;
+        case 'burn': this.floater(this.bossPoint(1), `BURNING ${e.ticks}x${e.damage}`, 'weak'); break;
+        case 'burn-tick': this.floater(this.bossPoint(), `-${e.damage} BURN`, ''); break;
+        case 'freeze': this.floater(this.bossPoint(1), 'FROZEN', 'dodge'); break;
+        case 'barrier': this.floater(this.bodyPoint(e.owner), `BARRIER x${e.charges}`, 'heal'); break;
+        case 'ward': this.floater(this.bodyPoint(e.owner), 'WARDED', 'dodge'); break;
         case 'phase':
           this.floater(this.bossPoint(1), `PHASE ${e.phase}`, 'big');
           this.shake = Math.max(this.shake, 0.7);
@@ -389,13 +520,12 @@ export class Duel {
         case 'revived': this.floater(this.bodyPoint(e.owner), 'BACK UP', 'heal', 1.6); sfx.dodge(); break;
         case 'lost': this.floater(this.bodyPoint(e.owner), 'SIGNAL LOST', 'miss', 1.8); break;
         case 'boss-down': this.boss?.die(); break;
-        case 'custom': break;
+        case 'hand': break;
       }
-    }
   }
 
-  private resolveShot(owner: string, chip: string, outcome: { hit: boolean; damage?: number; weak?: number; chain?: number; blocked?: boolean }): void {
-    const key = `${owner}:${chip}`;
+  private resolveShot(owner: string, card: string, outcome: { hit: boolean; damage?: number; weak?: number; chain?: number; blocked?: boolean }): void {
+    const key = `${owner}:${card}`;
     const queue = this.shots.get(key);
     const id = queue?.shift();
     if (id) this.arena?.shots.resolve(id, outcome);
@@ -419,47 +549,45 @@ export class Duel {
     this.animationLeft = name === 'hit' ? 0.52 : 0.65;
   }
 
+  /**
+   * Take one step on the lane grid.
+   *
+   * Steps are server-authoritative, and a held key repeats through `update`, so the
+   * refusal is not silent: the client says why, once per firing freeze rather than once
+   * per press, and the D-pad greys itself at the same time so the state is visible
+   * before the player tests it. An open Hand does NOT refuse — the server steps the body
+   * out of the safe room on this same step (shield dropped, dealt hand kept), so walking
+   * with the Hand open is the seamless default.
+   */
   private step(dir: SF.StepDir): void {
     const you = this.view?.you;
-    // `frozen` IS custom-open-or-firing, the same test the server runs in
-    // canAct. The old `|| you.custom` blocked every step: the view carries the
-    // dealt hand as a non-null custom state from the join, so the check was
-    // always true and WASD never moved the body.
-    if (this.phase !== 'field' || this.leaving || !you || you.down || you.frozen) return;
+    if (this.phase !== 'field' || this.leaving || !you || you.down) return;
+    // Only a program in flight refuses here. An open Hand steps through: the server closes
+    // the safe room on this same step, so no notice is owed for it — the boots just walk.
+    if (you.frozen && !you.hand?.open) {
+      if (this.toldFreeze !== frozenWhy(you)) {
+        this.toldFreeze = frozenWhy(you);
+        this.ui.notice(frozenWhy(you));
+      }
+      this.ui.setFrozen(true);
+      return;
+    }
+    this.toldFreeze = null;
+    this.ui.setFrozen(false);
     this.cover(null);
     this.send({ action: 'step', dir });
     // No predicted file/lane: the next snapshot is the only movement authority.
   }
 
   private pick(cell: number): void {
-    const candidate = this.view?.you?.custom?.cells.find((c) => c.cell === cell);
+    const candidate = this.view?.you?.hand?.cells.find((c) => c.cell === cell);
     if (this.phase !== 'field' || this.leaving || !candidate || candidate.picked || candidate.locked) return;
     this.send({ action: 'pick', cell });
   }
 
-  private customAction(action: 'undo' | 'clear' | 'execute'): void {
-    if (this.phase !== 'field' || this.leaving || !this.view?.you?.custom) return;
+  private handAction(action: 'undo' | 'clear' | 'execute'): void {
+    if (this.phase !== 'field' || this.leaving || !this.view?.you?.hand) return;
     this.send({ action });
-  }
-
-  private buster(down: boolean, source: string): void {
-    if (!down) {
-      if (!this.busterSources.delete(source)) return;
-      if (!this.busterSources.size) {
-        this.ui.setBusterHeld(false);
-        this.send({ action: 'buster', down: false });
-      }
-      return;
-    }
-    const you = this.view?.you;
-    if (this.phase !== 'field' || this.leaving || !you || you.down || you.frozen || you.custom || this.busterSources.has(source)) return;
-    const held = this.busterSources.size > 0;
-    this.busterSources.add(source);
-    this.cover(null);
-    if (!held) {
-      this.ui.setBusterHeld(true);
-      this.send({ action: 'buster', down: true });
-    }
   }
 
   private cover(target: string | null, source = 'controls'): void {
@@ -470,31 +598,26 @@ export class Duel {
       return;
     }
     const you = this.view?.you;
-    if (this.phase !== 'field' || this.leaving || !you || you.down || you.frozen || you.custom || this.coverTarget) return;
-    this.releaseBuster();
+    if (this.phase !== 'field' || this.leaving || !you || you.down || you.frozen || you.hand || this.coverTarget) return;
     this.coverTarget = target;
     this.coverSource = source;
     this.send({ action: 'cover', with: target });
   }
 
-  private releaseBuster(): void {
-    if (!this.busterSources.size) return;
-    this.busterSources.clear();
-    this.ui.setBusterHeld(false);
-    this.send({ action: 'buster', down: false });
-  }
   private readonly releaseControls = (): void => {
     this.keys.clear();
     this.ui.releasePointers();
-    this.releaseBuster();
     this.cover(null);
   };
   private readonly onVisibility = (): void => { if (document.hidden) this.releaseControls(); };
 
   private readonly onKeyDown = (e: KeyboardEvent): void => {
-    if (this.disposed || (e.target as HTMLElement | null)?.closest('input,textarea,select,[contenteditable="true"]')) return;
+    // `e.target` is not always an Element — a key dispatched on window/document has none, and
+    // calling `.closest` on it throws, which kills this.handler and with it the dodge.
+    const target = e.target;
+    if (this.disposed || (target instanceof Element && target.closest('input,textarea,select,[contenteditable="true"]'))) return;
     const k = e.key.toLowerCase();
-    if (!KEY_DIR[k] && ![' ', 'b', 'r', 'enter', 'backspace', 'delete', 'c', 'escape'].includes(k) && !/^[1-6]$/.test(k)) return;
+    if (!KEY_DIR[k] && ![' ', 'r', 'enter', 'backspace', 'delete', 'c', 'escape'].includes(k) && !/^[1-6]$/.test(k)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     if (this.phase === 'ended') {
@@ -508,27 +631,26 @@ export class Duel {
       this.step(KEY_DIR[k]!);
       return;
     }
-    if (k === ' ' || k === 'b') this.buster(true, `key:${e.code || k}`);
+    if (k === ' ') { /* space used to be the Buster; combat is cards and dodging now */ }
     else if (k === 'r') {
       const you = this.view?.you;
       const ally = this.view?.players.find((p) => p.down && p.id !== you?.id && Math.abs(p.file - (you?.file ?? -9)) === 1);
       if (ally) this.cover(ally.id, 'key:r');
       else this.ui.notice('Hold R beside a downed partner on the neighbouring file.');
     } else if (/^[1-6]$/.test(k)) this.pick(Number(k) - 1);
-    else if (k === 'enter') this.customAction('execute');
-    else if (k === 'backspace') this.customAction('undo');
-    else if (k === 'delete' || k === 'c') this.customAction('clear');
+    else if (k === 'enter') this.handAction('execute');
+    else if (k === 'backspace') this.handAction('undo');
+    else if (k === 'delete' || k === 'c') this.handAction('clear');
     else if (k === 'escape') this.askLeave();
   };
 
   private readonly onKeyUp = (e: KeyboardEvent): void => {
     const k = e.key.toLowerCase();
-    if (KEY_DIR[k] || [' ', 'b', 'r'].includes(k)) {
+    if (KEY_DIR[k] || [' ', 'r'].includes(k)) {
       e.preventDefault();
       e.stopImmediatePropagation();
       this.keys.delete(k);
-      if (k === ' ' || k === 'b') this.buster(false, `key:${e.code || k}`);
-      else if (k === 'r') this.cover(null, 'key:r');
+      if (k === 'r') this.cover(null, 'key:r');
     }
   };
 
@@ -547,6 +669,32 @@ export class Duel {
     }
   }
 
+  /**
+   * The rival across a PvP field: their actual Chog, built once from the start message.
+   *
+   * Same manifests as the shell's MODEL — one collection, one set of parts. The plate,
+   * the marks and the damage all work without the model, so a failed load degrades to a
+   * faceless bout instead of refusing the fight.
+   */
+  private async buildRival(): Promise<void> {
+    const rival = this.startMsg?.rival;
+    const v = this.view;
+    if (!rival || !v || !this.arena || this.disposed) return;
+    try {
+      const model = await loadChogNFT({ ...RIVAL_MODEL, traits: rival.traits ?? {}, tokenId: rival.tokenId });
+      if (this.disposed || !this.arena || this.boss) return;
+      model.root.visible = true;
+      model.root.scale.setScalar(DUEL_CAM.chog);
+      model.root.rotation.set(0, RIVAL_FACING, 0);
+      model.root.position.set(fileX(v.boss.file, this.files), 0.12, laneZ(v.boss.lane));
+      model.play('idle');
+      this.arena.group.add(model.root);
+      this.boss = chogAsAvatar(model);
+    } catch {
+      // Faceless bout: everything else already works.
+    }
+  }
+
   private onEnd(m: DuelEndMsg): void {
     if (this.phase === 'ended') return;
     this.releaseControls();
@@ -555,7 +703,7 @@ export class Duel {
     this.warn = null;
     this.arena?.setTelegraph(null);
     this.ui.markOver();
-    this.host.hud.deck.classList.remove('customopen');
+    this.host.hud.deck.classList.remove('handopen');
     if (m.won) {
       this.victory = 0.001;
       this.boss?.die();
@@ -564,7 +712,7 @@ export class Duel {
       for (let i = 0; i < 4; i++) this.later(() => this.arena?.rings.spawn(this.bossPoint(), colour, 6 + i * 3, 0.9, false), i * 180);
       this.shake = 1;
       sfx.cleared();
-      this.host.say(`${m.name} cleared`, 't-glitch');
+      this.host.say(m.pvp ? `${m.name} — bout won` : `${m.name} cleared`, 't-glitch');
     } else if (m.reason === 'wiped') {
       this.defeat = 0.001;
       sfx.defeat();
@@ -618,8 +766,9 @@ export class Duel {
       p.y -= easeOut(this.defeat / 1.2) * 1.4;
       p.z += easeOut(this.defeat / 1.2) * 1.6;
     }
-    p.x += (Math.random() - 0.5) * this.shake * 0.5;
-    p.y += (Math.random() - 0.5) * this.shake * 0.35;
+    const sh = reduceMotion() ? 0 : this.shake;
+    p.x += (Math.random() - 0.5) * sh * 0.5;
+    p.y += (Math.random() - 0.5) * sh * 0.35;
     cam.position.copy(p);
     cam.lookAt(aim);
     cam.fov = C.fov - this.punch * 4;
@@ -633,6 +782,12 @@ export class Duel {
     if (this.disposed || !this.arena || !this.view) return;
     this.t += dt;
     for (const [key, next] of this.keys) {
+      // A held key repeats — but only while the body can actually move. Firing `step` at a
+      // downed body or a firing program every 160 ms was both a silent dead button and a
+      // queue that all landed at once the moment the lock lifted. An open Hand steps
+      // through (seamless), so its keys survive and keep walking.
+      const stuck = this.view?.you;
+      if (stuck?.down || (stuck?.frozen && !stuck?.hand?.open)) { this.keys.clear(); break; }
       if (now >= next) {
         this.step(KEY_DIR[key]!);
         if (this.keys.has(key)) this.keys.set(key, now + 160);
@@ -663,7 +818,13 @@ export class Duel {
     this.boss?.update(dt, this.t, { phase: this.view.boss.phase, warn: progress,
       hp: this.view.boss.hp / Math.max(1, this.view.boss.maxHp) });
     // buildBoss animates around its historical home lane; shift that animation to the SF lane.
-    if (this.boss) this.boss.root.position.z += laneZ(this.view.boss.lane) - (laneZ(1) - 0.2);
+    if (this.boss && this.view.boss.archetype !== 'rival') this.boss.root.position.z += laneZ(this.view.boss.lane) - (laneZ(1) - 0.2);
+    if (this.boss && this.view.boss.archetype === 'rival') {
+      // A rival dodges every volley, so unlike an anomaly it is tracked, not homed.
+      const k = 1 - Math.exp(-dt * 10);
+      this.boss.root.position.x += (fileX(this.view.boss.file, this.files) - this.boss.root.position.x) * k;
+      this.boss.root.position.z += (laneZ(this.view.boss.lane) - this.boss.root.position.z) * k;
+    }
     const canvas = stage.renderer.domElement;
     this.arena.update(dt, this.t, stage.camera, canvas.clientHeight || 1, stage.camera.fov);
     this.floaters.update(stage.camera, canvas.clientWidth || 1, canvas.clientHeight || 1);
@@ -720,10 +881,14 @@ export class Duel {
       stage.camera.near = this.saved.near;
       stage.camera.far = this.saved.far;
       stage.camera.updateProjectionMatrix();
+      // Coming back into a dungeon keeps the cave, not the city: only a street
+      // fight gets the district's sky/floor/mood re-painted. This ran for a node
+      // fight too and flashed the city's dusk over the dungeon on the way out.
+      const backToDungeon = this.saved.rig === 'dungeon' || this.mode === 'node';
       stage.setRig(this.saved.rig, true);
       stage.focusOn(this.saved.focus.x, this.saved.focus.y, this.saved.focus.z);
       for (const { object, visible } of this.saved.scenery) object.visible = visible;
-      stage.setDistrict(this.host.art, this.host.sector);
+      if (!backToDungeon) stage.setDistrict(this.host.art, this.host.sector);
     }
     this.arena = null;
     this.boss = null;
@@ -732,6 +897,6 @@ export class Duel {
     this.previousPlayers = [];
     this.warn = null;
     this.pendingEnd = null;
-    hud.deck.classList.remove('dueling', 'customopen');
+    hud.deck.classList.remove('dueling', 'handopen');
   }
 }

@@ -9,12 +9,12 @@ import {
   libraryLine,
   resolveTurn,
 } from '../src/fusion.ts';
-import { CHIP_BY_ID, GA_BY_ID, anyChip, chip } from '../src/chips.ts';
+import { CARD_BY_ID, GA_BY_ID, anyCard, card } from '../src/cards.ts';
 
 describe('recipe data', () => {
   it('every ingredient is a real card and every result is a real heavy card', () => {
     for (const r of RECIPES) {
-      for (const id of r.needs) expect(CHIP_BY_ID.has(id), `${r.id} needs ${id}`).toBe(true);
+      for (const id of r.needs) expect(CARD_BY_ID.has(id), `${r.id} needs ${id}`).toBe(true);
       expect(GA_BY_ID.has(r.result), `${r.id} -> ${r.result}`).toBe(true);
       expect(r.hint.length).toBeGreaterThan(8);
     }
@@ -94,15 +94,15 @@ describe('library and rewards', () => {
   });
 });
 
-describe('anyChip', () => {
+describe('anyCard', () => {
   it('resolves both the ordinary cards and the fused ones', () => {
-    expect(anyChip('emberpaw')?.name).toBe('Emberpaw');
-    expect(anyChip('ga_cinderfall')?.klass).toBe('G');
-    expect(anyChip('nope')).toBeUndefined();
+    expect(anyCard('emberpaw')?.name).toBe('Emberpaw');
+    expect(anyCard('ga_cinderfall')?.klass).toBe('G');
+    expect(anyCard('nope')).toBeUndefined();
   });
 
-  it('lets chip() read a fused card, but keeps them out of the shop and the drop table', () => {
-    expect(chip('ga_quietdeath').name).toBe('Quiet Death');
-    for (const id of GA_BY_ID.keys()) expect(CHIP_BY_ID.has(id)).toBe(false);
+  it('lets card() read a fused card, but keeps them out of the shop and the drop table', () => {
+    expect(card('ga_quietdeath').name).toBe('Quiet Death');
+    for (const id of GA_BY_ID.keys()) expect(CARD_BY_ID.has(id)).toBe(false);
   });
 });

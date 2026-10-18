@@ -27,10 +27,19 @@ describe('deriveBuild — the NFT is the character', () => {
     expect(deriveBuild(src())).toEqual(deriveBuild(src()));
   });
 
-  it('produces different builds for different tokens', () => {
-    const a = deriveBuild(src({ tokenId: 418 }));
-    const b = deriveBuild(src({ tokenId: 419 }));
-    expect(a.library.join() + a.signature).not.toEqual(b.library.join() + b.signature);
+  it('gives the same traits the same card, because the token decides it', () => {
+    // The born card is a *fact about the traits*, not a roll: the tribe names the shelf and the
+    // attribute profile says how far down it. Two tokens whose traits agree must agree on it,
+    // or the `audit` string beside the build would be a claim about something else.
+    expect(deriveBuild(src({ tokenId: 418 })).signature).toBe(deriveBuild(src({ tokenId: 419 })).signature);
+    expect(deriveBuild(src({ tokenId: 418 })).deck).toEqual(deriveBuild(src({ tokenId: 419 })).deck);
+  });
+
+  it('still gives different attributes different builds, token id aside', () => {
+    const a = deriveBuild(src({ tokenId: 418, attributes: { Aura: 'Fire', Body: 'Kings Robe', Tier: 'Common' } }));
+    const b = deriveBuild(src({ tokenId: 418, attributes: { Aura: 'Ice', Body: 'Tuxedo', Tier: 'Legendary' } }));
+    expect(a.signature).not.toBe(b.signature);
+    expect(a.attrs).not.toEqual(b.attrs);
   });
 
   it('raises wave affinity with transfer count', () => {
@@ -50,11 +59,11 @@ describe('deriveBuild — the NFT is the character', () => {
     );
   });
 
-  it('never hands out an empty library and always contains the signature', () => {
+  it('hands out an empty library but always names the signature', () => {
     for (let id = 0; id < 200; id++) {
       const b = deriveBuild(src({ tokenId: id, transferCount: id % 9 }));
-      expect(b.library.length).toBeGreaterThan(0);
-      expect(b.library).toContain(b.signature);
+      expect(b.library).toEqual([]);
+      expect(b.signature).toBeTruthy();
       expect(b.linkSlots).toBeGreaterThanOrEqual(3);
       expect(b.linkSlots).toBeLessThanOrEqual(5);
     }
@@ -69,9 +78,9 @@ describe('deriveBuild — the NFT is the character', () => {
 
 describe('SF — cards replace the placement grid', () => {
   const caps = { slots: 3, mega: 1, giga: 1 };
-  const screen = (ids: string[]): SF.CustomState => ({
-    ...SF.emptyCustom(),
-    hand: ids.map((chipId, cell) => ({ cell, ...SF.cellOf(cell), chipId })),
+  const screen = (ids: string[]): SF.HandState => ({
+    ...SF.emptyHand(),
+    cells: ids.map((cardId, cell) => ({ cell, ...SF.cellOf(cell), cardId })),
   });
 
   it('locks the turn to an element and refuses duplicate cards', () => {
@@ -107,14 +116,14 @@ describe('SF — cards replace the placement grid', () => {
     const giga = build.library.map(SF.card).find((card) => card.cls === 'giga') ?? SF.card('chognova');
     expect(giga.cls).toBe('giga');
     const session = SF.openSession({ id: 'giga-regression', place: { kind: 'train', sector: 'ashflat' }, boss: { name: 'Target', hp: 1_000_000, level: 2 }, rand: () => 0.99 });
-    const body = SF.addBody(session, { id: 'a', owner: 'a', name: 'Reference', tribe: 'burn', level: 2, stats: { ...SF.DEFAULT_STATS, gigaCap: 1 }, folder: [giga.id] });
-    SF.openCustom(session, body);
+    const body = SF.addBody(session, { id: 'a', owner: 'a', name: 'Reference', tribe: 'burn', level: 2, stats: { ...SF.DEFAULT_STATS, gigaCap: 1 }, deck: [giga.id] });
+    SF.openHand(session, body);
     expect(SF.pickCard(session, body.id, 0)).toBe(true);
     expect(SF.execute(session, body.id)).toBe(true);
     while (body.program || session.field.shots.length) SF.tick(session, 50);
-    SF.openCustom(session, body);
+    SF.openHand(session, body);
     expect(body.gigaSpent).toBe(true);
-    expect(SF.canPick(body.custom!, 0, SF.capsOf(body))).toEqual({ ok: false, reason: 'giga-spent' });
+    expect(SF.canPick(body.hand!, 0, SF.capsOf(body))).toEqual({ ok: false, reason: 'giga-spent' });
   });
 });
 

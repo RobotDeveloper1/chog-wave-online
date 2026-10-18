@@ -13,7 +13,7 @@ import type { Element, GearMod, VoiceMod } from '../types.ts';
  *
  *   1. **Your Chog builds you.** Its Head trait is one mechanical step, its Mouth trait is a
  *      set of percentages, its Skin is a resist, its Tier is how many Mega and Giga cards you
- *      may carry, its Body is the shape of your folder. Those are *your* numbers and they come
+ *      may carry, its Body is the shape of your deck. Those are *your* numbers and they come
  *      from the token you brought.
  *   2. **The party builds on distinct traits.** Each seat grants its Head-trait step to the
  *      whole party — but **duplicates do not stack**. Six Chogs in six different hats is six
@@ -22,7 +22,7 @@ import type { Element, GearMod, VoiceMod } from '../types.ts';
  *      a trait nobody else has is a real decision rather than a headcount.
  *
  * Nothing here is named after anything from another game. The steps say what they do and which
- * Chog granted them, so the plate can read `GAUGE +1 · from #812 Mon Cap`.
+ * Chog granted them, so the plate can read `CHARGE +1 · from #812 Mon Cap`.
  */
 
 export const PARTY_MAX = 6;
@@ -70,24 +70,19 @@ interface StepDef {
  * What each Head-trait value is worth.
  *
  * Ordered by how much it changes *how you play* rather than how much damage it adds: an extra
- * slot is a different turn, a faster gauge is a different rhythm, and only the armour and crit
+ * slot is a different turn, a faster charge is a different rhythm, and only the armour and crit
  * are plain numbers.
  */
 export const GEAR_STEPS: Record<GearMod, StepDef> = {
-  gauge: {
-    label: 'GAUGE +1',
-    read: 'the Custom Gauge fills faster — more screens per fight',
-    apply: (s) => withTraits(s, { gauge: s.gauge + 1 }),
+  charge: {
+    label: 'CHARGE +1',
+    read: 'the Hand Charge fills faster — more screens per fight',
+    apply: (s) => withTraits(s, { charge: s.charge + 1 }),
   },
   slots: {
     label: 'SLOT +1',
     read: 'one more card in a program',
     apply: (s) => withTraits(s, { slots: s.slots + 1 }),
-  },
-  speed: {
-    label: 'RAPID +1',
-    read: 'the Buster taps faster between screens',
-    apply: (s) => withTraits(s, { rapid: s.rapid + 1 }),
   },
   hp: {
     label: 'HP +15%',
@@ -112,7 +107,7 @@ export const GEAR_STEPS: Record<GearMod, StepDef> = {
 };
 
 /** The order steps are granted in, so a party can plan which seat it is filling. */
-export const GEAR_ORDER: readonly GearMod[] = ['gauge', 'slots', 'speed', 'hp', 'crit', 'guard', 'drain'];
+export const GEAR_ORDER: readonly GearMod[] = ['charge', 'slots', 'hp', 'crit', 'guard', 'drain'];
 
 /**
  * The steps the party is running, for one body.
@@ -158,8 +153,8 @@ export interface VoiceStats {
   crit: number;
   /** Share of a DRAIN card's damage returned as integrity. */
   drain: number;
-  /** Percent off a full gauge fill. Negative is slower. */
-  gaugePct: number;
+  /** Percent off a full charge fill. Negative is slower. */
+  chargePct: number;
   /** Negative makes the Chog sneakier; positive pulls the anomaly onto it. */
   aggro: number;
 }
@@ -172,13 +167,13 @@ export function voiceStats(v: VoiceMod): VoiceStats {
   return {
     crit: v.critPct ?? 0,
     drain: (v.drainPct ?? 0) / 100,
-    gaugePct: v.gaugePct ?? 0,
+    chargePct: v.chargePct ?? 0,
     aggro: v.aggro ?? 0,
   };
 }
 
-/** What the Mouth trait does to a full gauge fill, as a multiplier on its length. */
-export const gaugeScale = (gaugePct: number): number => Math.max(0.5, 1 - gaugePct / 100);
+/** What the Mouth trait does to a full charge fill, as a multiplier on its length. */
+export const chargeScale = (chargePct: number): number => Math.max(0.5, 1 - chargePct / 100);
 
 /**
  * How hard the anomaly comes for this body.
@@ -196,7 +191,7 @@ export const aggroScore = (aggro: number, distance: number): number => aggro * 6
 /**
  * How close in time two players' cards have to land to count as one beat.
  *
- * A little over the gauge's own rhythm at low level: you are not required to fire in lockstep,
+ * A little over the charge's own rhythm at low level: you are not required to fire in lockstep,
  * only to be firing about the same thing at about the same time.
  */
 export const LINK_WINDOW_MS = 1500;

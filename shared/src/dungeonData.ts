@@ -12,7 +12,7 @@ import type { Element } from './types.ts';
  * that opens a run and the menu that lists them all read this one table.
  */
 
-export type BossArchetype = 'spark' | 'baron' | 'front' | 'mirror' | 'surge';
+export type BossArchetype = 'spark' | 'baron' | 'front' | 'mirror' | 'surge' | 'tollkeeper';
 
 export interface DungeonDef {
   id: string;
@@ -31,6 +31,15 @@ export interface DungeonDef {
   tagline: string;
   blurb: string;
   boss: { name: string; archetype: BossArchetype };
+  /**
+   * The cards this map is the key to.
+   *
+   * A fold used to pay in cards rolled out of a bag, which meant the same map was worth a
+   * different nothing on two runs and a player could never aim at a card they wanted. These are
+   * the fixed unlock: clear the map and these are yours, permanently, on the first clear. The
+   * duel items ARE these cards, so a Chog that has opened two maps has two maps of hand.
+   */
+  unlocks: readonly string[];
   /** What the first clear pays on top of the rooms, and the title it earns. */
   firstClear: { xp: number; wav: number; items?: Partial<Record<ItemId, number>>; title: string };
 }
@@ -47,6 +56,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'a furnace the Index forgot to switch off',
     blurb: 'Under the Foldgate Yard the old foundry is still running: every belt, every press, every guard. Nothing in it knows the day is over. Short, hot and forgiving — the place to learn what a fold is.',
     boss: { name: 'FOUNDRY WARDEN', archetype: 'baron' },
+    unlocks: ['v_goldtooth', 'v_wo', 'cinderfang'],
     firstClear: { xp: 60, wav: 120, items: { pack: 1, med: 1 }, title: 'Foundry Breaker' },
   },
   {
@@ -60,6 +70,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'cold storage for every card nobody sold',
     blurb: 'Where the Index keeps what the market left unsold. The shelves are glass, the aisles are walls that rise and fall, and the Librarian does not like anything being taken down.',
     boss: { name: 'RIME LIBRARIAN', archetype: 'front' },
+    unlocks: ['v_lipbite', 'v_grit', 'hoarbar'],
     firstClear: { xp: 90, wav: 180, items: { pack: 1, repair: 1 }, title: 'Archive Reader' },
   },
   {
@@ -73,6 +84,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'a tower of packets, all of them late',
     blurb: 'A mast of relays folded into a stairwell. Everything in it arrives before it was sent, and the volleys come in sweeps — stand still and the Spire will find you.',
     boss: { name: 'PACKET KING', archetype: 'surge' },
+    unlocks: ['v_clownlaugh', 'e_visor', 'arcsnap'],
     firstClear: { xp: 130, wav: 260, items: { pack: 1, amp: 1 }, title: 'Spire Runner' },
   },
   {
@@ -86,6 +98,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'the Index drains here, and the water remembers',
     blurb: 'A reservoir under the canal that fills with whatever the wave washes down. The current copies what you do and gives it back a moment later — mind your own files.',
     boss: { name: 'UNDERTOW MOTHER', archetype: 'mirror' },
+    unlocks: ['v_rainfall', 'v_smile', 'ripplebite', 'ga_drownedbell'],
     firstClear: { xp: 180, wav: 360, items: { pack: 2, ward: 1 }, title: 'Tide Walker' },
   },
   {
@@ -99,6 +112,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'every Chog ever sighted, refracted',
     blurb: 'A vault of mirrored halls in which the whole collection is kept, one reflection at a time. Fast, bright and merciless: the Twin fires before you have finished reading the warning.',
     boss: { name: 'SPECTRUM TWIN', archetype: 'spark' },
+    unlocks: ['v_moncoin', 'v_normsmile', 'v_puke', 'spectrum'],
     firstClear: { xp: 260, wav: 520, items: { pack: 2, amp: 1 }, title: 'Vault Breaker' },
   },
   {
@@ -112,6 +126,7 @@ export const DUNGEONS: readonly DungeonDef[] = [
     tagline: 'the centre of the Index, where the wave begins',
     blurb: 'The last fold, and the oldest: the place every trade in the city ends up. There is no trick to it. It is the deepest map the Index has, and the hardest thing in it is the Index.',
     boss: { name: 'THE INDEX', archetype: 'baron' },
+    unlocks: ['fwog_buddy', 'pepe_curse', 'e_dead', 'eclipse'],
     firstClear: { xp: 400, wav: 900, items: { pack: 3, repair: 2, ward: 1 }, title: 'Core Keeper' },
   },
 ];

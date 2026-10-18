@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { Batcher, box, cyl, pick, xform } from './geo.ts';
 import { flat, toon, type DistrictArt } from './art.ts';
+import type { Actor } from './standin.ts';
+import { loadChogNFT, type Chog, type PartsModel } from './chogLoader.ts';
+import { TRIBE_COLOUR, TRIBE_TINT, nameplate } from './tribes.ts';
 
 /** A room is a small place with the same shape the player's collision and prompts expect. */
 export interface RoomLayout {
@@ -10,6 +13,10 @@ export interface RoomLayout {
   spawn: { x: number; z: number };
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   art: DistrictArt;
+  /** Whoever is working in the room (the clerk behind the counter), animated by the shell. */
+  actors: Actor[];
+  /** False once the room is left: the clerk loads async and must not staff a closed room. */
+  alive: boolean;
 }
 type TownLayout = RoomLayout;
 
@@ -22,11 +29,23 @@ type TownLayout = RoomLayout;
  * without a single special case: an interior is just a smaller town with different
  * geometry and a mat that sends you back out.
  *
- * The rooms are also where the game's systems live physically: the chip counter with
+ * The rooms are also where the game's systems live physically: the card counter with
  * its stock, the station's wave boards, the tribe hall's war table, the terminal's
  * album wall. Walking into a room and pressing a button on a menu are the same action
  * from the server's point of view — the room is not a second authority.
  */
+
+/** The same model the street wears: a clerk is a Chog, not a second species. */
+const CLERK_MODEL: PartsModel = {
+  baseUrl: '/models/chog-base.glb',
+  partsUrl: '/models/trait-parts.json',
+  colorsUrl: '/models/trait-colors.json',
+  skinsUrl: '/models/skins.json',
+};
+/** One tribe per counter, so every clerk reads different at a glance. */
+const CLERK_TRIBE: Record<string, string> = { shop: 'volt', heal: 'wave', station: 'frost', brother: 'burn', telemetry: 'prism', dungeon: 'void' };
+const CLERK_NAME: Record<string, string> = { shop: 'SHOPKEEPER', heal: 'MEDIC', station: 'STATION CHIEF', brother: 'BIG BROTHER', telemetry: 'ENGINEER', dungeon: 'GATEKEEPER' };
+const CLERK_SCALE = 1.35;
 
 export type RoomKind = 'shop' | 'heal' | 'station' | 'brother' | 'telemetry' | 'dungeon';
 
@@ -99,6 +118,20 @@ export function buildRoom(kind: RoomKind, art: DistrictArt, label: string): Town
 
   const group = b.build();
   group.add(floor, ceil);
+  // ---- someone behind the counter. A room with a counter and nobody at it reads as closed,
+  // so every room gets a clerk: a real Chog in plain dress, standing behind the counter
+  // facing the customer spot (rotation 0 looks down +z, straight at it). The Chog loads
+  // async like a street NPC — see the staffing below the return value.
+  const clerkAnchor = new THREE.Group();
+  clerkAnchor.position.set(-2.6, 0, -d / 2 + 1.0);
+  group.add(clerkAnchor);
+  let clerk: Chog | null = null;
+  const clerkActor: Actor = {
+    root: clerkAnchor,
+    update: (dt) => { clerk?.update(dt); },
+    setSpeed: (v) => { clerk?.setSpeed(v); },
+    height: 3,
+  };
   // The interior is lit by the district's own key light, so its walls take shadow too.
   group.traverse((o) => {
     const m = o as THREE.Mesh;
@@ -108,17 +141,41 @@ export function buildRoom(kind: RoomKind, art: DistrictArt, label: string): Town
     }
   });
 
-  return {
+  // Where the room's own verb lives. Every room has a counter you walk up to — except the fold
+  // gate, which has no counter at all: its verb is the ring on the floor, and it used to be pure
+  // decoration while the interactable sat at an invisible counter spot across the room. That is
+  // why walking onto the obvious glowing ring and pressing E did nothing.
+  const counter: RoomLayout['interactables'][number] =
+    kind === 'dungeon'
+      ? { kind: 'board', label: 'FOLD RING', x: 3.4, z: -2.4, hint: 'open the fold' }
+      : { kind: 'board', label, x: -2.6, z: -d / 2 + 3.2, hint: 'use the counter' };
+
+  const layout: TownLayout = {
     group,
     solids,
     interactables: [
-      { kind: 'board', label, x: -2.6, z: -d / 2 + 3.2, hint: 'use the counter' },
+      counter,
       { kind: 'gate', label: 'DOOR', x: 0, z: d / 2 - 1.1, hint: 'step outside' },
     ],
     spawn: { x: 0, z: d / 2 - 2.2 },
     bounds: { minX: -w / 2 + 0.8, maxX: w / 2 - 0.8, minZ: -d / 2 + 0.8, maxZ: d / 2 - 0.4 },
     art,
+    actors: [clerkActor],
+    alive: true,
   };
+  // Staffing happens after the layout exists so the loader can check `alive`: the room may
+  // be gone before the Chog arrives, and a clerk for a closed room is a leak. The tint is
+  // what dresses one counter apart from another; the clerk wears no trait parts.
+  void loadChogNFT({ ...CLERK_MODEL, tint: TRIBE_TINT[CLERK_TRIBE[kind] ?? 'volt'] ?? {} }).then((c) => {
+    if (!layout.alive) return;
+    clerk = c;
+    c.root.scale.setScalar(CLERK_SCALE);
+    clerkAnchor.add(c.root);
+    const tag = nameplate(CLERK_NAME[kind] ?? 'CLERK', TRIBE_COLOUR[CLERK_TRIBE[kind] ?? 'volt'] ?? '#e8c15a');
+    tag.position.set(0, 3.6, 0);
+    clerkAnchor.add(tag);
+  }).catch(() => { /* a closed shop beats a crashed one */ });
+  return layout;
 }
 
 /** The room-specific furniture. Kept apart from the shell so each fits one idea. */

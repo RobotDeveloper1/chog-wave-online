@@ -6,7 +6,8 @@
   "workspaces": [
     "shared",
     "server",
-    "client"
+    "client",
+    "contracts"
   ],
   "scripts": {
     "dev": "npm run dev -w server & npm run dev -w client",

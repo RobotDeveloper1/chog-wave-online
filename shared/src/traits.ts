@@ -1,16 +1,16 @@
-import type { ChogLoadout, Element, EyeStyle, FolderProfile, FormRule, GearMod, VoiceMod } from './types.ts';
+import type { ChogLoadout, Element, EyeStyle, DeckProfile, FormRule, GearMod, VoiceMod } from './types.ts';
 import type { SectorId } from './wave.ts';
 import {
-  CHIP_BY_BASE,
-  CHIP_BY_EYES_STYLE,
-  CHIP_BY_MOUTH,
-  CHIP_BY_SIGNATURE,
-} from './chips.ts';
+  CARD_BY_BASE,
+  CARD_BY_EYES_STYLE,
+  CARD_BY_MOUTH,
+  CARD_BY_SIGNATURE,
+} from './cards.ts';
 
 /**
  * Every trait value in Chog Genesis resolves to something the player can feel in
  * combat. This file is the whole "why is the NFT essential" argument: remove the
- * token and there is no element, no attack style, no held card, no folder shape.
+ * token and there is no element, no attack style, no held card, no deck shape.
  *
  * Tables are written outcome-first (a list of values per outcome) rather than as
  * 272 `value: outcome` lines. Same coverage, but a missing or doubled value is
@@ -20,10 +20,10 @@ import {
 
 /** What beats what. A 4-cycle plus one mutually hostile pair. */
 export const WEAK_TO: Record<Element, Element> = {
-  burn: 'wave',
-  wave: 'volt',
-  volt: 'frost',
-  frost: 'burn',
+  burn: 'frost',
+  wave: 'burn',
+  volt: 'wave',
+  frost: 'volt',
   prism: 'void',
   void: 'prism',
 };
@@ -73,7 +73,7 @@ const EYES_STYLE = invert<EyeStyle>({
   wild: ['Heart', 'Clown Eye Mix', 'Clown Eye', 'MOG', 'Retard', 'Blue Retard', 'Frog', 'Thug', 'Smirk', 'Angry'],
 });
 
-const BODY_PROFILE = invert<FolderProfile>({
+const BODY_PROFILE = invert<DeckProfile>({
   giga: ['Kings Robe', 'Golden Armor', 'Dragon suit', 'Wizard', 'Jesus', 'Astro Suit', 'Zero THOTS', 'Gojo', 'CEO Vest'],
   mega: [
     'Gangster suit', 'Tuxedo', 'Red Tuxedo', 'Cream Tuxedo', 'Pink Tuxedo', 'White tuxedo', 'Cyan tuxedo',
@@ -99,31 +99,30 @@ const BODY_PROFILE = invert<FolderProfile>({
 });
 
 const HEAD_GEAR = invert<GearMod>({
-  gauge: ['Thunder Cap', '10k TPS Cap', 'WAGMI Cap', 'MMGA Cap', 'MCGA', 'MCGA Cap', 'MEGA Chog', 'Choggie Cap', 'Chog Cap', 'Star Cap', 'Cloud Cap', 'Rainbow Wig'],
+  charge: ['Thunder Cap', '10k TPS Cap', 'WAGMI Cap', 'MMGA Cap', 'MCGA', 'MCGA Cap', 'MEGA Chog', 'Choggie Cap', 'Chog Cap', 'Star Cap', 'Cloud Cap', 'Rainbow Wig'],
   hp: ['Spartan Helmet', 'Russian Hat', 'Gold Thorn', 'Silver Thorn', 'Crown', 'Holy Seal', 'Purple Horn', 'Plumber', 'Robber'],
   slots: ['Wizard Hat', 'Wizard Beanie', '3rd Eye', 'Durag', 'Bob Hair', 'Head Wrap', 'NEET', 'JEET Cap'],
   crit: ['Red Headband', 'Japan Headband', 'RETARD Cap', 'Boob Cap', 'Horny Cap', 'Clown Nose', 'Balls Cap'],
-  guard: ['Mon Cap', 'Mon Beanie', 'Choggie Beanie', 'RH Beanie', 'BTC Beanie', 'BTC Cap', 'Dollar Cap', 'Buttcoin Cap', 'ETH Cap'],
+  guard: ['Mon Cap', 'Mon Beanie', 'Choggie Beanie', 'RH Beanie', 'BTC Beanie', 'BTC Cap', 'Dollar Cap', 'Buttcoin Cap', 'ETH Cap', 'Gray Bucket Cap', 'Orange Bucket Cap', 'Blue Bucket Cap'],
   drain: ['TISM Cap', 'Peace hat', 'Red Peace Cap'],
-  speed: ['Gray Bucket Cap', 'Orange Bucket Cap', 'Blue Bucket Cap'],
 });
 
 const MOUTH_VOICE: Record<string, VoiceMod> = {
   'normal smile': { aggro: 0.1 },
-  smile: { aggro: 0.15, gaugePct: 5 },
+  smile: { aggro: 0.15, chargePct: 5 },
   sad: { drainPct: 10 },
   worried: { critPct: 8, aggro: -0.1 },
-  flat: { gaugePct: 8 },
-  wo: { gaugePct: -8, critPct: 15 },
+  flat: { chargePct: 8 },
+  wo: { chargePct: -8, critPct: 15 },
   bubblegum: { aggro: 0.25, drainPct: 5 },
   drooling: { drainPct: 15 },
-  'rainbow puke': { aggro: 0.35, drainPct: 20, gaugePct: -10 },
+  'rainbow puke': { aggro: 0.35, drainPct: 20, chargePct: -10 },
   'lip bite': { critPct: 18, aggro: -0.15 },
   'gold tooth': { aggro: 0.2 },
   'btc coin': { critPct: 10 },
-  'mon coin': { gaugePct: 10 },
+  'mon coin': { chargePct: 10 },
   grit: { aggro: 0.3, drainPct: -10 },
-  'clown mouth': { aggro: 0.4, gaugePct: -5, critPct: 12 },
+  'clown mouth': { aggro: 0.4, chargePct: -5, critPct: 12 },
 };
 
 const SKIN_RESIST = invert<Element>({
@@ -152,8 +151,8 @@ const TIER_CAP: Record<string, { mega: number; giga: number }> = {
 
 const FALLBACK_ELEMENT: Element = 'prism';
 const FALLBACK_STYLE: EyeStyle = 'wide';
-const FALLBACK_PROFILE: FolderProfile = 'standard';
-const FALLBACK_GEAR: GearMod = 'gauge';
+const FALLBACK_PROFILE: DeckProfile = 'standard';
+const FALLBACK_GEAR: GearMod = 'charge';
 const FALLBACK_SECTOR: SectorId = 'hollow';
 
 const norm = (v: string | undefined) => (v ?? '').trim().toLowerCase();
@@ -214,10 +213,10 @@ export function loadoutOf(attributes: Record<string, string> | undefined): ChogL
   // to exist for everyone: Accessory covers only 9% of the collection, so the
   // voice and the lock-on style carry it for the rest.
   const sigChip =
-    CHIP_BY_SIGNATURE.get((a.Accessory ?? '').trim()) ??
-    CHIP_BY_MOUTH.get(norm(a.Mouth)) ??
-    CHIP_BY_EYES_STYLE.get(EYES_STYLE[norm(a.Eyes)] ?? '') ??
-    CHIP_BY_BASE.get(norm(a.Base)) ??
+    CARD_BY_SIGNATURE.get((a.Accessory ?? '').trim()) ??
+    CARD_BY_MOUTH.get(norm(a.Mouth)) ??
+    CARD_BY_EYES_STYLE.get(EYES_STYLE[norm(a.Eyes)] ?? '') ??
+    CARD_BY_BASE.get(norm(a.Base)) ??
     null;
 
   const why: string[] = [];
@@ -225,7 +224,7 @@ export function loadoutOf(attributes: Record<string, string> | undefined): ChogL
   if (sigChip) why.push(`holds ${sigChip.name}`);
   if (attributes?.Eyes) why.push(`Eyes ${a.Eyes} → ${style} lock-on`);
   if (sigChip) why.push(`holds ${sigChip.name}`);
-  if (attributes?.Body) why.push(`${a.Body} → ${profile} folder`);
+  if (attributes?.Body) why.push(`${a.Body} → ${profile} deck`);
   if (form !== 'none') why.push(`${a.Base ?? a.Form}: ${form}`);
 
   return {
@@ -248,8 +247,8 @@ export function loadoutOf(attributes: Record<string, string> | undefined): ChogL
   };
 }
 
-/** How many of each rarity class the folder may hold, from the Body profile. */
-export function folderShape(profile: FolderProfile): { size: number; copies: number } {
+/** How many of each rarity class the deck may hold, from the Body profile. */
+export function deckShape(profile: DeckProfile): { size: number; copies: number } {
   switch (profile) {
     case 'standard':
       return { size: 30, copies: 5 };
@@ -312,7 +311,7 @@ export const TRAIT_TABLES = {
     acc[k] = 'voice';
     return acc;
   }, {}),
-  Accessory: Object.fromEntries([...CHIP_BY_SIGNATURE].map(([k, v]) => [k.toLowerCase(), v.id])),
+  Accessory: Object.fromEntries([...CARD_BY_SIGNATURE].map(([k, v]) => [k.toLowerCase(), v.id])),
   Tier: Object.fromEntries(Object.keys(TIER_CAP).map((k) => [k, 'cap'])),
   Side: { right: 'right', left: 'left' } as Record<string, string>,
   Naked: { no: 'no', yes: 'yes' } as Record<string, string>,

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <radialGradient id="well" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#b07bff" stop-opacity=".85"/>
+      <stop offset="55%" stop-color="#25084a"/>
+      <stop offset="100%" stop-color="#07050d"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#39334f"/>
+      <stop offset="100%" stop-color="#100d1c"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset="60%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="18" fill="url(#plate)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#well)"/>
+  <g opacity=".14" stroke="#f0dcff" stroke-width="1">
+    <line x1="5" y1="43" x2="123" y2="43"/><line x1="5" y1="85" x2="123" y2="85"/>
+    <line x1="43" y1="5" x2="43" y2="123"/><line x1="85" y1="5" x2="85" y2="123"/>
+  </g>
+  <g filter="url(#soft)">
+        <g stroke="#b07bff" stroke-width="8" stroke-linecap="round">
+          <line x1="84" y1="64" x2="110" y2="64"/><line x1="81.3" y1="74" x2="103.8" y2="87"/><line x1="74" y1="81.3" x2="87" y2="103.8"/><line x1="64" y1="84" x2="64" y2="110"/><line x1="54" y1="81.3" x2="41" y2="103.8"/><line x1="46.7" y1="74" x2="24.2" y2="87"/><line x1="44" y1="64" x2="18" y2="64"/><line x1="46.7" y1="54" x2="24.2" y2="41"/><line x1="54" y1="46.7" x2="41" y2="24.2"/><line x1="64" y1="44" x2="64" y2="18"/><line x1="74" y1="46.7" x2="87" y2="24.2"/><line x1="81.3" y1="54" x2="103.8" y2="41"/>
+        </g>
+        <g stroke="#f0dcff" stroke-width="3" stroke-linecap="round">
+          <line x1="81.4" y1="68.7" x2="96.8" y2="72.8"/><line x1="76.7" y1="76.7" x2="88" y2="88"/><line x1="68.7" y1="81.4" x2="72.8" y2="96.8"/><line x1="59.3" y1="81.4" x2="55.2" y2="96.8"/><line x1="51.3" y1="76.7" x2="40" y2="88"/><line x1="46.6" y1="68.7" x2="31.2" y2="72.8"/><line x1="46.6" y1="59.3" x2="31.2" y2="55.2"/><line x1="51.3" y1="51.3" x2="40" y2="40"/><line x1="59.3" y1="46.6" x2="55.2" y2="31.2"/><line x1="68.7" y1="46.6" x2="72.8" y2="31.2"/><line x1="76.7" y1="51.3" x2="88" y2="40"/><line x1="81.4" y1="59.3" x2="96.8" y2="55.2"/>
+        </g>
+        <circle cx="64" cy="64" r="16" fill="#f0dcff"/>
+        <circle cx="64" cy="64" r="8" fill="#ffffff"/></g>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#sheen)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="2"/>
+  <rect x="2.5" y="2.5" width="123" height="123" rx="16" fill="none" stroke="#d9a0ff" stroke-width="2.5" opacity=".7"/>
+  <g><circle cx="110" cy="18" r="12" fill="#0b0716" stroke="#ffd23f" stroke-width="2.5"/><text x="110" y="24" font-family="monospace" font-size="15" font-weight="bold" fill="#ffd23f" text-anchor="middle">G</text></g>
+</svg>

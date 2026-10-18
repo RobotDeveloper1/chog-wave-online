@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <radialGradient id="well" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#7b3ddb" stop-opacity=".85"/>
+      <stop offset="55%" stop-color="#0d0420"/>
+      <stop offset="100%" stop-color="#07050d"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#39334f"/>
+      <stop offset="100%" stop-color="#100d1c"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset="60%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="18" fill="url(#plate)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#well)"/>
+  <g opacity=".14" stroke="#d9b6ff" stroke-width="1">
+    <line x1="5" y1="43" x2="123" y2="43"/><line x1="5" y1="85" x2="123" y2="85"/>
+    <line x1="43" y1="5" x2="43" y2="123"/><line x1="85" y1="5" x2="85" y2="123"/>
+  </g>
+  <g filter="url(#soft)">
+        <circle cx="64" cy="64" r="42" fill="none" stroke="#7b3ddb" stroke-width="4" opacity=".55"/>
+        <circle cx="64" cy="64" r="30" fill="#04010a"/>
+        <circle cx="64" cy="64" r="30" fill="none" stroke="#d9b6ff" stroke-width="4"/>
+        <circle cx="64" cy="64" r="16" fill="#000"/>
+        <g fill="#d9b6ff" opacity=".85"><circle cx="30" cy="40" r="4"/><circle cx="100" cy="46" r="3"/><circle cx="36" cy="94" r="3.5"/></g></g>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#sheen)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="2"/>
+  <rect x="2.5" y="2.5" width="123" height="123" rx="16" fill="none" stroke="#b06bff" stroke-width="2.5" opacity=".7"/>
+  
+</svg>

@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS saves (
   token_id   INTEGER PRIMARY KEY,
   kills      INTEGER NOT NULL DEFAULT 0,
   storm_kills INTEGER NOT NULL DEFAULT 0,
-  chips      TEXT    NOT NULL DEFAULT '[]',
+  cards      TEXT    NOT NULL DEFAULT '[]',
   peak_wave  REAL    NOT NULL DEFAULT 0,
   streak     INTEGER NOT NULL DEFAULT 0,
   season     TEXT    NOT NULL DEFAULT '',
@@ -64,7 +64,7 @@ export class SaveStore {
       .get(tokenId) as Record<string, unknown> | undefined;
 
     if (!row) {
-      return { tokenId, kills: 0, stormKills: 0, chips: [], peakWave: 0, streak: 0, season, updatedAt: 0 };
+      return { tokenId, kills: 0, stormKills: 0, cards: [], peakWave: 0, streak: 0, season, updatedAt: 0 };
     }
     const storedSeason = String(row.season ?? '');
     return {
@@ -72,7 +72,7 @@ export class SaveStore {
       // A new season resets the board but never the token's own history.
       kills: storedSeason === season ? Number(row.kills) : 0,
       stormKills: Number(row.storm_kills),
-      chips: JSON.parse(String(row.chips ?? '[]')) as string[],
+      cards: JSON.parse(String(row.cards ?? '[]')) as string[],
       peakWave: Number(row.peak_wave),
       streak: storedSeason === season ? Number(row.streak) : 0,
       season,
@@ -83,14 +83,14 @@ export class SaveStore {
   private write(s: SaveRow): void {
     this.db
       .prepare(
-        `INSERT INTO saves (token_id, kills, storm_kills, chips, peak_wave, streak, season, updated_at)
+        `INSERT INTO saves (token_id, kills, storm_kills, cards, peak_wave, streak, season, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(token_id) DO UPDATE SET
-           kills = excluded.kills, storm_kills = excluded.storm_kills, chips = excluded.chips,
+           kills = excluded.kills, storm_kills = excluded.storm_kills, cards = excluded.cards,
            peak_wave = excluded.peak_wave, streak = excluded.streak, season = excluded.season,
            updated_at = excluded.updated_at`,
       )
-      .run(s.tokenId, s.kills, s.stormKills, JSON.stringify(s.chips), s.peakWave, s.streak, s.season, s.updatedAt);
+      .run(s.tokenId, s.kills, s.stormKills, JSON.stringify(s.cards), s.peakWave, s.streak, s.season, s.updatedAt);
   }
 
   recordClear(tokenId: number, tier: string, peakWave: number, loot: string[], now = Date.now()): SaveRow {
@@ -99,17 +99,17 @@ export class SaveStore {
     if (tier === 'storm') s.stormKills += 1;
     s.streak += 1;
     s.peakWave = Math.max(s.peakWave, peakWave);
-    s.chips = [...new Set([...s.chips, ...loot])];
+    s.cards = [...new Set([...s.cards, ...loot])];
     s.updatedAt = now;
     this.write(s);
     this.chapter(tokenId, 'clear', `${tier} x${s.kills} streak${s.streak}`, now);
     return s;
   }
 
-  /** Only the folder changes; kills and streak are untouched. */
-  setChips(tokenId: number, chips: string[], now = Date.now()): SaveRow {
+  /** Only the deck changes; kills and streak are untouched. */
+  setChips(tokenId: number, cards: string[], now = Date.now()): SaveRow {
     const s = this.get(tokenId, now);
-    s.chips = [...new Set(chips)];
+    s.cards = [...new Set(cards)];
     s.updatedAt = now;
     this.write(s);
     return s;
@@ -175,6 +175,16 @@ export class SaveStore {
          ON CONFLICT(token_id) DO UPDATE SET progress = excluded.progress, updated_at = excluded.updated_at`,
       )
       .run(tokenId, JSON.stringify(doc), now);
+  }
+
+  /**
+   * Every progression blob on disk, for the RANKS tab. The board is small and the
+   * ask is on tab-open, so a full scan beats four maintained indexes.
+   */
+  allProgress(): { tokenId: number; progress: string }[] {
+    return this.db
+      .prepare('SELECT token_id AS tokenId, progress FROM saves WHERE progress IS NOT NULL')
+      .all() as { tokenId: number; progress: string }[];
   }
 
   readWar<T>(week: string): T | null {

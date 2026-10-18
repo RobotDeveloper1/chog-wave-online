@@ -191,26 +191,49 @@ export function stepPlayer(
 }
 
 /** Other players, rendered from the server snapshot with smoothing. */
+/**
+ * Somebody else on the street, as the snapshot describes them. `tokenId` and
+ * `attributes` are the whole point: the model is built from THEIR traits, so a
+ * stranger walks in wearing their own Chog instead of the generic body.
+ */
+export interface RemoteBody {
+  id: string;
+  x: number;
+  y: number;
+  facing: number;
+  heading?: number;
+  anim: string;
+  tokenId: number;
+  attributes?: Record<string, string>;
+}
+
 export class RemoteAvatars {
-  private items = new Map<string, { chog: Chog; target: THREE.Vector3; facing: number }>();
+  private items = new Map<string, { chog: Chog; target: THREE.Vector3; facing: number; tokenId: number }>();
 
   constructor(
     private parent: THREE.Object3D,
-    private make: () => Promise<Chog | null>,
+    private make: (p: RemoteBody) => Promise<Chog | null>,
     private groundY: (x: number, z: number) => number = () => 0,
   ) {}
 
-  async sync(ids: { id: string; x: number; y: number; facing: number; heading?: number; anim: string }[]): Promise<void> {
+  async sync(ids: RemoteBody[]): Promise<void> {
     const seen = new Set<string>();
     for (const p of ids) {
       seen.add(p.id);
       // `facing` is the legacy left/right flag; `heading` is the real angle on the plane.
       const angle = p.heading ?? (p.facing > 0 ? Math.PI / 2 : -Math.PI / 2);
       let it = this.items.get(p.id);
+      // A body that changed Chogs (rejoin as another token) is a different cast member:
+      // the old model leaves before the new one walks in.
+      if (it && it.tokenId !== p.tokenId) {
+        this.parent.remove(it.chog.root);
+        this.items.delete(p.id);
+        it = undefined;
+      }
       if (!it) {
-        const chog = await this.make();
+        const chog = await this.make(p);
         if (!chog) return;
-        it = { chog, target: new THREE.Vector3(p.x, 0, p.y), facing: angle };
+        it = { chog, target: new THREE.Vector3(p.x, 0, p.y), facing: angle, tokenId: p.tokenId };
         chog.root.position.copy(it.target);
         this.parent.add(chog.root);
         this.items.set(p.id, it);

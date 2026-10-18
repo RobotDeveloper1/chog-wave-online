@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-import { TRAIT_TABLES, WEAK_TO, folderShape, loadoutOf, matchup } from '../src/traits.ts';
+import { TRAIT_TABLES, WEAK_TO, deckShape, loadoutOf, matchup } from '../src/traits.ts';
+import { matchup as sfMatchup } from '../src/sf/element.ts';
 import type { Element } from '../src/types.ts';
-import { ELEMENTS } from '../src/chips.ts';
+import { ELEMENTS } from '../src/cards.ts';
 
 /**
  * The scraped trait vocabulary is the spec for traits.ts. Reading it from the
@@ -49,7 +50,7 @@ describe('loadout derivation', () => {
     Naked: 'No',
   };
 
-  it('reads element, style, held card and folder shape off the traits', () => {
+  it('reads element, style, held card and deck shape off the traits', () => {
     const l = loadoutOf(full);
     expect(l.element).toBe('burn');
     expect(l.style).toBe('laser');
@@ -105,18 +106,29 @@ describe('element ring', () => {
   });
 
   it('doubles damage only for the attacker holding the matching element', () => {
-    expect(matchup('wave', 'burn')).toBe(2);
-    expect(matchup('burn', 'wave')).toBe(0.5);
+    expect(matchup('burn', 'wave')).toBe(2);
+    expect(matchup('wave', 'burn')).toBe(0.5);
     expect(matchup('burn', 'burn')).toBe(1);
     expect(matchup('volt', 'burn')).toBe(1);
   });
+
+  it('agrees with the combat table on every cycle pairing', () => {
+    // Two matchup tables diverged once — wave dealt double to burn on paper and half on
+    // the field — and every deck ban in the game followed the wrong one. This is the lock
+    // that keeps them one table.
+    for (const a of ['burn', 'wave', 'volt', 'frost'] as Element[]) {
+      for (const d of ['burn', 'wave', 'volt', 'frost'] as Element[]) {
+        expect(matchup(a, d), `${a} into ${d}`).toBe(sfMatchup(a, d));
+      }
+    }
+  });
 });
 
-describe('folder shape', () => {
+describe('deck shape', () => {
   it('shrinks duplicate allowance as rarity class rises', () => {
-    expect(folderShape('standard').copies).toBeGreaterThan(folderShape('giga').copies);
+    expect(deckShape('standard').copies).toBeGreaterThan(deckShape('giga').copies);
     for (const p of ['standard', 'balanced', 'mega', 'giga', 'chaos'] as const) {
-      expect(folderShape(p).size).toBeGreaterThanOrEqual(30);
+      expect(deckShape(p).size).toBeGreaterThanOrEqual(30);
     }
   });
 });

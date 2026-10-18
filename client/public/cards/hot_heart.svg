@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <radialGradient id="well" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#ff5a1e" stop-opacity=".85"/>
+      <stop offset="55%" stop-color="#3d0d02"/>
+      <stop offset="100%" stop-color="#07050d"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#39334f"/>
+      <stop offset="100%" stop-color="#100d1c"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset="60%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="18" fill="url(#plate)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#well)"/>
+  <g opacity=".14" stroke="#ffb347" stroke-width="1">
+    <line x1="5" y1="43" x2="123" y2="43"/><line x1="5" y1="85" x2="123" y2="85"/>
+    <line x1="43" y1="5" x2="43" y2="123"/><line x1="85" y1="5" x2="85" y2="123"/>
+  </g>
+  <g filter="url(#soft)">
+        <path d="M64 106 C24 78 16 56 30 42 C42 30 58 34 64 48 C70 34 86 30 98 42 C112 56 104 78 64 106 Z" fill="#d8283f"/>
+        <path d="M64 96 C36 74 30 58 40 48 C48 40 58 44 64 56 Z" fill="#ff5a70" opacity=".9"/>
+        <path d="M46 46 a10 10 0 0 1 10 -6" stroke="#fff" stroke-width="4" fill="none" opacity=".7"/></g>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#sheen)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="2"/>
+  <rect x="2.5" y="2.5" width="123" height="123" rx="16" fill="none" stroke="#ff8a3c" stroke-width="2.5" opacity=".7"/>
+  
+</svg>

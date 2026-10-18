@@ -1,6 +1,6 @@
 import type { Element } from './types.ts';
 import type { SectorId } from './wave.ts';
-import { CHIPS } from './chips.ts';
+import { CARDS } from './cards.ts';
 import { DUNGEONS, type BossArchetype, type DungeonDef } from './dungeonData.ts';
 import { nodeBudget, refLevel, type FightKind } from './loop.ts';
 import { xpForRoom, xpForRun } from './progress.ts';
@@ -43,8 +43,8 @@ export interface AreaNode {
   /** Node ids one step forward. */
   links: string[];
   enemy?: EnemySet;
-  /** Only chests and elites carry cards. */
-  chips?: string[];
+  /** Pre-rolled pay: chests and elites always carry, bosses too, waves about half the time. */
+  cards?: string[];
   label: string;
 }
 
@@ -78,7 +78,7 @@ export interface AreaRun {
   maxHp: number;
   wav: number;
   xp: number;
-  chips: string[];
+  cards: string[];
   buffs: { damage: number; guard: number };
   done: boolean;
   enteredAt: number;
@@ -90,6 +90,16 @@ export interface AreaRun {
    * client cannot walk up to a monster and claim its loot. Stepping anywhere else drops it.
    */
   armed: string | null;
+  /**
+   * The 1-of-3 the last combat node dealt, waiting for the pick. Walking on is allowed — the
+   * choice stays on the table until taken, and a newer combat node re-deals over it.
+   */
+  draft: { nodeId: string; options: string[] } | null;
+  /**
+   * The shrine rest waiting to thin the deck, or null. Stepping on is allowed — the
+   * choice stays on the table until taken, and a newer shrine re-rests over it.
+   */
+  shrine: { nodeId: string } | null;
 }
 
 const ELEMENTS: Element[] = ['burn', 'frost', 'volt', 'wave', 'prism', 'void'];
@@ -195,8 +205,16 @@ export function makeArea(seed: number, tier: number, sector: SectorId, opts: Are
         links: [],
         label: label(kind, row, last),
         ...(needsEnemy(kind) ? { enemy: enemyFor(kind, tier, row, rows, r, opts) } : {}),
-        // a boss pays in cards too: it is the reason to have come
-        ...(kind === 'chest' || kind === 'elite' ? { chips: chipRoll(kind, tier, r) } : kind === 'boss' && opts.dungeonId ? { chips: chipRoll('elite', tier + 1, r) } : {}),
+        // A boss pays in cards too: it is the reason to have come.
+        //
+        // The wave used to pay XP and WAV straight into the void with nothing on the ground —
+        // `cards` was only ever set for chests, elites and bosses, so the ordinary mob you fight
+        // most handed `spawnDrops` an empty list and the street stayed empty no matter how many
+        // you killed. Every mob now earns a pile, about half the time.
+        ...(kind === 'chest' || kind === 'elite' ? { cards: cardRoll(kind, tier, r) }
+          : kind === 'boss' && opts.dungeonId ? { cards: cardRoll('elite', tier + 1, r) }
+          : kind === 'wave' ? { cards: r() < WAVE_DROP_CHANCE ? cardRoll('wave', tier, r) : [] }
+          : {}),
       });
     }
   }
@@ -286,25 +304,64 @@ function enemyFor(kind: NodeKind, tier: number, row: number, rows: number, r: ()
   };
 }
 
-/** Two or three real cards off the shelf. Kept short so a run does not become a pile. */
-const COMMONS = CHIPS.filter((c) => !c.klass).map((c) => c.id);
-const MIDS = CHIPS.filter((c) => c.klass === 'M').map((c) => c.id);
-const HIGHS = CHIPS.filter((c) => c.klass === 'G').map((c) => c.id);
+/** Two or three real cards off the shelf. Kept short so a run does not become a pile. Signatures
+ * never roll here: they are earned — a fixed Line encounter, or the first clear — never luck. */
+const COMMONS = CARDS.filter((c) => !c.klass && !c.signature).map((c) => c.id);
+const MIDS = CARDS.filter((c) => c.klass === 'M' && !c.signature).map((c) => c.id);
+const HIGHS = CARDS.filter((c) => c.klass === 'G' && !c.signature).map((c) => c.id);
 
 function fromPool(pool: string[], r: () => number): string {
   return pool[Math.floor(r() * pool.length) % pool.length] ?? pool[0]!;
 }
 
-function chipRoll(kind: NodeKind, tier: number, r: () => number): string[] {
+/**
+ * How often an ordinary wave node's drop actually turns into a card.
+ *
+ * Half, not always: a wave is the node you walk through ten of, and a card every time is a bag
+ * faucet. The overflow is not free either — the duplicate path buys a card you already hold back
+ * at the sell price, which is worth less to the player than having dropped less in the first place.
+ * The other half of the time the kill pays XP and WAV as it always did.
+ */
+const WAVE_DROP_CHANCE = 0.5;
+
+function cardRoll(kind: NodeKind, tier: number, r: () => number): string[] {
   const n = kind === 'chest' ? 2 : 1;
   const out: string[] = [];
   for (let i = 0; i < n; i++) {
     const q = r();
-    const top = tier >= 3 ? 0.2 : tier >= 2 ? 0.1 : 0.04;
-    const mid = top + (tier >= 2 ? 0.45 : 0.3);
+    // A wave leans hard on the common pool. One in twenty reaches a MEGA, and only a deep fold
+    // reaches a GIGA: a mob you out-level immediately should still be worth walking over, not be
+    // handing out the deck's ceiling.
+    const top = kind === 'wave'
+      ? (tier >= 3 ? 0.05 : tier >= 2 ? 0.03 : 0.015)
+      : tier >= 3 ? 0.2 : tier >= 2 ? 0.1 : 0.04;
+    const mid = top + (kind === 'wave' ? 0.15 : tier >= 2 ? 0.45 : 0.3);
     out.push(fromPool(q < top ? HIGHS : q < mid ? MIDS : COMMONS, r));
   }
   if (kind === 'elite' && tier >= 3) out.push(fromPool(MIDS, r));
+  return out;
+}
+
+/**
+ * The 1-of-3 a combat node deals: the moment you play the next fight for. Waves deal commons,
+ * elites deal mids, the boss deals a high with two mids beside it — always three distinct
+ * cards, never a signature (those are earned, not rolled), never fewer than the shelf holds.
+ */
+export function draftRoll(kind: 'wave' | 'elite' | 'boss', tier: number, r: () => number): string[] {
+  const shelves = kind === 'wave'
+    ? [COMMONS, COMMONS, COMMONS]
+    : kind === 'elite'
+      ? [MIDS, MIDS, COMMONS]
+      : [HIGHS, MIDS, MIDS];
+  const out: string[] = [];
+  for (const shelf of shelves) {
+    const pool = shelf.length ? shelf : COMMONS;
+    if (!pool.length) continue;
+    for (let guard = 0; guard < 20; guard++) {
+      const id = pool[Math.floor(r() * pool.length) % pool.length]!;
+      if (!out.includes(id)) { out.push(id); break; }
+    }
+  }
   return out;
 }
 
@@ -346,12 +403,14 @@ export function startRun(area: DataArea, maxHp: number, now = Date.now()): AreaR
     maxHp,
     wav: 0,
     xp: 0,
-    chips: [],
+    cards: [],
     buffs: { damage: 0, guard: 0 },
     done: false,
     enteredAt: now,
     failed: false,
     armed: null,
+    draft: null,
+    shrine: null,
   };
 }
 
@@ -366,8 +425,8 @@ export function canEnter(run: AreaRun, area: DataArea, nodeId: string): { ok: bo
 }
 
 export type NodeOutcome =
-  | { kind: 'wave' | 'elite' | 'boss'; xp: number; wav: number; chips: string[]; damagePct: number }
-  | { kind: 'chest'; xp: number; wav: number; chips: string[] }
+  | { kind: 'wave' | 'elite' | 'boss'; xp: number; wav: number; cards: string[]; draft: string[]; damagePct: number }
+  | { kind: 'chest'; xp: number; wav: number; cards: string[] }
   | { kind: 'shrine'; heal: number; buff: 'damage' | 'guard' };
 
 /**
@@ -384,6 +443,7 @@ export function resolveNode(
   nodeId: string,
   roll = Math.random(),
   scale = 1,
+  r: () => number = Math.random,
 ): NodeOutcome | null {
   const node = nodeById(area, nodeId);
   if (!node) return null;
@@ -398,7 +458,9 @@ export function resolveNode(
         kind: node.kind,
         xp: Math.round(xpForRoom(area.tier) * hits * scale),
         wav: Math.round(wavForRoom(area.tier) * hits * taken * scale),
-        chips: node.chips ?? [],
+        // Pre-rolled cards still pay out as always; the draft is the pick on top, not instead.
+        cards: node.cards ?? [],
+        draft: draftRoll(node.kind, area.tier, r),
         damagePct: (node.enemy?.power ?? 8) * (1 - run.buffs.guard),
       };
     }
@@ -407,7 +469,7 @@ export function resolveNode(
         kind: 'chest',
         xp: Math.round(xpForRoom(area.tier) * scale),
         wav: Math.round(wavForChest(area.tier, roll) * scale),
-        chips: node.chips ?? [],
+        cards: node.cards ?? [],
       };
     case 'shrine': {
       const heal = Math.round(run.maxHp * 0.35);
@@ -419,7 +481,9 @@ export function resolveNode(
         kind: 'boss',
         xp: Math.round((xpForRoom(area.tier) + xpForRun(area.tier, flawless)) * scale),
         wav: Math.round(wavForChest(area.tier, flawless ? 0.9 : 0.5) * scale),
-        chips: node.chips ?? [],
+        // The boss's pre-rolled pay stays; the draft is the pick on top, not instead.
+        cards: node.cards ?? [],
+        draft: draftRoll(node.kind, area.tier, r),
         damagePct: node.enemy?.power ?? 10,
       };
     }
@@ -434,7 +498,9 @@ export function applyOutcome(run: AreaRun, area: DataArea, nodeId: string, outco
   const next: AreaRun = {
     ...run,
     cleared: [...run.cleared, nodeId],
-    chips: [...run.chips, ...('chips' in outcome ? outcome.chips : [])],
+    draft: 'draft' in outcome && outcome.draft.length ? { nodeId, options: outcome.draft } : run.draft,
+    shrine: outcome.kind === 'shrine' ? { nodeId } : run.shrine,
+    cards: [...run.cards, ...('cards' in outcome ? outcome.cards : [])],
     xp: run.xp + ('xp' in outcome ? outcome.xp : 0),
     wav: run.wav + ('wav' in outcome ? outcome.wav : 0),
     buffs: { ...run.buffs },
@@ -516,7 +582,7 @@ export function clearNode(
   scale = 1,
 ): { ok: boolean; reason?: string; run: AreaRun; outcome: NodeOutcome | null } {
   if (run.cleared.includes(run.at)) return { ok: false, reason: 'already cleared', run, outcome: null };
-  const outcome = resolveNode(run, area, run.at, roll, scale);
+  const outcome = resolveNode(run, area, run.at, roll, scale, rnd(Math.floor(roll * 4294967296)));
   if (!outcome) return { ok: false, reason: 'nothing to clear here', run, outcome: null };
   return { ok: true, run: applyOutcome(run, area, run.at, outcome, damageTaken), outcome };
 }

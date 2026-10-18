@@ -101,6 +101,17 @@ export class Auth {
     return s.address;
   }
 
+  /**
+   * A Privy login the server already verified adopts a game session. The address
+   * arrived inside Privy's own user object, not the request, so by the time this
+   * runs there is nothing left to prove — only a token to hand over.
+   */
+  adoptPrivy(address: string): string {
+    const token = randomBytes(24).toString('hex');
+    this.sessions.set(token, { address: address.toLowerCase(), made: Date.now() });
+    return token;
+  }
+
   signOut(token: string): void {
     this.sessions.delete(token);
   }

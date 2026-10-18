@@ -30,7 +30,7 @@ export const WU = {
   uWind: { value: 1 },
 };
 
-interface PatchOpts {
+export interface PatchOpts {
   hole?: boolean;
   flicker?: boolean;
   sway?: boolean;
@@ -48,7 +48,12 @@ const HASH = /* glsl */ `
   }
 `;
 
-function patch(m: THREE.Material, key: string, o: PatchOpts): void {
+/**
+ * Graft the city's shader language onto any Lambert-family material: the see-through hole
+ * around the player, wind sway, water shimmer, window flicker and per-vertex glow. Keys name
+ * programs, so a key must be unique per material recipe — city and Line keys must never match.
+ */
+export function patch(m: THREE.Material, key: string, o: PatchOpts): void {
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = WU.uTime;
     shader.uniforms.uPlayer = WU.uPlayer;

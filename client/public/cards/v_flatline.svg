@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <radialGradient id="well" cx="50%" cy="44%" r="66%">
+      <stop offset="0%" stop-color="#7b3ddb" stop-opacity=".85"/>
+      <stop offset="55%" stop-color="#0d0420"/>
+      <stop offset="100%" stop-color="#07050d"/>
+    </radialGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#39334f"/>
+      <stop offset="100%" stop-color="#100d1c"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#fff" stop-opacity=".16"/>
+      <stop offset="60%" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="18" fill="url(#plate)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#well)"/>
+  <g opacity=".14" stroke="#d9b6ff" stroke-width="1">
+    <line x1="5" y1="43" x2="123" y2="43"/><line x1="5" y1="85" x2="123" y2="85"/>
+    <line x1="43" y1="5" x2="43" y2="123"/><line x1="85" y1="5" x2="85" y2="123"/>
+  </g>
+  <g filter="url(#soft)">
+        <path d="M12 64 h22 l8 -26 l10 52 l8 -26 h56" fill="none" stroke="#7b3ddb" stroke-width="8" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M12 64 h22 l8 -26 l10 52 l8 -26 h56" fill="none" stroke="#d9b6ff" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="104" cy="64" r="6" fill="#ffffff"/></g>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="url(#sheen)"/>
+  <rect x="5" y="5" width="118" height="118" rx="14" fill="none" stroke="#000" stroke-opacity=".55" stroke-width="2"/>
+  <rect x="2.5" y="2.5" width="123" height="123" rx="16" fill="none" stroke="#b06bff" stroke-width="2.5" opacity=".7"/>
+  <g><circle cx="110" cy="18" r="12" fill="#0b0716" stroke="#5fe8d4" stroke-width="2.5"/><text x="110" y="24" font-family="monospace" font-size="15" font-weight="bold" fill="#5fe8d4" text-anchor="middle">M</text></g>
+</svg>

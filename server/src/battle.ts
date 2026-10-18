@@ -26,6 +26,8 @@ export interface DuelBossSpec {
   archetype?: string;
   power?: number;
   node?: boolean;
+  /** PvP: both bodies are players; the boss seat stays empty. */
+  pvp?: boolean;
   nodeId?: string;
   dungeonId?: string;
   areaId?: string;
@@ -34,8 +36,22 @@ export interface DuelBossSpec {
   tier?: SF.DuelTier;
   level?: number;
   difficulty?: number;
+  /**
+   * Which encounter of the Line this field is, when it is one.
+   *
+   * Set only by `World.lineEngage`, and read only by `line.clear`, which is why it exists: the
+   * clear action has to be able to ask *"is this field the fight the player is claiming to have
+   * won?"* without trusting the message. `area.kill` does the same job with `areaId`/`nodeId`,
+   * and the dungeon and the Line are deliberately indistinguishable from here — one `win`, one
+   * field, one server decision.
+   */
+  encounterId?: string;
+  /** The region it belongs to, so the snapshot can say where the player will come back to. */
+  region?: string;
   /** Capture the actual anomaly, not whichever boss occupies this sector next. */
   source?: Boss;
+  /** A brawl: whose shadow this is, who asked for it, and what both sides locked. */
+  brawl?: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number };
 }
 
 export interface JoinSpec {
@@ -43,7 +59,15 @@ export interface JoinSpec {
   tokenId: number;
   aggro: number;
   resist: Element | null;
-  folder: string[];
+  deck: string[];
+  /**
+   * The token's element basic attack, number substituted from its attributes.
+   *
+   * This is the one place the NFT's own stats become damage, and it only speaks while the
+   * deck is too small to fill a hand � which is the first region of the Line and nowhere
+   * else. See sf/loadout.ts basicMight.
+   */
+  basic: SF.BattleCard;
   level: number;
   /** Run integrity, when this is a dungeon field rather than a fresh fight. */
   hp?: number;
@@ -84,7 +108,10 @@ export class BattleSession {
   readonly archetype: SF.Archetype;
   readonly difficulty: number;
   readonly bossIdentity: string | null;
+  readonly brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number; told?: boolean } | null;
   readonly cause: NonNullable<Boss['cause']>;
+  /** When the field opened, so a bout the second pair never joins can dissolve. */
+  readonly createdAt = Date.now();
   private mirroredHp: number;
   private readonly baseHp: number | null;
   private archived = new Map<string, { hp: number; maxHp: number; outcome: SF.BodyOutcome; seconds: number }>();
@@ -102,12 +129,13 @@ export class BattleSession {
     this.archetype = SF.archetypeOf(boss.archetype ?? (this.training ? 'dummy' : undefined));
     this.difficulty = Math.max(1, Math.min(6, Math.round(boss.difficulty ?? 1)));
     this.bossIdentity = boss.source ? `${boss.source.id}:${boss.source.spawnedAt}` : null;
+    this.brawl = boss.brawl ? { ...boss.brawl } : null;
     this.cause = (boss.source?.cause ?? []).map((c) => ({ ...c }));
     this.baseHp = boss.partyHp ? Math.max(1, boss.maxHp) : null;
     this.state = SF.openSession({
       id,
       place: {
-        kind: this.training ? 'train' : this.nodeFight ? 'dungeon' : 'sector',
+        kind: this.spec.pvp ? 'pvp' : this.training ? 'train' : this.nodeFight ? 'dungeon' : 'sector',
         sector,
         ...(boss.dungeonId ? { dungeonId: boss.dungeonId } : {}),
         ...(boss.nodeId ? { roomId: boss.nodeId } : {}),
@@ -119,10 +147,12 @@ export class BattleSession {
         element: boss.element,
         level: boss.level ?? 2,
         power: boss.power,
+        quirk: boss.encounterId,
         tier: this.duelTier,
         difficulty: this.difficulty,
         training: this.training,
         node: this.nodeFight,
+        pvp: boss.pvp,
       },
       rand,
     });
@@ -155,7 +185,8 @@ export class BattleSession {
       tokenId: spec.tokenId,
       aggro: spec.aggro,
       ...(spec.resist ? { resist: spec.resist } : {}),
-      folder: spec.folder,
+      deck: spec.deck,
+      basic: spec.basic,
       level: spec.level,
     });
     if (spec.maxHp !== undefined) body.maxHp = Math.max(1, spec.maxHp);
@@ -168,12 +199,12 @@ export class BattleSession {
   setStats(id: string, stats: SF.DuelStats): void {
     const b = this.bodyOf(id);
     if (!b) return;
-    const fraction = b.gauge / Math.max(1, b.gaugeMs);
+    const fraction = b.charge / Math.max(1, b.chargeMs);
     b.stats = { ...stats };
     b.maxHp = stats.hp;
     b.hp = Math.min(b.hp, b.maxHp);
-    b.gaugeMs = Math.round(SF.gaugeMsFor({ gauge: stats.gauge, training: this.training }) * SF.gaugeScale(stats.gaugePct));
-    b.gauge = Math.min(b.gaugeMs, Math.round(fraction * b.gaugeMs));
+    b.chargeMs = Math.round(SF.chargeMsFor({ charge: stats.charge, training: this.training }) * SF.chargeScale(stats.chargePct));
+    b.charge = Math.min(b.chargeMs, Math.round(fraction * b.chargeMs));
     SF.widen(this.field, stats.cols);
   }
 
@@ -235,8 +266,8 @@ export class BattleSession {
   /** Reconcile releases made between ticks, then tick, then apply only landed HP deltas. */
   step(dtMs: number, sectors: SectorState[]): SessionStep {
     const signals: SectorSignal[] = [];
-    const sector = this.nodeFight || this.training ? null : sectors.find((s) => s.sector === this.sector);
-    const external = !this.nodeFight && !this.training;
+    const sector = this.nodeFight || this.training || this.brawl ? null : sectors.find((s) => s.sector === this.sector);
+    const external = !this.nodeFight && !this.training && !this.brawl;
     if (external && !this.matchesBoss(sector?.boss ?? null)) {
       this.state.over = true;
       this.state.result = 'loss';
@@ -277,7 +308,7 @@ export class BattleSession {
     // SF reports a shot's potential; the MMO credits only HP actually removed, including overkill.
     let credit = landed;
     for (const e of events) {
-      if (e.type !== 'hit' && e.type !== 'buster') continue;
+      if (e.type !== 'hit') continue;
       const actual = Math.min(credit, Math.max(0, e.damage));
       credit -= actual;
       e.damage = actual;

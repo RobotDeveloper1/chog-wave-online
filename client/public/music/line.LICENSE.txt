@@ -1,0 +1,10 @@
+"Journey To Ascend" by Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution (CC-BY).
+Commercial use allowed with credit.
+
+Source page: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2200001
+Direct file: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Journey%20To%20Ascend.mp3
+
+Used in CHOG Wave Online as line.mp3 (The Line travel music; every region
+without its own track falls back to this one).
+See docs/MUSIC.md for the slot table and rules.

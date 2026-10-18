@@ -23,18 +23,26 @@ import { clampStat } from './stats.ts';
  * coin flip. The game gets brutal right up to that line and never past it.
  */
 
-/** The gauge a fresh Chog waits on before the Custom Screen opens, before stats and gear. */
-export const GAUGE_MS = 7000;
-/** How full the gauge already is when you step onto the field. */
-export const FIRST_READY = 0.45;
+/**
+ * The charge a fresh Chog waits on before the Hand opens, before stats and gear.
+ *
+ * This is THE pacing decision of the whole fight, and it was set far too slow: seven seconds of
+ * standing still before your first card is seven seconds of not playing. The duel is cards and
+ * dodging, so the rhythm has to be: read the board, step off, play. ~2.4s a Hand, and a clean
+ * dodge shaves most of it off — a Chog that is actually reading the field gets its next Hand
+ * nearly twice as fast as one that stands in it.
+ */
+export const CHARGE_MS = 2400;
+/** How full the charge already is when you step onto the field. */
+export const FIRST_READY = 0.5;
 
 /**
- * The longest the Custom Screen may hold a player out of the fight.
+ * The longest the Hand may hold a player out of the fight.
  *
  * The screen is a safe room — nothing lands on you while you are in it — so it has to be a room
  * you can be pushed out of, or the answer to every hard fight is to stand in the menu.
  */
-export const CUSTOM_HOLD_MS = 8000;
+export const HAND_HOLD_MS = 8000;
 
 /** After a defeat, how long before the same fight lets you back on. */
 export const DEFEAT_LOCKOUT_MS = 8000;
@@ -44,13 +52,22 @@ export const TRAIN_PAYS_PER_DAY = 3;
 /** The floor. Below this the dodge is a coin flip, not a read. */
 export const MIN_TELEGRAPH_MS = 300;
 /** The rest between attacks never goes below this either, or nobody gets a program off. */
-export const MIN_QUIET_MS = 900;
+export const MIN_QUIET_MS = 700;
 
 /** What a STUN card buys on the boss's own clock, and the most one turn can bank. */
 export const STUN_MS = 700;
 export const STUN_CAP_MS = 1500;
 /** What share of a DRAIN card's damage comes back to the body that fired it. */
 export const DRAIN_HEAL = 0.15;
+/** What a BURN card leaves: ticks of damage, each a share of the landing hit. */
+export const BURN_TICKS = 3;
+export const BURN_EVERY_MS = 600;
+export const BURN_SHARE = 0.25;
+/** What a FREEZE card buys: the anomaly's clock runs this slow while it lasts. */
+export const FREEZE_MS = 2500;
+export const FREEZE_SLOW = 0.5;
+/** The most BARRIER charges one body holds. */
+export const BARRIER_CAP = 3;
 
 /** How much warning an over-levelled walk-in gets back, at most. */
 const TELEGRAPH_MAX_SCALE = 1.5;
@@ -91,9 +108,11 @@ export function volleyClock(args: {
   return {
     telegraph: Math.max(
       MIN_TELEGRAPH_MS,
-      Math.round((1100 - (p - 1) * 120) * scale * (args.training ? 1.5 : 1)),
+      Math.round((1000 - (p - 1) * 110) * scale * (args.training ? 1.5 : 1)),
     ),
-    gap: Math.max(MIN_QUIET_MS, Math.round((3600 - (p - 1) * 450) * scale * (args.training ? 1.35 : 1))),
+    // Rest between attacks: the time you get to aim a program in. Tighter than it was, because
+    // the charge is what governs the loop now — the boss does not need to buy the time too.
+    gap: Math.max(MIN_QUIET_MS, Math.round((2200 - (p - 1) * 260) * scale * (args.training ? 1.35 : 1))),
   };
 }
 
@@ -145,16 +164,18 @@ export const volleyAnchor = (tier: DuelTier): number => volleyDamage(2, tier);
  * one, which is how a dungeon ends up deadly at one end of the ladder and decorative at the
  * other while the table behind it never changed.
  */
-export function enemyVolleyDamage(phase: number, tier: DuelTier, power: number | undefined, archetype?: string): number {
+export function enemyVolleyDamage(phase: number, tier: DuelTier, power: number | undefined, archetype?: string, levelGap = 0): number {
   const flat = volleyDamage(phase, tier, archetype);
-  if (!power) return flat;
-  return Math.max(1, Math.round(flat * (power / volleyAnchor(tier))));
+  const gap = Math.max(-8, Math.min(10, Math.round(levelGap)));
+  const scaled = Math.max(1, Math.round(flat * Math.min(1.8, Math.max(0.6, 1 + gap * 0.07))));
+  if (!power) return scaled;
+  return Math.max(1, Math.round(scaled * (power / volleyAnchor(tier))));
 }
 
-/** Milliseconds from an empty gauge to a Custom Screen. Gauge 10 fills in about 60% of the time. */
-export function gaugeMsFor(args: { gauge?: number; training?: boolean } = {}): number {
-  const g = clampStat(args.gauge ?? 1);
-  const ms = GAUGE_MS * (1 - (g - 1) * 0.044);
+/** Milliseconds from an empty charge to a Hand. Charge 10 fills in about 60% of the time. */
+export function chargeMsFor(args: { charge?: number; training?: boolean } = {}): number {
+  const g = clampStat(args.charge ?? 1);
+  const ms = CHARGE_MS * (1 - (g - 1) * 0.044);
   return Math.round(args.training ? ms * 0.7 : ms);
 }
 

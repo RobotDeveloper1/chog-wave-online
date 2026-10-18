@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { INVITE_TTL_MS, Social, type SocialPlayer } from '../src/social.ts';
+import { CHALLENGE_TTL_MS, INVITE_TTL_MS, Social, type SocialPlayer } from '../src/social.ts';
 
 const player = (id: string, over: Partial<SocialPlayer> = {}): SocialPlayer => ({
   id,
@@ -150,9 +150,9 @@ describe('trading', () => {
 
   it('caps at six cards a side and drops duplicates', () => {
     const s = new Social();
-    const many = Array.from({ length: 12 }, (_, i) => `chip${i}`);
-    const t = s.offer('a1', 'b2', [...many.slice(0, 3), 'chip0'], many);
-    expect(t.giving).toEqual(['chip0', 'chip1', 'chip2']);
+    const many = Array.from({ length: 12 }, (_, i) => `card${i}`);
+    const t = s.offer('a1', 'b2', [...many.slice(0, 3), 'card0'], many);
+    expect(t.giving).toEqual(['card0', 'card1', 'card2']);
     expect(t.wanting).toHaveLength(6);
   });
 
@@ -162,6 +162,37 @@ describe('trading', () => {
     expect(s.pendingFor('b2').map((x) => x.id)).toEqual([t.id]);
     s.cancel(t.id);
     expect(s.pendingFor('b2')).toEqual([]);
+  });
+
+  it('carries items both ways and swaps the lists on accept', () => {
+    const s = new Social();
+    const t = s.offer('a1', 'b2', ['emberpaw'], ['arcsnap'], ['med', 'med'], ['amp']);
+    expect(t.givingItems).toEqual(['med', 'med']);
+    expect(t.wantingItems).toEqual(['amp']);
+    const r = s.accept(t.id, 'b2', holdings(['emberpaw'], ['arcsnap']), { a1: { med: 2 }, b2: { amp: 1 } });
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.swap.takeItems).toEqual(['med', 'med']);
+      expect(r.swap.giveItems).toEqual(['amp']);
+    }
+  });
+
+  it('refuses when an item stack ran short in the meantime', () => {
+    const s = new Social();
+    const t = s.offer('a1', 'b2', [], [], ['med', 'med'], []);
+    expect(s.accept(t.id, 'b2', holdings([], []), { a1: { med: 1 }, b2: {} })).toEqual({
+      ok: false,
+      reason: 'they no longer hold it',
+    });
+  });
+
+  it('refuses an item-only offer the acceptor can no longer pay', () => {
+    const s = new Social();
+    const t = s.offer('a1', 'b2', [], [], [], ['amp']);
+    expect(s.accept(t.id, 'b2', holdings([], []), { a1: {}, b2: {} })).toEqual({
+      ok: false,
+      reason: 'you no longer hold it',
+    });
   });
 });
 
@@ -231,5 +262,48 @@ describe('invitations', () => {
     expect(s.kick('a1', 'a1').ok).toBe(false);
     expect(s.kick('a1', 'c3').ok).toBe(true);
     expect(s.partyOf('a1')!.members).toEqual(['a1', 'b2']);
+  });
+});
+
+describe('brawling', () => {
+  it('holds one challenge per addressee until it is answered or runs out', () => {
+    const s = new Social();
+    expect(s.challenge('a1', 'b2', 0, 1000).ok).toBe(true);
+    expect(s.challengeFor('b2', 2000)).toMatchObject({ from: 'a1' });
+    expect(s.acceptChallenge('b2', 3000)).toMatchObject({ ok: true, from: 'a1' });
+    expect(s.challengeFor('b2', 4000)).toBeNull();
+  });
+
+  it('carries the wager to the answer, floored at zero', () => {
+    const s = new Social();
+    s.challenge('a1', 'b2', 250, 1000);
+    expect(s.challengeFor('b2', 2000)).toMatchObject({ from: 'a1', wager: 250 });
+    expect(s.acceptChallenge('b2', 3000)).toMatchObject({ ok: true, from: 'a1', wager: 250 });
+    s.challenge('a1', 'b2', -40, 4000);
+    expect(s.challengeFor('b2', 5000)).toMatchObject({ wager: 0 });
+  });
+
+  it('lets a challenge run out and refuses to answer it after', () => {
+    const s = new Social();
+    s.challenge('a1', 'b2', 0, 1000);
+    expect(s.challengeFor('b2', 1000 + CHALLENGE_TTL_MS + 1)).toBeNull();
+    expect(s.acceptChallenge('b2', 1000 + CHALLENGE_TTL_MS + 1).ok).toBe(false);
+  });
+
+  it('will not let a player fight themselves, and names who declined', () => {
+    const s = new Social();
+    expect(s.challenge('a1', 'a1', 0, 1000).ok).toBe(false);
+    s.challenge('a1', 'b2', 0, 1000);
+    expect(s.declineChallenge('b2')).toBe('a1');
+    expect(s.challengeFor('b2', 2000)).toBeNull();
+  });
+
+  it('drops challenges when either side walks away', () => {
+    const s = new Social();
+    s.challenge('a1', 'b2', 0, 1000);
+    s.challenge('c3', 'a1', 0, 1000);
+    s.unlink('a1');
+    expect(s.challengeFor('b2', 2000)).toBeNull();
+    expect(s.challengeFor('a1', 2000)).toBeNull();
   });
 });

@@ -8,6 +8,6 @@ describe('the build label', () => {
 
   it('names the game the way the player was told', () => {
     expect(GAME_NAME).toBe('CHOG WAVES');
-    expect(BUILD_VERSION).toBe('0.0.1');
+    expect(BUILD_VERSION).toBe('0.0.3');
   });
 });

@@ -1,6 +1,6 @@
 import type { ChogBuild, Element, Placement, SaveView } from './types.ts';
 import type { ItemId, ShopLine } from './economy.ts';
-import type { FolderLicence, Unlocks } from './progress.ts';
+import type { DeckLicence, Unlocks } from './progress.ts';
 import type { DuelView as SfView, Place } from './sf/view.ts';
 import type {
   FieldEvent as SfEvent,
@@ -170,8 +170,8 @@ export interface BattleMsg {
 }
 
 // ---------------------------------------------------------------------------
-// The duel. One conversation: the client says what it wants to do — step onto a panel, take that
-// card, hold the Buster — and the server answers with the whole field: the anomaly, the warning
+// The duel. One conversation: the client says what it wants to do — step onto a panel, take cards,
+// fire the program — and the server answers with the whole field: the anomaly, the warning
 // painted on the floor, everyone's integrity, on a short clock.
 //
 // The client never tells the server what happened. A number that floats off the boss is a number
@@ -186,13 +186,11 @@ export type DuelAction =
   | 'leave'
   /** One panel, on either axis. */
   | 'step'
-  /** The Custom Screen. */
+  /** The Hand. */
   | 'pick'
   | 'undo'
   | 'clear'
   | 'execute'
-  /** The Mega Buster. Press is `down: true`; it fires on release. */
-  | 'buster'
   /** Start or let go of a cover hold on a downed ally. */
   | 'cover';
 
@@ -208,8 +206,6 @@ export interface DuelMsg {
   dir?: StepDir;
   /** `pick`: the cell in the 3x2 screen. */
   cell?: number;
-  /** `buster`: true on press, false on release. */
-  down?: boolean;
   /** `cover`: the downed ally to hold. Null lets go. */
   with?: string | null;
 }
@@ -220,7 +216,7 @@ export interface DuelStartMsg {
   kind: 'start';
   view: SfView;
   place: Place;
-  /** What this Chog's Custom Screen is capped at, so the screen can say why a card is grey. */
+  /** What this Chog's Hand is capped at, so the screen can say why a card is grey. */
   caps: { slots: number; mega: number; giga: number };
   /**
    * The words this anomaly knows, in the order it will reach for them.
@@ -229,6 +225,8 @@ export interface DuelStartMsg {
    * in 400 ms is only fair if you have already seen the word.
    */
   moves: { id: string; name: string; read: string }[];
+  /** PvP: the other Chog, so the client can build its model once, at build. */
+  rival?: { tokenId: number; name: string; element: Element; traits: Record<string, string> };
 }
 
 export interface DuelTickMsg {
@@ -251,23 +249,16 @@ export interface DuelProgramMsg {
   kind: 'program';
   ok: boolean;
   /** What went out, in firing order, and what each card was worth at the moment it was sent. */
-  cards?: { chipId: string; element: Element; files: number[]; damage: number; counter: boolean }[];
+  cards?: { cardId: string; element: Element; files: number[]; damage: number; counter: boolean }[];
 }
 
-export interface DuelBusterMsg {
-  t: 'duel';
-  kind: 'buster';
-  ok: boolean;
-  damage?: number;
-  charged?: boolean;
-}
 
 export interface DuelCoverMsg {
   t: 'duel';
   kind: 'cover';
   ok: boolean;
   reason?: ReviveReason;
-  /** Who the server put the rescuer's hands on, so the client never has to guess. */
+  /** Who the server put the rescuer's hand on, so the client never has to guess. */
   target?: string;
 }
 
@@ -275,18 +266,20 @@ export interface DuelEndMsg {
   t: 'duel';
   kind: 'end';
   won: boolean;
-  reason: 'cleared' | 'wiped' | 'left' | 'gone';
+  reason: 'cleared' | 'wiped' | 'left' | 'gone' | 'draw';
+  /** PvP: the receipt is a bout, not a rift — the client words it that way. */
+  pvp?: boolean;
   name: string;
   seconds: number;
   /**
    * The grade. This is what the drop is priced on, and it is why the same boss is worth killing
    * twice: a clean fast run and a scrappy one are different loot.
    */
-  busting: { level: number; rank: Rank; counters: number; abacks: number; read: string };
+  rank: { level: number; letter: Rank; counters: number; abacks: number; read: string };
   drop: { rolls: number; rareChance: number };
   /** Wave this fight bled off the district. Negative when the body ran void cards. */
   wave: number;
-  chips: string[];
+  cards: string[];
   items: string[];
   /** How long before this fight lets a downed body back on. */
   lockoutMs: number;
@@ -304,7 +297,7 @@ export interface FieldMsg {
   t: 'field';
   session: string;
   sector: SectorId;
-  events: { type: string; chipId?: string; damage?: number; col?: number; chain?: number }[];
+  events: { type: string; cardId?: string; damage?: number; col?: number; chain?: number }[];
   bossHp: number;
   players: { id: string; hp: number; chain: number; col: number }[];
   bossCol: number;
@@ -329,6 +322,22 @@ export interface HitMsg {
 }
 
 /**
+ * The street's loot, as one list.
+ *
+ * Pushed whole rather than as spawn/despawn deltas: a drop is a rare event and the list is short,
+ * so a client that missed one message is still correct on the next instead of rendering a ghost
+ * pile forever. `action: 'take'` is the client asking for one; the server answers by pushing the
+ * list again with that drop gone, which is also the only way the client learns it succeeded.
+ */
+export interface DropsMsg {
+  t: 'drops';
+  action?: 'take';
+  /** The drop the client stepped on, for a take. */
+  id?: string;
+  drops: DropView[];
+}
+
+/**
  * The progression view: everything the bottom screen renders about one token.
  *
  * It lives here rather than in the server because it is a wire contract — the client
@@ -344,7 +353,6 @@ export interface ProfileStats {
   sells: number;
   trades: number;
   links: number;
-  lasers: number;
   chats: number;
   sightings: number;
   deaths: number;
@@ -355,6 +363,33 @@ export interface ProfileStats {
   trains: number;
   waves: number;
   dodges: number;
+  /** Brawls won and lost. Counted from the season the board went up. */
+  pvpWins: number;
+  pvpLosses: number;
+}
+
+/** One name on one board of the RANKS tab. Every figure is server-computed. */
+export interface RankRow {
+  tokenId: number;
+  /** The callsign while they are online, `#id` once they leave. */
+  name: string;
+  level: number;
+  xp: number;
+  pvpWins: number;
+  pvpLosses: number;
+  chog: number;
+  /** Line screens cleared, and how far down the road that reaches. */
+  lineCleared: number;
+  lineRegion: string;
+}
+
+/** The RANKS tab: four boards plus the reader's own token, for the highlight. */
+export interface RanksView {
+  level: RankRow[];
+  pvp: RankRow[];
+  chog: RankRow[];
+  line: RankRow[];
+  you: number;
 }
 
 /** One entry in the Library: what the player is allowed to know about a fusion. */
@@ -375,7 +410,7 @@ export interface DungeonView {
   reason: string | null;
 }
 
-export interface FolderView {
+export interface DeckView {
   /** What the next fight deals from, with its repeats. */
   cards: string[];
   rules: {
@@ -387,12 +422,12 @@ export interface FolderView {
     banned: Element;
     signature: string;
     /** How much of each cap above came from a level licence rather than the Chog's own shape. */
-    licence: FolderLicence;
+    licence: DeckLicence;
   };
-  /** Every card this Chog may put in a folder: born, owned, fused. */
+  /** Every card this Chog may put in a deck: born, owned, fused. */
   pool: string[];
   check: { ok: boolean; errors: string[]; mega: number; giga: number; fused: number };
-  /** Whether this is the folder the token was born with, untouched. */
+  /** Whether this is the deck the token was born with, untouched. */
   born: boolean;
 }
 
@@ -459,7 +494,7 @@ export interface RunView {
 
 export interface ShopView {
   factor: number;
-  chips: ShopLine[];
+  cards: ShopLine[];
   supply: ShopLine[];
   refreshesIn: string;
   wav: number;
@@ -475,8 +510,9 @@ export interface ProfileView {
   toCap: number;
   unlocks: Unlocks;
   wav: number;
+  chog: number;
   items: Partial<Record<ItemId, number>>;
-  chips: string[];
+  cards: string[];
   bagCap: number;
   amp: boolean;
   ward: boolean;
@@ -505,7 +541,7 @@ export interface ProfileView {
   /** The guide's one-off marks (the welcome was shown, a tip was read). */
   flags: string[];
   /** The deck the next fight deals from, and the rules that shaped it. */
-  folder: FolderView;
+  deck: DeckView;
   /** The fusion Library. Unfired recipes stay unnamed on purpose. */
   library: { discovered: number; total: number; recipes: LibraryRecipe[] };
 }
@@ -537,4 +573,38 @@ export interface AreaView {
   nodes: AreaNodeView[][];
   tierUnlocked: number;
   level: number;
+}
+
+/**
+ * A piece of loot lying on the street.
+ *
+ * Loot used to arrive as a menu entry — you won a fight and the bag was quietly fuller. That is
+ * a receipt, not a reward. A drop is the same payout with a body: it falls where you stood, it
+ * glows in its own rarity, and you have to walk over and take it. The server owns the position
+ * and the contents; the client only draws what it is told and says which one it stepped on.
+ */
+export interface DropView {
+  id: string;
+  /** Where it fell, in the street's own coordinates. */
+  x: number;
+  z: number;
+  /** A card, a consumable, or money. The tooltip reads differently for each. */
+  kind: 'card' | 'item' | 'wav';
+  /** The card id or item id — what `card()` / `ITEMS` resolve. Unused for a money drop. */
+  key?: string;
+  /** For a money drop: how many WAV the pile is worth. */
+  amount?: number;
+  name: string;
+  element?: Element;
+  /** S/M/G for a card, so the tooltip can print the class the bag would. */
+  klass?: 'S' | 'M' | 'G';
+  /**
+   * How loud it is. Decides the beam's colour and the tooltip's frame, which is the only reason
+   * a player looks twice at one pile instead of hoovering the street.
+   */
+  rarity: 'common' | 'rare' | 'epic';
+  /** Seconds before the street reclaims it. A drop that never expires is just litter. */
+  ttl: number;
+  /** Who it fell for. Only that player may take it — the street is shared, the loot is not. */
+  owner: string;
 }

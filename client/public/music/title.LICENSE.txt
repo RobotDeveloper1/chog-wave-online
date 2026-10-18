@@ -1,0 +1,9 @@
+"Adventures in Adventureland" by Kevin MacLeod (incompetech.com)
+Licensed under Creative Commons: By Attribution (CC-BY).
+Commercial use allowed with credit.
+
+Source page: https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2100029
+Direct file: https://incompetech.com/music/royalty-free/mp3-royaltyfree/Adventures%20in%20Adventureland.mp3
+
+Used in CHOG Wave Online as title.mp3 (title screen music).
+See docs/MUSIC.md for the slot table and rules.

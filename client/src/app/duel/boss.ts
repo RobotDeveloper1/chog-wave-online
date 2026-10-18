@@ -148,8 +148,11 @@ export function buildBoss(archetype: string, element: string, tier: string): Bos
   const spark = archetype === 'spark';
   const surge = archetype === 'surge';
   const front = archetype === 'front';
+  const imp = archetype === 'imp';
+  const wisp = archetype === 'wisp';
+  const husk = archetype === 'husk';
   const big = tier === 'storm' ? 1.12 : 1;
-  const size = (baron ? 1.3 : spark ? 0.82 : dummy ? 0.95 : 1) * big;
+  const size = (baron ? 1.3 : husk ? 1.05 : spark ? 0.82 : imp ? 0.68 : wisp ? 0.9 : dummy ? 0.95 : 1) * big;
 
   const mats: THREE.ShaderMaterial[] = [];
   const disposables: { dispose(): void }[] = [];
@@ -164,6 +167,9 @@ export function buildBoss(archetype: string, element: string, tier: string): Bos
   else if (baron) coreGeo = track(new THREE.DodecahedronGeometry(1.35, 1));
   else if (spark) coreGeo = track(new THREE.IcosahedronGeometry(1.0, 2));
   else if (front) coreGeo = track(new RoundedBoxGeometry(1.5, 3.0, 1.5, 4, 0.25));
+  else if (imp) coreGeo = track(new THREE.TetrahedronGeometry(1.2, 1));
+  else if (wisp) coreGeo = track(new THREE.TorusGeometry(0.85, 0.3, 12, 28));
+  else if (husk) coreGeo = track(new RoundedBoxGeometry(1.8, 1.8, 1.8, 3, 0.12));
   else coreGeo = track(new THREE.IcosahedronGeometry(1.35, 3));
 
   const coreMat = glitchMaterial(colour, dark, mirror ? 0.85 : 0);
@@ -233,10 +239,10 @@ export function buildBoss(archetype: string, element: string, tier: string): Bos
   const eyes: THREE.Mesh[] = [];
   if (!dummy) {
     const eyeGeo = track(new THREE.CapsuleGeometry(0.075, 0.5, 4, 8));
-    for (const x of front ? [-2.2, 2.2] : [-0.42, 0.42]) {
+    for (const x of front ? [-2.2, 2.2] : wisp ? [-0.62, 0.62] : [-0.42, 0.42]) {
       const e = new THREE.Mesh(eyeGeo, eyeMat);
       e.rotation.z = Math.PI / 2 + (x < 0 ? 0.28 : -0.28);
-      e.position.set(x, 0.22, front ? 0.78 : 1.2);
+      e.position.set(x, 0.22, front ? 0.78 : wisp ? 0.35 : 1.2);
       eyes.push(e);
       body.add(e);
     }
@@ -251,8 +257,8 @@ export function buildBoss(archetype: string, element: string, tier: string): Bos
 
   // ---------------------------------------------------------------- orbiting parts
   const ringMat = track(new THREE.MeshBasicMaterial({ color: colour.clone().multiplyScalar(1.8), transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-  const ringA = new THREE.Mesh(track(new THREE.TorusGeometry(2.25, 0.045, 8, 80)), ringMat);
-  const ringB = new THREE.Mesh(track(new THREE.TorusGeometry(2.7, 0.03, 8, 80)), ringMat);
+  const ringA = new THREE.Mesh(track(new THREE.TorusGeometry(wisp ? 2.6 : 2.25, 0.045, 8, 80)), ringMat);
+  const ringB = new THREE.Mesh(track(new THREE.TorusGeometry(wisp ? 3.0 : 2.7, 0.03, 8, 80)), ringMat);
   ringA.rotation.x = Math.PI / 2.4;
   ringB.rotation.x = Math.PI / 1.9;
   ringB.rotation.y = 0.6;
@@ -270,25 +276,25 @@ export function buildBoss(archetype: string, element: string, tier: string): Bos
   const sc = new THREE.Vector3();
   const ps = new THREE.Vector3();
 
-  // armour plates for the Baron, gold on a black body
+  // armour plates for the Baron (gold) and the Husk (rust, fewer)
   const plates: THREE.Mesh[] = [];
-  if (baron) {
+  if (baron || husk) {
     const plateGeo = track(new RoundedBoxGeometry(1.5, 0.55, 0.22, 3, 0.07));
-    const plateMat = track(new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffc23d).multiplyScalar(1.7), toneMapped: false }));
-    for (let i = 0; i < 4; i++) {
+    const plateMat = track(new THREE.MeshBasicMaterial({ color: new THREE.Color(husk ? 0xb05028 : 0xffc23d).multiplyScalar(1.7), toneMapped: false }));
+    for (let i = 0; i < (husk ? 2 : 4); i++) {
       const p = new THREE.Mesh(plateGeo, plateMat);
-      p.userData.a = (i / 4) * Math.PI * 2;
+      p.userData.a = (i / (husk ? 2 : 4)) * Math.PI * 2;
       plates.push(p);
       body.add(p);
     }
   }
 
-  // lightning for the Spark and the Surge
+  // lightning for the Spark, the Surge and the Imp
   const bolts: Bolt[] = [];
-  if (spark || surge) {
-    for (let i = 0; i < (surge ? 5 : 3); i++) {
+  if (spark || surge || imp) {
+    for (let i = 0; i < (surge ? 5 : spark ? 3 : 2); i++) {
       const b = new Bolt(colour, 8);
-      b.amp = surge ? 0.7 : 0.45;
+      b.amp = surge ? 0.7 : spark ? 0.45 : 0.32;
       bolts.push(b);
       body.add(b.line);
     }

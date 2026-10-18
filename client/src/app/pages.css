@@ -1,5 +1,5 @@
 /*
- * The lower screen's deck pages: the Folder, where the deck a Chog fights with is built, and
+ * The lower screen's deck pages: the Deck, where the deck a Chog fights with is built, and
  * the Library, the fusion book. Same language as the rest of the menu — flat plates in a recess,
  * mono for numbers, a 45 degree cut on the big surfaces — with the element colour (`--c`) as the
  * only accent a row is allowed.
@@ -21,6 +21,7 @@
 .fdr.dim { opacity: .5; }
 .fdr .el { display: grid; place-items: center; color: var(--c); }
 .fdr .el svg { width: 1.1em; height: 1.1em; }
+.fdr .el img.card-art { width: 1.3em; height: 1.3em; object-fit: cover; border-radius: 3px; display: block; }
 .fdr .nm { min-width: 0; font: 700 .88em var(--ui); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fdr .nm .sig { margin-right: .3em; font-style: normal; color: var(--gold); }
 .fdr .st { font: 400 .76em var(--mono); color: var(--dim); white-space: nowrap; }
@@ -215,7 +216,7 @@
 #deck.touch .dg-detail dl { grid-template-columns: minmax(0, 5.5em) minmax(0, 1fr); }
 
 /*
- * A folder row carries five facts. Across a phone they fit on two lines: the card's name with the
+ * A deck row carries five facts. Across a phone they fit on two lines: the card's name with the
  * class it belongs to beside it, its power and how many you own under that, and the button to
  * take it out on the right, big enough to hit without looking.
  */
@@ -226,7 +227,7 @@
 #deck.touch .fdr .kl { grid-column: 3; grid-row: 1; text-align: right; font-size: .62em; }
 #deck.touch .fdr .n { grid-column: 3; grid-row: 2; text-align: right; }
 #deck.touch .fdr button { grid-column: 4; grid-row: 1 / 3; width: 2.5em; height: 2.5em; }
-/* the footer of the Folder has to stay reachable while the pool scrolls under it */
+/* the footer of the Deck has to stay reachable while the pool scrolls under it */
 #deck.touch .fold2 footer { position: sticky; bottom: -.6em; margin: 0 -.6em -.6em; padding: .5em .6em .6em; background: #0d0817; border-top: 1px solid var(--edge); }
 #deck.touch .fd-btns { grid-column: 1; grid-row: auto; justify-content: stretch; }
 #deck.touch .fd-btns button { flex: 1; padding: .85em .6em; font-size: .82em; }
@@ -256,3 +257,136 @@
 #deck.touch .dgs.run .mrow { gap: .45em; }
 #deck.touch .dgs.run .mrow .rl { width: 3em; }
 
+
+/* item and card art in the bag and the shops */
+.line.has-art { display: flex; align-items: center; gap: .7em; }
+.item-art { width: 2.9em; height: 2.9em; flex: none; border: 1px solid var(--edge); border-radius: 4px; background: #0a0f0c; }
+.line-main { display: flex; flex-direction: column; min-width: 7em; }
+.line.has-art .d { flex: 1; }
+.card-art { width: 1.15em; height: 1.15em; vertical-align: -0.22em; margin-right: .3em; border-radius: 2px; }
+
+/* ---------------------------------------------------------------------------
+   THE LINE � the maps tab.
+
+   Six rows and two gates, and it has to read at a glance from the bottom screen of a
+   clamshell: which region you are in, which are shut, and what the shut ones are waiting for.
+   The lock text is the server's own sentence, so it is never shorter than the truth.
+   --------------------------------------------------------------------------- */
+
+.linehead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--recess);
+}
+.linehead b { display: block; letter-spacing: .12em; font-size: 1.05em; }
+.linehead small { color: var(--dim); display: block; margin-top: 2px; }
+
+.mlist { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.mregion {
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  border-radius: 4px;
+  padding: 7px 9px;
+  background: var(--recess);
+}
+.mregion.done { border-left-color: var(--frost); }
+.mregion.open { border-left-color: var(--volt); background: color-mix(in oklab, var(--recess), var(--volt) 8%); }
+.mregion.here { border-left-color: var(--wave); background: color-mix(in oklab, var(--recess), var(--wave) 10%); }
+.mregion.sealed { opacity: .55; }
+
+.mhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.mhead b { letter-spacing: .1em; }
+.mstate { font-family: var(--mono); font-size: .72em; color: var(--dim); letter-spacing: .08em; }
+.mhere { font-family: var(--mono); font-size: .7em; color: var(--wave); letter-spacing: .1em; }
+
+.mtag { margin: 3px 0 6px; color: var(--dim); font-size: .92em; line-height: 1.35; }
+
+.mfoot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mcount, .mlock { font-family: var(--mono); font-size: .72em; color: var(--dim); }
+.mboss { display: block; margin-top: 3px; color: var(--dim); font-family: var(--mono); font-size: .68em; }
+.mdrops { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 6px; }
+.mdrops .mlabel { font-family: var(--mono); font-size: .68em; color: var(--dim); letter-spacing: .1em; margin-right: 2px; }
+.mdrop { position: relative; display: inline-flex; }
+.mdrop-art { width: 22px; height: 22px; border: 1px solid var(--line); border-radius: 3px; background: var(--recess); opacity: .45; }
+.mdrop.have .mdrop-art { opacity: 1; border-color: var(--frost); }
+.mdrop .mtip { display: none; position: absolute; bottom: 26px; left: -6px; z-index: 5; align-items: center; gap: 8px; padding: 8px 10px; background: var(--plate); border: 1px solid var(--edge-hi); border-radius: 4px; width: max-content; max-width: 21em; box-shadow: 0 4px 14px rgba(0,0,0,.5); }
+.mdrop:hover .mtip { display: flex; }
+.mtip-art { width: 38px; height: 38px; }
+.mtip-tx { display: flex; flex-direction: column; gap: 2px; min-width: 13em; }
+.mtip-tx b { font-size: 1.02em; }
+.mtip-tx small { color: var(--dim); font-size: .78em; }
+.mtip-tx small.mwhat { color: var(--ink); font-size: .84em; line-height: 1.35; }
+
+.mtravel, .mback {
+  font: inherit;
+  font-family: var(--mono);
+  font-size: .74em;
+  letter-spacing: .1em;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--wave);
+  color: var(--wave);
+  background: transparent;
+  cursor: pointer;
+}
+.mtravel:hover, .mback:hover { background: color-mix(in oklab, var(--wave) 16%, transparent); }
+.mback { border-color: var(--gold); color: var(--gold); }
+
+.mphase { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
+.mphase > div { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; background: var(--recess); }
+.mphase b { display: block; letter-spacing: .1em; font-size: .86em; }
+.mphase small { display: block; margin-top: 2px; color: var(--dim); font-size: .82em; line-height: 1.3; }
+.mphase .open { border-color: var(--frost); }
+.mphase .open b { color: var(--frost); }
+.mphase .shut { opacity: .6; }
+
+.t-line { color: var(--frost); }
+
+/* The 1-of-3 draft: three cards, one pick. */
+.draft { border: 1px solid var(--gold); border-radius: 8px; padding: .5em .6em; margin: .5em 0; background: rgba(245,195,67,.06); }
+.draft header span { color: var(--gold); font-weight: 700; letter-spacing: .08em; }
+.draft-opts { display: flex; gap: .5em; margin-top: .4em; }
+.draft-pick { flex: 1; display: flex; flex-direction: column; align-items: center; gap: .25em; padding: .5em .3em; background: #14141c; border: 1px solid #3a3a4a; border-radius: 6px; color: inherit; cursor: pointer; }
+.draft-pick:hover { border-color: var(--gold); }
+.draft-art { width: 3em; height: 3em; object-fit: cover; border-radius: 4px; }
+.draft-pick b { font-size: .85em; }
+.draft-pick small { opacity: .65; font-size: .75em; }
+
+/* The shrine rest: thin one held card. */
+.shrine { border: 1px solid var(--cyan); border-radius: 8px; padding: .5em .6em; margin: .5em 0; background: rgba(127,216,255,.05); }
+.shrine header span { color: var(--cyan); font-weight: 700; letter-spacing: .08em; }
+.shrine header small { opacity: .65; margin-left: .6em; }
+.thin-list { display: flex; flex-direction: column; gap: .3em; margin-top: .4em; max-height: 16em; overflow-y: auto; }
+.thin-line { display: flex; align-items: center; gap: .5em; padding: .25em .4em; background: #14141c; border: 1px solid #2a2a38; border-radius: 6px; }
+.thin-line b { flex: 1; font-size: .85em; }
+.thin-line i { opacity: .55; font-size: .75em; }
+.thin-line button { background: transparent; border: 1px solid var(--rose); color: var(--rose); border-radius: 4px; padding: .2em .6em; cursor: pointer; font-size: .75em; }
+.thin-line button:hover { background: var(--rose); color: #14141c; }
+.thin-art { width: 1.6em; height: 1.6em; object-fit: cover; border-radius: 3px; }
+
+/* The run minimap: every node wears what it is worth. */
+.dgs.run .node { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1.2; }
+.dgs.run .node .nt { font-size: .4em; letter-spacing: .05em; opacity: .85; font-family: var(--mono); white-space: nowrap; }
+.dgs.run .node.off .nt { display: none; }
+
+.dgs.run .build { color: var(--gold); font-weight: 700; letter-spacing: .06em; }
+.dgs .macro { margin: .4em 0; padding: .35em .6em; border: 1px solid var(--edge); border-radius: 6px; color: var(--dim); font-size: .78em; letter-spacing: .04em; }
+
+.lbr .lib-art { width: 1.3em; height: 1.3em; vertical-align: -.25em; border-radius: 2px; margin-right: .15em; }
+
+.opt .sub { margin: 1em 0 .2em; color: var(--dim); letter-spacing: .12em; font-size: .8em; }
+.opt .row { display: flex; align-items: center; gap: .8em; padding: .45em 0; border-bottom: 1px solid var(--edge); }
+.opt .grow { flex: 1; }
+.opt .note { color: var(--dim); font-size: .82em; }
+.opt input[type=range] { width: 9em; accent-color: var(--mint); }
+.opt .val { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.opt .seg { display: flex; gap: .3em; }
+.opt button { border: 1px solid var(--edge-hi); background: var(--plate); color: var(--ink); border-radius: 6px; padding: .3em .7em; cursor: pointer; white-space: nowrap; }
+.opt button.on { border-color: var(--mint); color: var(--mint); box-shadow: inset 0 0 0 1px var(--mint); }

@@ -74,7 +74,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 /* ---------------------------------------------------------------- deck */
 
 /*
- * The game is a 16:9 picture, because it is played in a browser window, and the menu is the
+ * The game is the window: full-bleed at whatever aspect the glass is, and the menu is the
  * DS's lower screen: a 4:3 touch screen in a bezel that slides up over the picture when it is
  * asked for (Tab) and away again when it is not. The picture is as large as the window allows
  * without ever being stretched, and everything on it is sized from one number, its height
@@ -85,14 +85,13 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
   background: #050309;
 }
 #console {
-  --sw: min(100vw, calc(100vh * 16 / 9));
-  --sh: calc(var(--sw) * 9 / 16);
+  --sw: 100vw;
+  --sh: 100vh;
   /* the lower screen: 4:3, and a bit over half the height of the picture */
   --ph: calc(var(--sh) * 0.6);
   --pw: calc(var(--ph) * 4 / 3);
   --bz: calc(var(--sh) * 0.012);
   position: relative; width: var(--sw); height: var(--sh); overflow: hidden; background: #05030b;
-  box-shadow: 0 0 0 1px var(--edge), 0 1em 3em rgba(0,0,0,.7);
 }
 #top { position: absolute; inset: 0; overflow: hidden; }
 #gl { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -106,7 +105,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
   transform: translateX(calc(100% + var(--sh) * 0.08)); opacity: 0; pointer-events: none;
   transition: transform .32s cubic-bezier(.2,.8,.2,1), opacity .22s;
 }
-#deck.menu #bottom, #deck.dueling.customopen #bottom { transform: none; opacity: 1; pointer-events: auto; }
+#deck.menu #bottom, #deck.dueling.handopen #bottom { transform: none; opacity: 1; pointer-events: auto; }
 #lower {
   position: relative; width: var(--pw); height: var(--ph); overflow: hidden; border-radius: calc(var(--bz) * .6);
   display: flex; flex-direction: column; container-type: inline-size; font-size: calc(var(--ph) / 34);
@@ -194,6 +193,11 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 .meter > i::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(90deg, rgba(0,0,0,0) 0 calc(10% - 2px), rgba(0,0,0,.55) calc(10% - 2px) 10%); }
 .meter .tick { position: absolute; inset: 0; background: repeating-linear-gradient(90deg, transparent 0 calc(10% - 2px), rgba(0,0,0,.55) calc(10% - 2px) 10%); }
 .meter span { position: absolute; right: .45em; top: 50%; transform: translateY(-50%); font: 400 .78em var(--mono); color: #fff; }
+/* The integrity bar carries its own numbers, so it has to be tall enough to hold them. At .42em it
+   was a 6px hairline with "88/100" crushed inside it — a number nobody could read while running,
+   which is the whole point of the number. */
+#hud-player .meter.hp { height: 1.35em; }
+#hud-player .meter.hp span { font-size: .82em; letter-spacing: .03em; text-shadow: 0 1px 2px rgba(0,0,0,.9); }
 .meter.hp > i { background: var(--rose); }
 .meter.xp { height: .55em; }
 .meter.xp > i { background: var(--violet); }
@@ -262,6 +266,85 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 #hud-invite button:first-child { border-color: var(--mint); background: var(--mint); color: #06180f; }
 #hud-invite button:hover { border-color: #fff; }
 
+/* right-click a Chog on the street: who they are and what you can ask of them */
+#player-menu { position: fixed; z-index: 40; min-width: 13em; padding-top: .4em; background: var(--plate); border: 1px solid var(--edge-hi); box-shadow: 0 4px 0 rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.4); font-family: var(--ui); color: var(--ink); user-select: none; }
+#player-menu header { display: flex; flex-direction: column; gap: .1em; padding: .3em .85em .5em; border-bottom: 1px solid var(--edge); }
+#player-menu header b { font-size: .95em; }
+#player-menu header small { color: var(--dim); font: 400 .72em var(--mono); letter-spacing: .06em; }
+#player-menu button { display: flex; gap: .6em; align-items: center; width: 100%; padding: .45em .85em; border: 0; background: none; color: var(--ink); font: 700 .82em var(--ui); text-align: left; cursor: pointer; }
+#player-menu button:hover:not(:disabled) { background: #2b2049; color: var(--mint); }
+#player-menu button.soon { color: var(--dim); cursor: default; }
+#player-menu button.soon:hover { background: none; color: var(--dim); }
+
+/* the trade composer: two columns of tick boxes over the street */
+#trade-composer { position: fixed; z-index: 41; left: 50%; top: 12%; transform: translateX(-50%); width: min(46em, 94vw); max-height: 76vh; display: flex; flex-direction: column; background: var(--plate); border: 1px solid var(--edge-hi); box-shadow: 0 6px 0 rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.4); font-family: var(--ui); color: var(--ink); user-select: none; }
+#trade-composer header { display: flex; flex-direction: column; gap: .1em; padding: .5em 1em; border-bottom: 1px solid var(--edge); }
+#trade-composer header b { font-size: 1em; }
+#trade-composer header small { color: var(--dim); font: 400 .72em var(--mono); letter-spacing: .06em; }
+#trade-composer .td-cols { display: flex; background: var(--edge); gap: 1px; min-height: 0; flex: 1; }
+#trade-composer .td-col { flex: 1; display: flex; flex-direction: column; background: var(--plate); min-width: 0; }
+#trade-composer .td-col h3 { margin: 0; padding: .45em 1em .3em; font: 700 .78em var(--mono); letter-spacing: .1em; color: var(--mint); }
+#trade-composer .td-list { overflow-y: auto; max-height: 46vh; padding: 0 .4em .5em; }
+#trade-composer .td-row { display: flex; align-items: center; gap: .55em; padding: .28em .5em; border-radius: var(--r); font: 400 .85em var(--ui); cursor: pointer; }
+#trade-composer .td-row:hover { background: #2b2049; }
+#trade-composer .td-row input { accent-color: var(--mint); }
+#trade-composer .td-row span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#trade-composer .td-art { width: 1.7em; height: 1.7em; flex: none; }
+#trade-composer .td-idle { padding: .6em 1em; color: var(--faint); font: 400 .8em var(--ui); }
+#trade-composer footer { display: flex; gap: .6em; padding: .6em 1em; border-top: 1px solid var(--edge); }
+#trade-composer footer button { flex: 1; padding: .5em; border-radius: var(--r); border: 1px solid var(--edge-hi); background: var(--plate-up); color: var(--ink); font: 700 .88em var(--ui); cursor: pointer; }
+#trade-composer footer button:first-child { border-color: var(--mint); background: var(--mint); color: #06180f; }
+#trade-composer footer button:hover { border-color: #fff; }
+
+/* the star that marks someone you keep on your list */
+.pm .nm .fr { margin-right: .25em; color: var(--gold); font-style: normal; }
+
+/* Loot on the street. The frame carries the rarity, because the frame is what you see while your
+   eyes are still on the pile and not yet on the text. */
+#drop-tip {
+  position: fixed; z-index: 39; display: flex; flex-direction: column; gap: .18em; max-width: 17em; padding: .55em .8em;
+  background: var(--plate); border: 1px solid var(--edge-hi); border-left: 3px solid var(--dim);
+  box-shadow: 0 3px 0 rgba(0,0,0,.55); color: var(--ink); pointer-events: none; user-select: none;
+  /* An explicit base rather than inheriting from <body>. The tip is created from a module with no
+     stylesheet of its own, so its size used to be whatever the page's root happened to be — which
+     is how it ended up small enough that a player could not read the pile they were standing on. */
+  font-family: var(--ui); font-size: clamp(14px, 1.5vh, 18px); line-height: 1.35;
+}
+#drop-tip[hidden] { display: none; }
+#drop-tip b { font-size: 1.15em; line-height: 1.2; font-weight: 800; }
+#drop-tip small { color: var(--dim); font: 400 .82em var(--mono); letter-spacing: .04em; }
+#drop-tip .hint { margin-top: .2em; color: var(--faint); font: 400 .72em/1.3 var(--mono); }
+/* A pile too far to take is named but not offered. The hint goes grey and the pointer stays an
+   arrow, so the two states are told apart before you read the word "click". */
+#drop-tip[data-reachable="0"] { border-left-color: var(--dim); }
+#drop-tip[data-reachable="0"] .hint { color: var(--faint); }
+#drop-tip[data-reachable="1"] .hint { color: var(--mint); }
+#drop-tip[data-reachable="0"] b { color: var(--dim); }
+
+/* The name plate on the loot. Diablo puts the item's name on the item; a tooltip you have to go
+   looking for is a tooltip nobody reads while running past. One shared host, one transform per
+   pile per frame, `pointer-events: none` so the plate never eats the click it is sitting on top of. */
+#drop-labels { position: fixed; inset: 0; z-index: 38; pointer-events: none; overflow: hidden; }
+.drop-label {
+  position: absolute; top: 0; left: 0; display: flex; flex-direction: column; gap: .08em;
+  padding: .22em .55em; white-space: nowrap;
+  background: rgba(8, 5, 18, .72); border: 1px solid var(--edge); border-radius: 3px;
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  font-family: var(--ui); text-shadow: 0 1px 3px #000;
+}
+.drop-label b { font-size: .86em; font-weight: 700; line-height: 1.1; }
+.drop-label small { color: var(--dim); font: 400 .62em var(--mono); letter-spacing: .04em; line-height: 1.2; }
+.drop-label[data-rarity="money"] { border-color: rgba(67, 226, 168, .5); }
+.drop-label[data-rarity="money"] b { color: #6ff0c0; }
+.drop-label[data-rarity="common"] b { color: #cfeaff; }
+.drop-label[data-rarity="rare"] { border-color: rgba(245, 195, 67, .55); box-shadow: 0 0 10px rgba(245, 195, 67, .18); }
+.drop-label[data-rarity="rare"] b { color: var(--gold); }
+.drop-label[data-rarity="epic"] { border-color: rgba(215, 123, 255, .6); box-shadow: 0 0 14px rgba(215, 123, 255, .3); }
+.drop-label[data-rarity="epic"] b { color: #e3acff; }
+#drop-tip[data-rarity="rare"] { border-left-color: var(--gold); }
+#drop-tip[data-rarity="epic"] { border-left-color: #d77bff; box-shadow: 0 3px 0 rgba(0,0,0,.55), 0 0 12px rgba(215,123,255,.35); }
+#drop-tip[data-rarity="epic"] small { color: #d77bff; }
+
 #hud-bubbles { inset: 0; overflow: hidden; }
 .bubble { position: absolute; left: 0; top: 0; max-width: 16em; padding: .3em .7em; border-radius: var(--r); background: var(--plate); border: 1px solid var(--edge-hi); color: var(--ink); font: 400 .9em/1.35 var(--ui); text-align: center; box-shadow: 0 2px 0 rgba(0,0,0,.55); will-change: transform; }
 .bubble::after { content: ""; position: absolute; left: 50%; bottom: -.35em; width: .6em; height: .6em; background: inherit; border-right: 1px solid var(--edge-hi); border-bottom: 1px solid var(--edge-hi); transform: translateX(-50%) rotate(45deg); }
@@ -301,6 +384,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
    circular canvas, and the four corners where the circle did not reach stayed near-black —
    the "black square" in the corner of the screen. */
 #hud-map { right: 1em; top: 2.2em; width: 12.2em; text-align: center; }
+#hud-build { position: absolute; right: 1em; top: .45em; font: 400 .78em var(--mono); letter-spacing: .06em; color: var(--faint); text-shadow: 0 1px 2px rgba(0, 0, 0, .8); pointer-events: none; white-space: nowrap; z-index: 5; }
 #hud-map .disc { position: relative; width: 12.2em; height: 12.2em; border: 1px solid var(--edge); background: var(--recess); overflow: hidden; border-radius: 50%;
   box-shadow: 0 2px 0 rgba(0,0,0,.55); }
 #hud-map canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
@@ -440,6 +524,25 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 
 #sheet { display: none; flex: 1; min-height: 0; padding: .6em .9em; overflow: auto; } #sheet.on { display: block; }
 .phead { display: flex; align-items: center; gap: .8em; border-bottom: 1px solid var(--edge); padding-bottom: .35em; }
+.phead .wav { color: var(--gold); font: 400 .85em var(--mono); }
+.phead .chog { color: var(--mint); font: 400 .85em var(--mono); }
+
+/* the wager picker: name the price before the shadow is lent */
+#wager-picker { position: fixed; z-index: 41; left: 50%; top: 30%; transform: translateX(-50%); width: min(22em, 92vw); background: var(--plate); border: 1px solid var(--edge-hi); box-shadow: 0 6px 0 rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.4); font-family: var(--ui); color: var(--ink); user-select: none; }
+#wager-picker header { display: flex; flex-direction: column; gap: .1em; padding: .5em 1em; border-bottom: 1px solid var(--edge); }
+#wager-picker header b { font-size: .95em; }
+#wager-picker header small { color: var(--dim); font: 400 .72em var(--mono); letter-spacing: .06em; }
+#wager-picker .wg-presets { display: flex; gap: .5em; padding: .6em 1em 0; }
+#wager-picker .wg-presets button { flex: 1; padding: .4em; border-radius: var(--r); border: 1px solid var(--edge-hi); background: var(--plate-up); color: var(--ink); font: 700 .85em var(--ui); cursor: pointer; }
+#wager-picker .wg-presets button:hover { border-color: var(--mint); color: var(--mint); }
+#wager-picker .wg-custom { display: flex; align-items: center; gap: .6em; padding: .6em 1em 0; }
+#wager-picker .wg-custom input { flex: 1; min-width: 0; padding: .4em .6em; border-radius: var(--r); border: 1px solid var(--edge-hi); background: #0d0a1c; color: var(--ink); font: 400 .9em var(--mono); }
+#wager-picker .wg-custom span { color: var(--dim); font: 400 .78em var(--ui); white-space: nowrap; }
+#wager-picker .wg-split { padding: .5em 1em 0; color: var(--gold); font: 400 .78em var(--mono); }
+#wager-picker footer { display: flex; gap: .6em; padding: .6em 1em; }
+#wager-picker footer button { flex: 1; padding: .5em; border-radius: var(--r); border: 1px solid var(--edge-hi); background: var(--plate-up); color: var(--ink); font: 700 .88em var(--ui); cursor: pointer; }
+#wager-picker footer button:first-child { border-color: var(--mint); background: var(--mint); color: #06180f; }
+#wager-picker footer button:hover { border-color: #fff; }
 .phead .lv { color: var(--mint); font: 400 1.05em var(--mono); }
 .phead .right { margin-left: auto; color: var(--dim); font-size: .85em; }
 .xpwrap { width: 8em; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .xpwrap i { display: block; height: 100%; background: var(--violet); }
@@ -449,8 +552,8 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 .line button, .quest button { padding: .12em .6em; font-size: .85em; background: var(--plate-up); border: 1px solid var(--edge); border-bottom: 2px solid #090613; border-radius: var(--r); cursor: pointer; }
 .line button:hover, .quest button:hover { border-color: var(--edge-hi); color: #fff; }
 .line button:disabled { opacity: .35; cursor: default; }
-.chips { display: flex; flex-wrap: wrap; gap: .3em; } .chip { background: var(--plate); border: 1px solid var(--edge); padding: .1em .45em; font-size: .85em; }
-.chip.sig { border-color: var(--gold); color: #f0e6c8; } .chip em { color: var(--mint); font-style: normal; cursor: pointer; }
+.cards { display: flex; flex-wrap: wrap; gap: .3em; } .card { background: var(--plate); border: 1px solid var(--edge); padding: .1em .45em; font-size: .85em; }
+.card.sig { border-color: var(--gold); color: #f0e6c8; } .card em { color: var(--mint); font-style: normal; cursor: pointer; }
 .idle { color: var(--faint); font-size: .9em; } .flags { color: var(--gold); font-size: .85em; margin-top: .3em; }
 .stats { color: var(--dim); font-size: .85em; margin-top: .4em; border-top: 1px solid var(--edge); padding-top: .3em; } .hint { color: var(--faint); font-size: .85em; margin-top: .4em; }
 .quest { border: 1px solid var(--edge); padding: .3em .6em; margin: .3em 0; background: var(--plate); }
@@ -461,6 +564,14 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 .arow, .wrow { display: flex; align-items: center; gap: .5em; font-size: .88em; }
 .abar { flex: 1; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .abar i { display: block; height: 100%; background: var(--mint); }
 .wrow.lead .tn { color: var(--gold); } .wrow .rk { width: 1.2em; color: var(--dim); } .wrow .tn { width: 9em; } .wrow .mb { color: var(--dim); width: 2.5em; } .wrow .hold { color: var(--mint); width: 7em; }
+.ranks .cols { grid-template-columns: 1fr 1fr; }
+.rboard h3 { color: var(--dim); font-size: .8em; letter-spacing: .12em; margin: .2em 0; }
+.rrow { display: flex; align-items: baseline; gap: .5em; font-size: .88em; border-bottom: 1px dotted var(--edge); padding: .12em 0; }
+.rrow .rk { width: 1.2em; color: var(--dim); }
+.rrow .rn { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rrow .rv { color: var(--mint); font-family: var(--mono); }
+.rrow.you .rn { color: var(--gold); }
+.rboard .idle { padding: .2em 0; }
 .rhead { display: flex; gap: .7em; align-items: center; font-size: .88em; }
 .hpwrap { width: 7em; height: .6em; background: var(--recess); border: 1px solid var(--edge); overflow: hidden; } .hpwrap i { display: block; height: 100%; background: var(--rose); }
 .map { margin: .4em 0; } .mrow { display: flex; align-items: center; gap: .35em; margin: .2em 0; } .mrow .rl { color: var(--faint); width: 1.8em; font-size: .8em; }
@@ -500,7 +611,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
  * barely half as wide as it is tall, so a 16:9 window stacked over a 4:3 slate leaves a fifth
  * of it black and shrinks the street to a letter slot. Instead the deck stops being a device in
  * a window and becomes the window: the picture is the whole screen, and the lower screen is a
- * dock that rises over the bottom of it when a menu or the Custom Screen is asked for -- which
+ * dock that rises over the bottom of it when a menu or the Hand is asked for -- which
  * is exactly what the desktop does, so the renderer's size never changes and a phone is not
  * asked to re-make its framebuffers every time you open a bag.
  *
@@ -556,7 +667,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
     border-radius: calc(var(--bz) * 1.6) calc(var(--bz) * 1.6) 0 0;
     transform: translateY(calc(100% + var(--bz)));
   }
-  #deck.touch.menu #bottom, #deck.touch.dueling.customopen #bottom { transform: none; }
+  #deck.touch.menu #bottom, #deck.touch.dueling.handopen #bottom { transform: none; }
   #deck.touch #lower { width: 100%; }
   /* one column, because a phone has no spare width to make two thin ones out of */
   #deck.touch .cols, #deck.touch .worldmap { grid-template-columns: 1fr; }
@@ -604,7 +715,7 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
   #deck.touch .slots { gap: .3em; padding: .3em .35em; }
   #deck.touch .slot { width: clamp(42px, 12vw, 54px); height: clamp(42px, 12vw, 54px); font-size: 1.3em; }
   #deck.touch .slot .ct { font-size: .8em; }
-  /* the alert is a sentence, not a chip: centred on a phone it inherits half the screen's width
+  /* the alert is a sentence, not a card: centred on a phone it inherits half the screen's width
      from its own `left: 50%`, wraps into three lines and drops the last one. Span the gutters. */
   #deck.touch #hud-alert { left: .55em; right: .55em; top: 14.6em; width: auto; transform: translateY(-.6em); }
   #deck.touch #hud-alert.on { transform: none; }
@@ -712,6 +823,9 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 #hud-player { left: 1.1em; top: 1.1em; min-width: 0; max-width: 21em; padding: .5em .9em .55em .5em; gap: .7em; }
 #hud-player .portrait { width: 3.4em; height: 3.4em; }
 #hud-player .portrait .ring { width: 3.4em; height: 3.4em; }
+/* The art fills the ring rather than being letterboxed by a 3.4em square: these are square
+   collection illustrations and `cover` crops them to the plate, which is what a face wants. */
+#hud-player .portrait .ring .img { background-size: cover; background-position: center; background-repeat: no-repeat; }
 #hud-player .pname { font-size: .95em; font-weight: 700; }
 #hud-player .psub { font-size: .68em; color: var(--faint); }
 #hud-player .meter { height: .42em; border-radius: 999px; }
@@ -753,9 +867,14 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 /* prompt and dialogue sit on the same glass as everything else */
 #hud-prompt { border-radius: 999px; }
 #hud-dialogue { border-radius: 14px; }
-/* the face is a portrait chip, not an empty well: it was a 6.4em dark square holding one glyph,
+/* the face is a portrait card, not an empty well: it was a 6.4em dark square holding one glyph,
    which stole a third of the box from the words. */
 #hud-dialogue .face { width: 4.4em; height: 4.4em; font-size: 2.2em; border-width: 1px; border-radius: 10px; clip-path: none; background: rgba(236, 230, 251, .06); }
 
 /* the minimap caption is bare type, right-aligned under the disc */
 #hud-map .where { text-align: right; text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+
+/* The pile photo: card face or item drawing beside the name. */
+#drop-tip .tip-head { display: flex; align-items: center; gap: .55em; }
+#drop-tip .tip-head > div { display: flex; flex-direction: column; gap: .1em; min-width: 0; }
+#drop-tip .tip-art { width: 3em; height: 3em; object-fit: cover; border-radius: 4px; flex: none; }

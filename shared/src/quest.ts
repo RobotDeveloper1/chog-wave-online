@@ -24,7 +24,7 @@ export type ObjectiveKind =
   | 'damage'
   | 'chainRun'
   | 'buy'
-  | 'sellChip'
+  | 'sellCard'
   | 'trade'
   | 'link'
   | 'chat'
@@ -33,7 +33,6 @@ export type ObjectiveKind =
   | 'dungeonClear'
   | 'sighting'
   | 'witnessSale'
-  | 'laser'
   /** Spoke to a named person. */
   | 'talk'
   /** Stood at a named place. */
@@ -44,12 +43,16 @@ export type ObjectiveKind =
   | 'collect'
   /** Cleared the Training Sim. */
   | 'train'
-  /** Saved a folder that fields a card the player collected. */
+  /** Saved a deck that fields a card the player collected. */
   | 'equip'
   /** Fired a fusion — three cards collapsed into one. */
   | 'fuse'
   /** Stepped out of the way of a boss volley. */
-  | 'dodge';
+  | 'dodge'
+  /** Walked into a Line region. */
+  | 'lineTravel'
+  /** Won a Line encounter. */
+  | 'lineClear';
 
 export interface Objective {
   kind: ObjectiveKind;
@@ -68,7 +71,7 @@ export interface QuestReward {
   /** Multiplied by the quest's star rating when it is granted. */
   xp?: number;
   items?: Partial<Record<ItemId, number>>;
-  chips?: string[];
+  cards?: string[];
 }
 
 export interface QuestDef {
@@ -101,7 +104,7 @@ const O = (kind: ObjectiveKind, need: number, extra: Partial<Objective> = {}): O
 export { O as objective };
 
 /**
- * The main road. Nineteen beats in seven Acts — a morning in the city, then one Act for each of
+ * The main road. Twenty-one beats in seven Acts — a morning in the city, then one Act for each of
  * the six dungeons — and each introduces one system and
  * reuses the earlier ones, so the chain doubles as the tutorial without a single "press W
  * to walk". An Act is a short errand in the city and then the dungeon it was about: you are
@@ -110,28 +113,28 @@ export { O as objective };
 export const STORY: QuestDef[] = [
   {
     id: 'm-01',
-    name: 'First Signal',
+    name: 'WAGMI (Pending)',
     giver: 'a-board',
     turnIn: 'a-operator',
     kind: 'main',
     sector: 'ashflat',
-    text: 'New in town? The Wave Station on the avenue reads the market. Go and tell the Operator you are here — she will want to know.',
-    doing: 'The Operator is at the Wave Station, north of the crossing.',
-    thanks: 'A new signal. Good. Stay close to the avenue — the Index has been restless.\n\nBefore anything else you should see how a fight works. The Sim is right behind me, and it costs nothing.',
+    text: 'Fresh wallet just minted, huh? Smell that — new paint, zero history, infinite potential to get absolutely rekt.\n\nBefore you ape into anything: the Wave Station on the avenue reads the market, and the Operator keeps the list of everyone who is somebody. Go tell her you exist. Hurry — there is a guy by the gate selling rocks with receipts, and he has already noticed you.',
+    doing: 'The Operator is at the Wave Station, north of the crossing. Do not buy the rock.',
+    thanks: 'A new signal. Minted, not earned — yet.\n\nStay close to the avenue, the Index has been restless. And before you touch anything with real money in it: the Sim behind me. Testnet. Same chain, fake losses, nobody can screenshot your shame.',
     stars: 1,
     objectives: [O('talk', 1, { target: 'a-operator' })],
     reward: { wav: 40, items: { med: 1 } },
   },
   {
     id: 'm-01b',
-    name: 'Dry Run',
+    name: 'Testnet Baby',
     giver: 'a-operator',
     turnIn: 'a-operator',
     kind: 'main',
     sector: 'ashflat',
-    text: 'Nobody fights the Index cold.\n\nThe Station keeps a Training Sim — the same rules as a real anomaly, with nothing at stake. Use the terminal at the Station door (E) and choose TRAINING SIM.\n\nThree things to learn: slide off the red rows with W and S, press Space when the gauge fills to open the Custom Screen, and remember that only a card that reaches the target counts.',
-    doing: 'At the Wave Station door, press E and choose TRAINING SIM.',
-    thanks: 'You dodged, you built a program, you landed it. That is the whole game; the rest is what you put in the program.\n\nThe Sim paid you a card for the first clear. Do not leave it in the bag.',
+    text: 'Nobody fights the Index cold. That is how you become a cautionary tale with a red portfolio.\n\nThe Station keeps a Training Sim — the same rules as a real anomaly, zero stakes, infinite respawns. Use the terminal at the Station door (E) and choose TRAINING SIM.\n\nThree things to learn: slide off the red rows with W and S, press Space when the charge fills to open the Hand, and remember that only a card that reaches the target counts. Whiffing in public is cringe. Whiffing here is free.',
+    doing: 'At the Wave Station door, press E and choose TRAINING SIM. Lose fake money like a pro.',
+    thanks: 'You dodged, you built a program, you landed it. On testnet, but still — most people jeet before the tutorial ends.\n\nThe Sim paid you a card for the first clear. A real one. Do not leave it in the bag like an airdrop you forgot to claim.',
     after: 'm-01',
     stars: 1,
     objectives: [O('train', 1)],
@@ -139,32 +142,62 @@ export const STORY: QuestDef[] = [
   },
   {
     id: 'm-01c',
-    name: 'Your Folder',
+    name: 'Not Your Deck, Not Your Coins',
     giver: 'a-operator',
     turnIn: 'a-operator',
     kind: 'main',
     sector: 'ashflat',
-    text: 'A fight only ever deals you cards from your Folder — the deck you carry.\n\nOpen the menu (Tab), choose FOLDER, swap one of your cards for the one the Sim paid you, and press SAVE. Your Chog decides how many copies you may run, how many Mega, and which element you can never hold. The rest is yours to build.',
-    doing: 'Menu (Tab) → FOLDER: put the new card in, then SAVE.',
-    thanks: 'That is a deck with your hand in it. Good.\n\nNow go and see what the market is selling — the Chip Shop is west on Market Row.',
+    text: 'A fight only ever deals you cards from your Deck — the deck you carry. No deck, no damage, just vibes, and vibes do not clear anomalies.\n\nOpen the menu (Tab), choose DECK, swap one of your cards for the one the Sim paid you, and press SAVE. Your Chog decides how many copies you may run, how many Mega, and which element you can never hold — on-chain risk management for your own bad decisions.',
+    doing: 'Menu (Tab) → DECK: put the new card in, then SAVE. Probably nothing.',
+    thanks: 'That is a deck with your hand in it. Diamond hands start here.\n\nNow go and see what the market is selling — the Card Shop is west on Market Row. Touch nothing you cannot afford to watch go to zero.',
     after: 'm-01b',
     stars: 1,
     objectives: [O('equip', 1)],
     reward: { wav: 80, items: { pack: 1 } },
   },
   {
+    id: 'm-01d',
+    name: 'Touch Grass (Allegedly)',
+    giver: 'a-board',
+    turnIn: 'a-board',
+    kind: 'main',
+    sector: 'ashflat',
+    text: 'The city ends at the Tolls and the Line starts there — six regions of open road where the cards are just standing around, waiting to be collected by anyone with functioning legs.\n\nOpen the menu (Tab), choose MAPS, and take the road to the TOLLS. There is a camp at the trailhead with a scout. Nothing there will bother you until you walk up to it yourself, which is more than I can say for the DMs you are about to get.',
+    doing: 'Menu (Tab) → MAPS → travel to the TOLLS. Outside. Yes, really.',
+    thanks: 'Out and back. Certified grass-toucher.\n\nThat road is the rest of the game, so listen: walking is visiting. Walk up to one of the rust mites out there — the fight starts by itself — beat it, and come home. Consider it your first on-chain interaction. Gas fees: zero. Glory: pending.',
+    after: 'm-01c',
+    stars: 1,
+    objectives: [O('lineTravel', 1, { target: 'tolls' })],
+    reward: { wav: 85 },
+  },
+  {
+    id: 'm-01e',
+    name: 'First Blood (On-Chain Forever)',
+    giver: 'a-board',
+    turnIn: 'a-board',
+    kind: 'main',
+    sector: 'ashflat',
+    text: 'Walk up to a rust mite on the Tolls road — the fight starts by itself — and beat it. A first win pays you a card on the spot and drops the purse on the ground where the body fell, so walk over and take it. Then come home and report.\n\nFair warning: everything here is on-chain. Your first kill will sit there forever, next to your worst trade. Make it a good one.',
+    doing: 'On the TOLLS road, walk into a mob and win. The chain is watching.',
+    thanks: 'First blood on the Line, and it paid. You are officially exit liquidity with a sword.\n\nThe Dealer will sell you the rest of what you need — the Card Shop is west on Market Row.',
+    after: 'm-01d',
+    stars: 1,
+    objectives: [O('lineClear', 1)],
+    reward: { wav: 95 },
+  },
+  {
     id: 'm-02',
-    name: 'The 143rd Chip',
+    name: 'Dealer 143 (Probably Not A Rug)',
     giver: 'a-operator',
     turnIn: 'a-dealer',
     kind: 'main',
     sector: 'ashflat',
-    text: 'Programs are built from cards, and cards come from Dealer 143 at the Chip Shop on Market Row. Walk in, buy one, sell one you do not run.',
-    doing: 'Dealer 143 keeps the Chip Shop on Market Row, west on the main street.',
-    thanks: 'A mover, not a hoarder. Prices follow the real floor, remember that.',
-    after: 'm-01c',
+    text: 'Programs are built from cards, and cards come from Dealer 143 at the Card Shop on Market Row. Walk in, buy one, sell one you do not run.\n\nIs 143 a good number? Unclear. Are his prices real? They follow the actual floor, which is more than can be said for most men advertising in all caps. DYOR. NFA. Just buy the card.',
+    doing: 'Dealer 143 keeps the Card Shop on Market Row. Bring money, leave with cardboard.',
+    thanks: 'A mover, not a hoarder. The floor respects motion.\n\nRemember: buy when there is blood in the streets — even if the blood is yours. Especially then.',
+    after: 'm-01e',
     stars: 1,
-    objectives: [O('enter', 1, { target: 'shop' }), O('buy', 1), O('sellChip', 1)],
+    objectives: [O('enter', 1, { target: 'shop' }), O('buy', 1), O('sellCard', 1)],
     reward: { wav: 90, items: { scan: 1 } },
   },
   {
@@ -222,8 +255,8 @@ export const STORY: QuestDef[] = [
     kind: 'main',
     sector: 'ashflat',
     level: 3,
-    text: 'The Tribe Hall keeps two ledgers. One is the war. The other is recipes.\n\nWhen three cards in a column of your hand glow gold on the Custom Screen, they spell one. Pick all three in line and fire: they collapse into a single stronger card, and it is yours for good. The LIBRARY page remembers every recipe you have fired.',
-    doing: 'In a fight, fire the gold-glowing column of three cards from the Custom Screen.',
+    text: 'The Tribe Hall keeps two ledgers. One is the war. The other is recipes.\n\nWhen three cards in a column of your hand glow gold on the Hand, they spell one. Pick all three in line and fire: they collapse into a single stronger card, and it is yours for good. The LIBRARY page remembers every recipe you have fired.',
+    doing: 'In a fight, fire the gold-glowing column of three cards from the Hand.',
     thanks: 'Three became one and nothing broke. Recipes you have not fired stay unnamed in the Library — on purpose.',
     after: 'm-05',
     stars: 2,
@@ -359,7 +392,7 @@ export const STORY: QuestDef[] = [
     sector: 'ashflat',
     level: 18,
     text: 'Every Chog ever sighted is kept in the Prism Vault, and its Twin is built from whoever walks in. It will be you.\n\nThe only thing a copy cannot copy is something you have not made yet. Fire two fusions, and give it something new to be wrong about.',
-    doing: 'In fights, fire two fusions: the gold-glowing column of three cards on the Custom Screen.',
+    doing: 'In fights, fire two fusions: the gold-glowing column of three cards on the Hand.',
     thanks: 'Two new cards that did not exist this morning. Good. Take them in with you.',
     after: 'm-12',
     stars: 2,
@@ -408,7 +441,7 @@ export const STORY: QuestDef[] = [
     kind: 'main',
     sector: 'ashflat',
     level: 26,
-    text: 'There is no trick to it. The Core is the deepest map the Index has, and the hardest thing in it is the Index.\n\nGo in with a folder you trust and a program you built yourself. Close it, and the wave answers to you.',
+    text: 'There is no trick to it. The Core is the deepest map the Index has, and the hardest thing in it is the Index.\n\nGo in with a deck you trust and a program you built yourself. Close it, and the wave answers to you.',
     doing: 'Clear THE STORM CORE: delete the Index.',
     thanks: 'The Index blinked first.\n\nThat is the end of the road, and the start of the work: every fold can be run again, the anomalies keep coming with the market, and the war resets on Monday.',
     after: 'm-15',
@@ -441,7 +474,7 @@ export interface ActDef {
  * that is, what it unlocks and how far the stretch has to go.
  */
 export const ACTS: readonly ActDef[] = [
-  { id: 1, name: 'WAKE UP', level: 1, blurb: 'Learn the Wave: dodge, build a folder, make a trade.', quests: ['m-01', 'm-01b', 'm-01c', 'm-02', 'm-03', 'm-04'] },
+  { id: 1, name: 'WAKE UP', level: 1, blurb: 'Learn the Wave: dodge, build a deck, walk the road, make a trade.', quests: ['m-01', 'm-01b', 'm-01c', 'm-01d', 'm-01e', 'm-02', 'm-03', 'm-04'] },
   { id: 2, name: 'EMBER FOUNDRY', dungeon: 'd-ember', level: 2, blurb: 'Your first fold: three rooms, a fusion, and the Warden at the end.', quests: ['m-05', 'm-05b', 'm-06'] },
   { id: 3, name: 'FROST ARCHIVE', dungeon: 'd-frost', level: 5, blurb: 'Cold storage under the canal, and a Librarian who raises walls.', quests: ['m-07', 'm-08'] },
   { id: 4, name: 'RELAY SPIRE', dungeon: 'd-volt', level: 8, blurb: 'The old rail line ends in a tower of packets and a King who sweeps.', quests: ['m-09', 'm-10'] },
@@ -571,7 +604,7 @@ export interface TurnInResult {
   wav?: number;
   xp?: number;
   items?: Partial<Record<ItemId, number>>;
-  chips?: string[];
+  cards?: string[];
 }
 
 export function turnIn(log: QuestLog, questId: string, known?: QuestDef): TurnInResult {
@@ -587,12 +620,12 @@ export function turnIn(log: QuestLog, questId: string, known?: QuestDef): TurnIn
     wav: def.reward.wav,
     xp: xpForQuest(def.stars),
     items: def.reward.items,
-    chips: def.reward.chips,
+    cards: def.reward.cards,
   };
 }
 
 const DOOR_NAME: Record<string, string> = {
-  shop: 'the Chip Shop',
+  shop: 'the Card Shop',
   heal: 'the clinic',
   station: 'the Wave Station',
   brother: 'the Tribe Hall',
@@ -612,7 +645,7 @@ export function labelFor(o: Objective): string {
     damage: 'damage dealt',
     chainRun: 'chain of x or better',
     buy: 'purchases made',
-    sellChip: 'cards sold',
+    sellCard: 'cards sold',
     trade: 'trades completed',
     link: 'linked fights',
     chat: 'messages sent',
@@ -621,15 +654,16 @@ export function labelFor(o: Objective): string {
     dungeonClear: 'data areas closed',
     sighting: 'new trait sightings',
     witnessSale: 'priced trades witnessed',
-    laser: 'laser beams fired',
     talk: 'conversations',
     reach: 'places reached',
     enter: 'doors entered',
     collect: 'Mystery Waves caught',
     train: 'Training Sim clears',
-    equip: 'folders built with a card you collected',
+    equip: 'decks built with a card you collected',
     fuse: 'fusions fired',
     dodge: 'volleys dodged',
+    lineTravel: 'Line regions walked',
+    lineClear: 'Line encounters cleared',
   };
   return `${o.need} ${noun[o.kind]}${o.sector ? ` in ${o.sector}` : o.element ? ` (${o.element})` : ''}`;
 }
@@ -657,7 +691,7 @@ const BOUNTY_TEMPLATES: { name: (t: BountySeed) => string; build: (t: BountySeed
   {
     name: (t) => `Floothead`,
     stars: 1,
-    build: (t) => [O('buy', 2), O('sellChip', 1)],
+    build: (t) => [O('buy', 2), O('sellCard', 1)],
   },
 ];
 

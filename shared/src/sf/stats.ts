@@ -1,11 +1,10 @@
 /**
- * The five numbers a Chog fights with.
+ * The numbers a Chog fights with.
  *
- * Star Force's whole stat screen is five things — HP, Attack, Rapid, Charge and how many cards
- * you may carry — and it is deliberately that short because the *cards* are the content. Attack
- * is the one that matters, and it matters for one reason: **the charge shot does ten times the
- * damage of a tap**. So a Chog with a high Attack is not a Chog with bigger cards, it is a
- * Chog whose Buster is a weapon between Custom Screens.
+ * The stat screen is deliberately short because the *cards* are the content. Attack
+ * is the one that matters, and it matters for one reason: **it multiplies every card**.
+ * So a Chog with a high Attack is not a Chog with bigger numbers, it is a
+ * Chog whose deck hits harder.
  *
  * Everything here is derived on the server from the token (traits, tier, mint age, level) and
  * handed to the field when the Chog steps on. Nothing on this list is spent by the client.
@@ -16,19 +15,15 @@ export interface DuelStats {
   hp: number;
   /** 1..10. Multiplies card damage and the charge shot. */
   attack: number;
-  /** 1..10. How fast the Buster taps. */
-  rapid: number;
-  /** 1..10. How fast the Buster charges. */
+  /** 1..10. How fast the Hand Charge fills. */
   charge: number;
-  /** 1..10. How fast the Custom Gauge fills. */
-  gauge: number;
-  /** How many cards may be taken in one Custom Screen. 3 at first, 6 at the top. */
+  /** How many cards may be taken in one Hand. 3 at first, 6 at the top. */
   slots: number;
   /** How many files wide this Chog's floor is. Dodging room is progression. */
   cols: number;
   /** MEGA cards allowed per turn. One is the base; the Tier trait buys more. */
   megaCap: number;
-  /** GIGA cards allowed per turn. The folder only ever holds one. */
+  /** GIGA cards allowed per turn. The deck only ever holds one. */
   gigaCap: number;
   /**
    * Share of incoming damage absorbed, 0..ARMOUR_CAP. Granted by the Head trait's guard value,
@@ -42,8 +37,8 @@ export interface DuelStats {
    * `DRAIN_HEAL`; the Head and Mouth traits push it up.
    */
   drain: number;
-  /** Percent off a full Custom Gauge fill, from the Mouth trait. Negative is slower. */
-  gaugePct: number;
+  /** Percent off a full Hand Charge fill, from the Mouth trait. Negative is slower. */
+  chargePct: number;
 }
 
 export const STAT_CAP = 10;
@@ -51,9 +46,7 @@ export const STAT_CAP = 10;
 export const DEFAULT_STATS: DuelStats = {
   hp: 240,
   attack: 1,
-  rapid: 1,
   charge: 1,
-  gauge: 1,
   slots: 3,
   cols: 3,
   megaCap: 1,
@@ -63,7 +56,7 @@ export const DEFAULT_STATS: DuelStats = {
   // Matches DRAIN_HEAL in clock.ts. stats.ts cannot import it — clock.ts reads clampStat from
   // here — so the two are pinned together by a test instead.
   drain: 0.15,
-  gaugePct: 0,
+  chargePct: 0,
 };
 
 /** The most armour a Chog can wear. Past this a hit stops being an event. */
@@ -77,8 +70,8 @@ export const clampPct = (n: number, cap: number): number => Math.max(0, Math.min
 /**
  * What one point of Attack is worth.
  *
- * Deliberately smaller than a card's own spread: Attack is meant to make the *Buster* matter
- * between Custom Screens, not to let a stat out-scale the folder. Ten points is +81%, which is
+ * Deliberately smaller than a card's own spread: Attack multiplies every card without ever
+ * letting a stat out-scale the deck. Ten points is +81%, which is
  * a lot of money for a lot of grinding and still less than one good card.
  */
 export const ATTACK_STEP = 0.09;

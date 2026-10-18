@@ -246,16 +246,18 @@ export class Bolt {
   readonly line: THREE.Line;
   private readonly seg: number;
   private readonly arr: Float32Array;
+  private readonly ownsMat: boolean;
   from = new THREE.Vector3();
   to = new THREE.Vector3();
   amp = 0.35;
 
-  constructor(colour: THREE.Color, segments = 9) {
+  constructor(colour: THREE.Color, segments = 9, material?: THREE.LineBasicMaterial) {
     this.seg = segments;
     this.arr = new Float32Array((segments + 1) * 3);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(this.arr, 3).setUsage(THREE.DynamicDrawUsage));
-    this.line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: colour.clone().multiplyScalar(2.2), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
+    this.ownsMat = !material;
+    this.line = new THREE.Line(geo, material ?? new THREE.LineBasicMaterial({ color: colour.clone().multiplyScalar(2.2), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
     this.line.frustumCulled = false;
     this.line.renderOrder = 19;
   }
@@ -273,7 +275,8 @@ export class Bolt {
 
   dispose(): void {
     this.line.geometry.dispose();
-    (this.line.material as THREE.Material).dispose();
+    // A shared material belongs to whoever handed it in.
+    if (this.ownsMat) (this.line.material as THREE.Material).dispose();
   }
 }
 
@@ -320,8 +323,7 @@ export class Floaters {
       this.v.copy(f.at).project(camera);
       const on = this.v.z < 1 && Math.abs(this.v.x) < 1.4 && Math.abs(this.v.y) < 1.4;
       f.el.style.display = on ? '' : 'none';
-      f.el.style.left = `${((this.v.x + 1) / 2) * w}px`;
-      f.el.style.top = `${((1 - this.v.y) / 2) * h}px`;
+      f.el.style.transform = `translate(${(((this.v.x + 1) / 2) * w).toFixed(1)}px, ${(((1 - this.v.y) / 2) * h).toFixed(1)}px) translate(-50%, -50%)`;
     }
   }
 
@@ -336,7 +338,7 @@ export class Floaters {
 // ---------------------------------------------------------------------------
 
 export interface ShotSpec {
-  chipId: string;
+  cardId: string;
   element: string;
   from: THREE.Vector3;
   to: THREE.Vector3;
@@ -389,6 +391,32 @@ export class Shots {
   private readonly octa = new THREE.OctahedronGeometry(0.6, 0);
   private readonly torus = new THREE.TorusGeometry(0.5, 0.12, 10, 28);
   private readonly capsule = new THREE.CapsuleGeometry(0.28, 1.1, 6, 12);
+  /**
+   * Materials are cached per element and tint, never born per shot. three releases a GL program
+   * when the last material using it is disposed, and a program built mid-fight stalls the WebGL
+   * surface — on D3D the field flashes black for a beat. The strike beams are pooled for exactly
+   * that reason; the shots were not, so every card fired re-armed the stall.
+   */
+  private readonly mats = new Map<string, THREE.MeshBasicMaterial>();
+  private readonly boltMats = new Map<string, THREE.LineBasicMaterial>();
+
+  private shotMat(key: string, colour: THREE.Color, k: number, side?: THREE.Side): THREE.MeshBasicMaterial {
+    let m = this.mats.get(key);
+    if (!m) {
+      m = new THREE.MeshBasicMaterial({ color: colour.clone().multiplyScalar(k), toneMapped: false, ...(side === undefined ? {} : { side }) });
+      this.mats.set(key, m);
+    }
+    return m;
+  }
+
+  private boltMat(key: string, colour: THREE.Color): THREE.LineBasicMaterial {
+    let m = this.boltMats.get(key);
+    if (!m) {
+      m = new THREE.LineBasicMaterial({ color: colour.clone().multiplyScalar(2.2), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false });
+      this.boltMats.set(key, m);
+    }
+    return m;
+  }
 
   constructor(fx: Particles, rings: Rings) {
     this.fx = fx;
@@ -396,43 +424,44 @@ export class Shots {
   }
 
   fire(spec: ShotSpec): number {
+    const el = spec.element ?? 'none';
     const colour = new THREE.Color(ELEMENT_HEX[spec.element] ?? 0xffffff);
     const group = new THREE.Group();
-    const mat = (c: THREE.Color, k = 2): THREE.MeshBasicMaterial => new THREE.MeshBasicMaterial({ color: c.clone().multiplyScalar(k), toneMapped: false });
+    const mat = (k = 2): THREE.MeshBasicMaterial => this.shotMat(`${el}:core`, colour, k);
     const scale = (spec.fused ? 2.1 : spec.big ? 1.5 : 1) * 0.8;
     let core: THREE.Mesh;
     const extra: THREE.Object3D[] = [];
     let bolt: Bolt | null = null;
     switch (spec.element) {
       case 'frost':
-        core = new THREE.Mesh(this.octa, mat(colour));
+        core = new THREE.Mesh(this.octa, mat());
         break;
       case 'wave':
-        core = new THREE.Mesh(this.torus, mat(colour));
+        core = new THREE.Mesh(this.torus, mat());
         core.rotation.x = Math.PI / 2;
-        extra.push(new THREE.Mesh(this.sphere, mat(colour, 1.2)));
+        extra.push(new THREE.Mesh(this.sphere, this.shotMat(`${el}:inner`, colour, 1.2)));
         extra[0]!.scale.setScalar(0.55);
         break;
       case 'prism':
-        core = new THREE.Mesh(this.capsule, mat(colour));
+        core = new THREE.Mesh(this.capsule, mat());
         core.rotation.x = Math.PI / 2;
         break;
       case 'void': {
-        core = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: 0x0a0414, toneMapped: false }));
-        const halo = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: colour.clone().multiplyScalar(2.2), side: THREE.BackSide, toneMapped: false }));
+        core = new THREE.Mesh(this.sphere, this.shotMat(`${el}:dark`, new THREE.Color(0x0a0414), 1));
+        const halo = new THREE.Mesh(this.sphere, this.shotMat(`${el}:halo`, colour, 2.2, THREE.BackSide));
         halo.scale.setScalar(1.28);
         extra.push(halo);
         break;
       }
       case 'volt':
-        core = new THREE.Mesh(this.sphere, mat(colour, 2.4));
+        core = new THREE.Mesh(this.sphere, mat(2.4));
         core.scale.setScalar(0.6);
-        bolt = new Bolt(colour);
+        bolt = new Bolt(colour, 9, this.boltMat(`${el}:bolt`, colour));
         group.add(bolt.line);
         break;
       default: {
-        core = new THREE.Mesh(this.sphere, mat(colour, 2.2));
-        const white = new THREE.Mesh(this.sphere, new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 2.6, 2), toneMapped: false }));
+        core = new THREE.Mesh(this.sphere, mat(2.2));
+        const white = new THREE.Mesh(this.sphere, this.shotMat(`${el}:white`, new THREE.Color(3, 2.6, 2), 1));
         white.scale.setScalar(0.5);
         extra.push(white);
       }
@@ -447,8 +476,8 @@ export class Shots {
   }
 
   /** The first parked or flying shot of this card, so the verdict finds its own projectile. */
-  resolve(chipId: string, outcome: ShotOutcome): boolean {
-    const s = this.shots.find((x) => x.spec.chipId === chipId && !x.outcome && (x.state === 'flight' || x.state === 'wait'));
+  resolve(cardId: string, outcome: ShotOutcome): boolean {
+    const s = this.shots.find((x) => x.spec.cardId === cardId && !x.outcome && (x.state === 'flight' || x.state === 'wait'));
     if (!s) return false;
     s.outcome = outcome;
     return true;
@@ -539,10 +568,25 @@ export class Shots {
         const s = this.shots[i]!;
         this.group.remove(s.group);
         s.bolt?.dispose();
-        for (const o of [s.core, ...s.extra]) (((o as THREE.Mesh).material) as THREE.Material).dispose();
+        // The materials are the cache's, not this shot's: disposing them here is what released the
+        // GL program and made the next shot recompile mid-fight.
         this.shots.splice(i, 1);
       }
     }
+  }
+
+  /**
+   * Drop every in-flight shot without touching the cached materials or the shared
+   * geometries — the warmup fires shots it never intends to show, and disposing a
+   * cached material here is what used to release its GL program and make the next
+   * real shot recompile mid-fight.
+   */
+  clear(): void {
+    for (const s of this.shots) {
+      this.group.remove(s.group);
+      s.bolt?.dispose();
+    }
+    this.shots.length = 0;
   }
 
   dispose(): void {
@@ -551,6 +595,10 @@ export class Shots {
       s.bolt?.dispose();
     }
     this.shots.length = 0;
+    for (const m of this.mats.values()) m.dispose();
+    for (const m of this.boltMats.values()) m.dispose();
+    this.mats.clear();
+    this.boltMats.clear();
     this.sphere.dispose();
     this.octa.dispose();
     this.torus.dispose();

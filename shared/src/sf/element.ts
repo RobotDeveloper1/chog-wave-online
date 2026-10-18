@@ -13,7 +13,7 @@ import type { Element } from '../types.ts';
  * The two that sit outside the cycle are the two that are not elements in the usual sense:
  *
  *   - **prism** is NULL — Star Force's non-elemental. It is never super effective and never
- *     resisted, which is a real cost and a real gift: it is also the one element a Custom
+ *     resisted, which is a real cost and a real gift: it is also the one element a Hand
  *     Screen will let you pick into *any* element lock.
  *   - **void** is the anti-signal. It has the highest base power in the set and it is the only
  *     thing that hurts prism for double, but every void card pushes the district's Wave Index
@@ -60,7 +60,7 @@ export function isCycleElement(e: Element): boolean {
   return e in BEATS;
 }
 
-/** Star Force's non-elemental: safe everywhere, and the Custom Screen's wildcard. */
+/** Star Force's non-elemental: safe everywhere, and the Hand's wildcard. */
 export function isNull(e: Element): boolean {
   return e === NULL_ELEMENT;
 }
@@ -99,9 +99,9 @@ export function matchupLabel(attack: Element, defend: Element): string {
 /**
  * Running the same element back to back pays.
  *
- * This is what makes a Chog's folder matter after the character is drawn: a Chog whose folder
+ * This is what makes a Chog's deck matter after the character is drawn: a Chog whose deck
  * is 60% one element can actually run that element four deep and be paid for the coherence,
- * while a scattered folder cannot. Without it, elements are cosmetics and the folder is free to
+ * while a scattered deck cannot. Without it, elements are cosmetics and the deck is free to
  * be random.
  */
 export const CHAIN_STEPS = [1, 1.15, 1.3, 1.45, 1.6] as const;

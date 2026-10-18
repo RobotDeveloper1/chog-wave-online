@@ -28,7 +28,7 @@ export interface HolderCard {
   /** The `Tier` trait as metadata states it, empty when the reading is predicted. */
   tier: string;
   callsign: string;
-  /** Chip grid edge, 3..5 — the always-present measure of how much a Chog can field. */
+  /** Card grid edge, 3..5 — the always-present measure of how much a Chog can field. */
   linkSlots: number;
   provenance: Provenance;
   /** ms the current holder received this Chog; 0 when the ledger has not seen it. */

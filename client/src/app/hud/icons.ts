@@ -53,7 +53,7 @@ export const ELEMENT_ICON: Record<string, string> = {
 };
 
 /**
- * The six waves. These are only ever written into a `--c` custom property, so they name the
+ * The six waves. These are only ever written into a `--c` hand property, so they name the
  * stylesheet's tokens rather than repeating hexes the CSS would not have heard about. The WebGL
  * side has its own literal copy in battle.ts, where a `var()` would not parse.
  */

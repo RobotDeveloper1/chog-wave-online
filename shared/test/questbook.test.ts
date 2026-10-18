@@ -111,6 +111,31 @@ describe('the quest book', () => {
     expect(pendingAt('a-board', log)).toEqual([]);
   });
 
+  it('walks the board tutorial onto the road and back', () => {
+    const walk = QUESTS.get('m-01d')!;
+    expect(walk.giver).toBe('a-board');
+    // Another region is not the Tolls.
+    expect(applyEvent({}, walk, { type: 'lineTravel', target: 'ashpine' }).state.progress[0]).toBe(0);
+    const done = applyEvent({}, walk, { type: 'lineTravel', target: 'tolls' });
+    expect(done.state.progress[0]).toBe(1);
+    expect(done.justDone).toBe(true);
+    const fight = QUESTS.get('m-01e')!;
+    expect(fight.giver).toBe('a-board');
+    const won = applyEvent({}, fight, { type: 'lineClear', target: 'tolls.1' });
+    expect(won.state.progress[0]).toBe(1);
+    expect(won.justDone).toBe(true);
+    // The market errand waits for the road to be proven.
+    expect(isOpen(QUESTS.get('m-02')!, {}, 1)).toBe(false);
+    const log: QuestLog = {
+      'm-01c': { progress: [1], done: true, turnedIn: true },
+      'm-01d': { progress: [1], done: true, turnedIn: true },
+      'm-01e': { progress: [1], done: true, turnedIn: true },
+    };
+    expect(isOpen(QUESTS.get('m-02')!, log, 1)).toBe(true);
+    expect(labelFor({ kind: 'lineTravel', need: 1 })).toContain('walked');
+    expect(labelFor({ kind: 'lineClear', need: 1 })).toContain('cleared');
+  });
+
   it('only counts a talk at the person it names', () => {
     const def = QUESTS.get('m-01')!;
     expect(applyEvent({}, def, { type: 'talk', target: 'a-dealer' }).state.progress[0]).toBe(0);
@@ -132,6 +157,19 @@ describe('the quest book', () => {
     const log: QuestLog = { 'm-02': freshState(def) };
     const t = trackTargets(log).filter((x) => x.quest === 'm-02');
     expect(t.map((x) => `${x.kind}:${x.id}`)).toContain('door:shop');
+  });
+
+  it('points a dungeon clear at the Fold Gate door', () => {
+    const def = QUESTS.get('m-06')!;
+    const log: QuestLog = { 'm-06': freshState(def) };
+    const t = trackTargets(log).filter((x) => x.quest === 'm-06');
+    expect(t.map((x) => `${x.kind}:${x.id}`)).toContain('door:dungeon');
+  });
+
+  it('points nothing for a road walk: the card text is the guide', () => {
+    const def = QUESTS.get('m-01d')!;
+    const log: QuestLog = { 'm-01d': freshState(def) };
+    expect(trackTargets(log).filter((x) => x.quest === 'm-01d')).toEqual([]);
   });
 
   it('keeps the level ladder: the errands are for the first levels, the dungeons for the rest', () => {

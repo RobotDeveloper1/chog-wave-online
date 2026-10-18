@@ -706,7 +706,7 @@ function tar(a: DistrictArt): THREE.CanvasTexture {
     g.ellipse(r() * 256, r() * 256, 20 + r() * 40, 14 + r() * 30, r() * 3, 0, Math.PI * 2);
     g.fill();
   }
-  // Gravel: two-tone chips, dense. This is the texture's whole character from above.
+  // Gravel: two-tone cards, dense. This is the texture's whole character from above.
   for (let i = 0; i < 5200; i++) {
     const v = r();
     g.fillStyle = v > 0.62 ? `rgba(224,216,200,${(0.18 + r() * 0.3).toFixed(3)})` : v > 0.3 ? `rgba(128,120,110,${(0.16 + r() * 0.26).toFixed(3)})` : `rgba(24,20,17,${(0.16 + r() * 0.26).toFixed(3)})`;

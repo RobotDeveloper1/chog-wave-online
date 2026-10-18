@@ -10,9 +10,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@babylonjs/core": "^9.30.0",
+    "@babylonjs/loaders": "^9.30.0",
+    "@babylonjs/materials": "^9.30.0",
     "@chog/shared": "*",
+    "@privy-io/js-sdk-core": "^0.79.0",
     "error": "^10.4.0",
-    "phaser": "^3.87.0",
     "three": "^0.186.1",
     "viem": "^2.57.4"
   },

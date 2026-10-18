@@ -1,9 +1,9 @@
 import type { SectorId } from '../wave.ts';
 import type { Element } from '../types.ts';
 import type { CardClass, CardKind } from './card.ts';
-import type { LockReason, CellView } from './custom.ts';
+import type { LockReason, CellView } from './hand.ts';
 import type { Panel } from './field.ts';
-import type { Rank } from './busting.ts';
+import type { Rank } from './rank.ts';
 import type { DuelStats } from './stats.ts';
 
 /**
@@ -19,7 +19,7 @@ import type { DuelStats } from './stats.ts';
  * to put the player back in when it ends.
  */
 
-export type PlaceKind = 'sector' | 'dungeon' | 'train';
+export type PlaceKind = 'sector' | 'dungeon' | 'train' | 'pvp';
 
 export interface Place {
   kind: PlaceKind;
@@ -43,6 +43,10 @@ export interface BossView {
   phase: number;
   /** 0..1 — how much of every card it is eating. A BREAK card strips it. */
   guard: number;
+  /** A BURN card's leftover: ticks to go and damage a tick. */
+  burn: { ticks: number; damage: number } | null;
+  /** Milliseconds of FREEZE left on its clock. */
+  freezeMs: number;
   /** A file it has walled off for the fight. */
   blocked: number | null;
   /** How many files this floor is cut into. */
@@ -63,7 +67,9 @@ export interface PlayerView {
   lane: number;
   /** Current element chain, and what it is worth. */
   chain: number;
-  /** In the Custom Screen: nothing lands on you while you are. */
+  /** The element the last fired card resolved as — what a CHAIN card inherits. */
+  lastElement: Element | null;
+  /** In the Hand: nothing lands on you while you are. */
   shielded: boolean;
   down: boolean;
   /** Milliseconds before the run loses this body. 0 while standing. */
@@ -71,14 +77,18 @@ export interface PlayerView {
   /** The cover hold this player is running for somebody else, 0..1. */
   reviving: { target: string; fraction: number } | null;
   frozen: boolean;
+  /** BARRIER charges held: each eats one landed hit. */
+  barrier: number;
+  /** PvP side: 0 holds the near half, 1 the far. Always 0 outside PvP. */
+  side: 0 | 1;
 }
 
 export interface YouView extends PlayerView {
   stats: DuelStats;
-  /** The Custom Screen: the hand on the table, and whether you are inside it. */
-  custom: {
+  /** The Hand: the hand on the table, and whether you are inside it. */
+  hand: {
     cells: CellView[];
-    /** Dealt is not open: the hand shows from the join, the safe room and the picking wait for the gauge. */
+    /** Dealt is not open: the hand shows from the join, the safe room and the picking wait for the charge. */
     open: boolean;
     lock: Element | null;
     /** How many picks are left, and the biggest class taken. */
@@ -88,19 +98,23 @@ export interface YouView extends PlayerView {
     /** Whether your one Giga has been spent this fight. */
     gigaSpent: boolean;
   } | null;
-  /** Milliseconds until the gauge is full, and the length of a full fill. */
+  /** Milliseconds until the charge is full, and the length of a full fill. */
   readyIn: number;
-  gaugeMs: number;
-  /** The Buster: how long it has been held, and whether it is ready. */
-  buster: { held: number; ready: boolean; chargeMs: number };
+  chargeMs: number;
+  /**
+   * The dodge's own readout: how much invulnerability is left, and the window a clean escape
+   * grants. The client needs both to show the grace as a thing that happened and not as a
+   * number that ambushed it — a dodge with no visible reward reads as luck.
+   */
+  dodge: { iframeMs: number; graceMs: number };
   /** The cover hold you are running, 0..1. */
   revive: { target: string; name: string; fraction: number; ms: number } | null;
   /** The band's link, when one resonated. */
   link: { tag: string | null; mult: number } | null;
   /** Cards paid by counters, waiting for the next screen. */
   bonus: number;
-  /** Busting level so far, and the letter it is worth. */
-  busting: { level: number; rank: Rank; counters: number; abacks: number };
+  /** Rank level so far, and the letter it is worth. */
+  rank: { level: number; letter: Rank; counters: number; abacks: number };
   /** What this fight would drop at the grade you are currently holding. */
   drop: { rolls: number; rareChance: number };
 }
@@ -124,6 +138,8 @@ export interface DuelView {
   /** What the anomaly is about to do. This is the counter window. */
   hazard: HazardView | null;
   /** Seconds this fight has run. */
+  /** True when both bodies are players and the boss plate is the rival. */
+  pvp: boolean;
   elapsed: number;
   party: { bodies: number; owners: number; bands: number };
   /** The Link ward is up: nothing lands until two banded players stand on neighbouring files. */

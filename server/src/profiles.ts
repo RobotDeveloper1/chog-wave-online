@@ -1,36 +1,48 @@
 import {
   ALBUM_UNIVERSE,
   ALL_QUESTS,
-  CHIP_BY_ID,
+  CARD_BY_ID,
   GA_BY_ID,
   ITEMS,
   QUESTS,
   RECIPES,
   STARTING_BAG,
+  STARTING_CHOG,
   SF,
   advanceRun,
   albumRank,
   albumStat,
-  anyChip,
+  anyCard,
   applyEvent,
-  autoFolder,
+  autoDeck,
   bountiesFor,
   buy as buyLine,
   canSell,
   cardPool,
   categoryPrize,
-  checkFolder,
-  chip as chipOf,
+  checkDeck,
+  card as cardOf,
   clearNode,
-  defaultFolder,
   emptyAlbum,
   emptyBag,
   emptyLibrary,
   enterNode,
-  folderLicenceAt,
-  folderRules,
+  deckLicenceAt,
+  deckRules,
+  EMPTY_LINE,
+  ENCOUNTER_BY_ID,
+  REGIONS,
+  REGION_BY_ID,
+  type EncounterDef,
+  anomaliesGate,
+  dungeonsGate,
+  encounterGate,
+  regionState,
+  slotsFor,
+  unlockedBy,
+  type LineProgress,
   freshState,
-  isChipId,
+  isCardId,
   isOpen,
   labelFor,
   DUNGEONS,
@@ -49,7 +61,7 @@ import {
   progressOf,
   rarityWeight,
   refLevel,
-  repairFolder,
+  repairDeck,
   resolveTurn,
   rollWave,
   sectorMultiplier,
@@ -75,8 +87,8 @@ import {
   type Element,
   type DungeonDef,
   type DungeonView,
-  type FolderLicence,
-  type FolderView,
+  type DeckLicence,
+  type DeckView,
   type ItemId,
   type Library,
   type LibraryRecipe,
@@ -90,6 +102,8 @@ import {
   type AlbumView,
   type ProfileStats,
   type ProfileView,
+  type RankRow,
+  type RanksView,
   type QuestLineView,
   type QuestView,
   type RunView,
@@ -111,6 +125,8 @@ import type { SaveStore } from './save.ts';
 export interface ProfileDoc {
   xp: number;
   bag: Bag;
+  /** $CHOG ledger balance. Paper money until deposits exist. */
+  chog: number;
   quests: QuestLog;
   album: AlbumState;
   run: AreaRun | null;
@@ -127,8 +143,10 @@ export interface ProfileDoc {
   discovered: string[];
   /** Mystery Wave id -> the UTC day it was last caught, so each pays once a day. */
   waves: Record<string, number>;
-  /** The folder the player chose, or null to fight with the one the token was born with. */
-  folder: string[] | null;
+  /** The deck the player chose, or null to fight with the one the token was born with. */
+  deck: string[] | null;
+  /** Which encounters of the Line this token has beaten, permanently. The whole card progression. */
+  line: LineProgress;
   /** Fusions this Chog has fired. They travel with the token, like the Album. */
   library: Library;
   /** One-off marks the guide keeps: the welcome shown, a tip seen, the training sim cleared. */
@@ -136,6 +154,8 @@ export interface ProfileDoc {
   /** The UTC day training pay was last counted, and how many clears it has paid since. */
   trainDay: number;
   trainPaid: number;
+  /** Line cards dropped on the dirt but not yet picked up. The pile is their only other copy. */
+  owedCards: string[];
 }
 
 const EMPTY_STATS: ProfileStats = {
@@ -147,7 +167,6 @@ const EMPTY_STATS: ProfileStats = {
   sells: 0,
   trades: 0,
   links: 0,
-  lasers: 0,
   chats: 0,
   sightings: 0,
   deaths: 0,
@@ -157,12 +176,16 @@ const EMPTY_STATS: ProfileStats = {
   trains: 0,
   waves: 0,
   dodges: 0,
+  pvpWins: 0,
+  pvpLosses: 0,
 };
 
 function blank(): ProfileDoc {
   return {
     xp: 0,
+    line: EMPTY_LINE,
     bag: { wav: STARTING_BAG.wav, items: { ...STARTING_BAG.items } },
+    chog: STARTING_CHOG,
     quests: {},
     album: emptyAlbum(),
     run: null,
@@ -174,13 +197,16 @@ function blank(): ProfileDoc {
     scanned: false,
     discovered: [],
     waves: {},
-    folder: null,
+    deck: null,
     library: emptyLibrary(),
     flags: {},
     trainDay: -1,
     trainPaid: 0,
+    owedCards: [],
   };
 }
+
+export const VAULT_TOKEN = 0;
 
 export interface LevelUp {
   from: number;
@@ -197,7 +223,7 @@ export interface RefundLine {
 export interface GrantResult {
   xp: number;
   wav: number;
-  chips: string[];
+  cards: string[];
   items: ItemId[];
   /**
    * Cards that had nowhere to go — already in the collection, or no room left in the bag — and were
@@ -229,17 +255,20 @@ export class Profiles {
     // would otherwise crash every later read for that token, permanently.
     if (!merged.bag || typeof merged.bag.wav !== 'number') merged.bag = emptyBag();
     if (!merged.bag.items) merged.bag.items = {};
+    if (typeof merged.chog !== 'number') merged.chog = STARTING_CHOG;
     if (!merged.album) merged.album = emptyAlbum();
     if (!merged.quests) merged.quests = {};
     if (!Array.isArray(merged.discovered)) merged.discovered = [];
     if (!merged.waves || typeof merged.waves !== 'object') merged.waves = {};
     // A stat added after a token was saved reads as a missing number, which does arithmetic as NaN.
     merged.stats = { ...EMPTY_STATS, ...(merged.stats ?? {}) };
-    if (merged.folder !== null && !Array.isArray(merged.folder)) merged.folder = null;
+    if (merged.deck !== null && !Array.isArray(merged.deck)) merged.deck = null;
     if (!merged.library || !Array.isArray(merged.library.discovered)) merged.library = emptyLibrary();
     if (!merged.flags || typeof merged.flags !== 'object') merged.flags = {};
+    if (!merged.line || !Array.isArray(merged.line.cleared)) merged.line = EMPTY_LINE;
     if (typeof merged.trainDay !== 'number') merged.trainDay = -1;
     if (typeof merged.trainPaid !== 'number') merged.trainPaid = 0;
+    if (!Array.isArray(merged.owedCards)) merged.owedCards = [];
     this.cache.set(tokenId, merged);
     return merged;
   }
@@ -262,6 +291,63 @@ export class Profiles {
     return unlocksAt(this.level(tokenId));
   }
 
+  /**
+   * A brawl ends: the winner banks a win and the loser a loss. Refunds never reach
+   * here — a field that fell apart is nobody’s record.
+   */
+  recordBrawl(tokenId: number, won: boolean): void {
+    const doc = this.doc(tokenId);
+    if (won) doc.stats.pvpWins += 1;
+    else doc.stats.pvpLosses += 1;
+    this.persist(tokenId, doc);
+  }
+
+  /**
+   * The four RANKS boards, read straight off every save on disk. The vault account
+   * (token 0) is the team’s rake jar, not a player, so it never appears.
+   */
+  ranks(limit = 10): RanksView {
+    const rows: RankRow[] = [];
+    for (const { tokenId, progress } of this.saves.allProgress()) {
+      if (tokenId === VAULT_TOKEN) continue;
+      let raw: Record<string, unknown>;
+      try {
+        raw = JSON.parse(progress) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+      const xp = typeof raw.xp === 'number' ? raw.xp : 0;
+      const stats = (raw.stats ?? {}) as Partial<ProfileStats>;
+      const cleared = (raw.line as { cleared?: unknown } | undefined)?.cleared;
+      const ids = Array.isArray(cleared) ? cleared.filter((c): c is string => typeof c === 'string') : [];
+      let furthest = 0;
+      for (const id of ids) {
+        const region = ENCOUNTER_BY_ID.get(id)?.region;
+        const n = region ? (REGION_BY_ID.get(region)?.n ?? 0) : 0;
+        if (n > furthest) furthest = n;
+      }
+      rows.push({
+        tokenId,
+        name: `#${tokenId}`,
+        level: progressOf(xp).level,
+        xp,
+        pvpWins: typeof stats.pvpWins === 'number' ? stats.pvpWins : 0,
+        pvpLosses: typeof stats.pvpLosses === 'number' ? stats.pvpLosses : 0,
+        chog: typeof raw.chog === 'number' ? raw.chog : STARTING_CHOG,
+        lineCleared: ids.length,
+        lineRegion: furthest ? (REGIONS.find((r) => r.n === furthest)?.name ?? '') : '',
+      });
+    }
+    const byLevel = [...rows].sort((a, b) => b.level - a.level || b.xp - a.xp).slice(0, limit);
+    const byPvp = rows
+      .filter((r) => r.pvpWins + r.pvpLosses > 0)
+      .sort((a, b) => b.pvpWins - a.pvpWins || a.pvpLosses - b.pvpLosses)
+      .slice(0, limit);
+    const byChog = [...rows].sort((a, b) => b.chog - a.chog).slice(0, limit);
+    const byLine = [...rows].sort((a, b) => b.lineCleared - a.lineCleared).slice(0, limit);
+    return { level: byLevel, pvp: byPvp, chog: byChog, line: byLine, you: -1 };
+  }
+
   // ---------------------------------------------------------------------------
   // Paying out
   // ---------------------------------------------------------------------------
@@ -273,7 +359,7 @@ export class Profiles {
    */
   grant(
     tokenId: number,
-    award: { xp?: number; wav?: number; chips?: string[]; items?: Partial<Record<ItemId, number>> },
+    award: { xp?: number; wav?: number; cards?: string[]; items?: Partial<Record<ItemId, number>>; pinned?: boolean },
   ): GrantResult {
     const doc = this.doc(tokenId);
     const before = progressOf(doc.xp).level;
@@ -287,8 +373,8 @@ export class Profiles {
       doc.bag.items = { ...doc.bag.items, [id]: (doc.bag.items[id as ItemId] ?? 0) + (n ?? 1) };
       items.push(id as ItemId);
     }
-    const chips = (award.chips ?? []).filter((id) => isChipId(id));
-    const paid = chips.length ? this.addChips(tokenId, chips) : { taken: [], refunded: [] };
+    const cards = (award.cards ?? []).filter((id) => isCardId(id));
+    const paid = cards.length ? this.addCards(tokenId, cards, award.pinned) : { taken: [], refunded: [] };
 
     const after = progressOf(doc.xp).level;
     this.persist(tokenId, doc);
@@ -296,7 +382,7 @@ export class Profiles {
       xp,
       // The refund is already in the bag, so it is already in the number the reward line prints.
       wav: wav + paid.refunded.reduce((s, r) => s + r.wav, 0),
-      chips: paid.taken,
+      cards: paid.taken,
       items,
       refunded: paid.refunded,
       level: after > before ? { from: before, to: after, unlocks: unlockNamesBetween(before, after) } : null,
@@ -305,39 +391,124 @@ export class Profiles {
 
   /** Hand cards to a player outside a reward grant (the Sim's first card). Returns the ones that fit. */
   giveCards(tokenId: number, ids: string[]): string[] {
-    const { taken } = this.addChips(tokenId, ids);
+    const { taken } = this.addCards(tokenId, ids);
     if (taken.length) this.persist(tokenId, this.doc(tokenId));
     return taken;
   }
 
   /**
+   * Cards on the dirt with no pile to their name anymore get remembered here: a restart
+   * empties the drops map, and an encounter already marked cleared can never pay again,
+   * so without this the cards would be gone for good. `take` un-owes them one by one.
+   */
+  oweCards(tokenId: number, cards: string[]): void {
+    if (!cards.length) return;
+    const doc = this.doc(tokenId);
+    doc.owedCards = [...doc.owedCards, ...cards.filter((c) => !doc.owedCards.includes(c))];
+    this.persist(tokenId, doc);
+  }
+
+  /** A picked-up card stops being owed. */
+  unoweCard(tokenId: number, card: string): void {
+    const doc = this.doc(tokenId);
+    if (!doc.owedCards.includes(card)) return;
+    doc.owedCards = doc.owedCards.filter((c) => c !== card);
+    this.persist(tokenId, doc);
+  }
+
+  /** What the dirt still owes this token. */
+  owedCardsOf(tokenId: number): string[] {
+    return [...this.doc(tokenId).owedCards];
+  }
+
+  /**
+   * Move items between two bags in one pass. Both sides are checked before either
+   * is written, so a short bag refuses the whole trade instead of half-paying it.
+   * `fromGives` leaves `fromToken`, `toGives` leaves `toToken`.
+   */
+  moveItems(fromToken: number, toToken: number, fromGives: string[], toGives: string[]): boolean {
+    const a = this.doc(fromToken);
+    const b = this.doc(toToken);
+    const counts = (ids: string[]): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const id of ids) m.set(id, (m.get(id) ?? 0) + 1);
+      return m;
+    };
+    for (const [id, n] of counts(fromGives)) {
+      if ((a.bag.items[id as ItemId] ?? 0) < n) return false;
+    }
+    for (const [id, n] of counts(toGives)) {
+      if ((b.bag.items[id as ItemId] ?? 0) < n) return false;
+    }
+    for (const [id, n] of counts(fromGives)) {
+      a.bag.items = { ...a.bag.items, [id]: (a.bag.items[id as ItemId] ?? 0) - n };
+      b.bag.items = { ...b.bag.items, [id]: (b.bag.items[id as ItemId] ?? 0) + n };
+    }
+    for (const [id, n] of counts(toGives)) {
+      b.bag.items = { ...b.bag.items, [id]: (b.bag.items[id as ItemId] ?? 0) - n };
+      a.bag.items = { ...a.bag.items, [id]: (a.bag.items[id as ItemId] ?? 0) + n };
+    }
+    this.persist(fromToken, a);
+    this.persist(toToken, b);
+    return true;
+  }
+
+  /** $CHOG a token holds. Never negative, never a fraction. */
+  chogOf(tokenId: number): number {
+    return this.doc(tokenId).chog;
+  }
+
+  /**
+   * Move $CHOG in or out of a token. A debit past zero refuses the whole move,
+   * so a stake is either fully locked or not locked at all.
+   */
+  addChog(tokenId: number, delta: number): boolean {
+    const doc = this.doc(tokenId);
+    const next = doc.chog + Math.round(delta);
+    if (next < 0) return false;
+    doc.chog = next;
+    this.persist(tokenId, doc);
+    return true;
+  }
+
+  /** What the team has raked from wagered brawls. */
+  vaultChog(): number {
+    return this.doc(VAULT_TOKEN).chog;
+  }
+
+  /**
    * Put cards in the bag and report what actually landed. Cards go through the save, because that
    * is where the collection is read from. The bag has a cap, but a fused card is *earned* — dropping
-   * one because the bag is full would take a discovery away — so those always fit, and only ordinary
-   * cards are held to the cap.
+   * one because the bag is full would take a discovery away — so those always fit.
+   *
+   * `pinned` extends that to the Line. The Line pays **50 named cards** and the base bag holds
+   * 32, so without this the last eighteen encounters of the world would silently convert their
+   * reward into WAV and a player who finished the Line would be missing a fifth of it. A reward
+   * the game printed on a fixed table cannot be subject to a bag size. The cap still does its real
+   * job, which is limiting what a `pack` from the shop can add.
    *
    * What cannot land is bought back at the counter on the spot, at the same price a sell button
    * pays: a duplicate and a card dropped against a full bag both used to vanish in silence, which
    * made a late run's chests worth less than nothing.
    */
-  private addChips(tokenId: number, ids: string[]): { taken: string[]; refunded: RefundLine[] } {
+  private addCards(tokenId: number, ids: string[], pinned = false): { taken: string[]; refunded: RefundLine[] } {
     const owned = this.saves.get(tokenId);
     const cap = this.unlocks(tokenId).bagCap;
-    const have = new Set(owned.chips);
+    const have = new Set(owned.cards);
     const taken: string[] = [];
     const refunded: RefundLine[] = [];
-    const next = [...owned.chips];
+    const next = [...owned.cards];
     for (const id of ids) {
-      if (!isChipId(id)) continue;
+      if (!isCardId(id)) continue;
       const fused = GA_BY_ID.has(id);
-      const dead = have.has(id) || (!fused && next.filter((c) => !GA_BY_ID.has(c)).length >= cap);
+      const dead = have.has(id) || (!pinned && !fused && next.filter((c) => !GA_BY_ID.has(c)).length >= cap);
       if (!dead) {
         have.add(id);
         next.push(id);
         taken.push(id);
         continue;
       }
-      const card = CHIP_BY_ID.get(id);
+      const card = CARD_BY_ID.get(id);
       if (!card) continue;
       const wav = sellPrice(card);
       refunded.push({ id, name: card.name, wav });
@@ -391,12 +562,6 @@ export class Profiles {
     };
   }
 
-  onLaser(tokenId: number): QuestEvent[] {
-    const doc = this.doc(tokenId);
-    doc.stats.lasers += 1;
-    this.persist(tokenId, doc);
-    return [{ type: 'laser' }];
-  }
 
   countFor(tokenId: number, kind: keyof ProfileStats, amount = 1): void {
     const doc = this.doc(tokenId);
@@ -504,7 +669,7 @@ export class Profiles {
     if (!result.ok) return { ok: false, reason: result.reason };
     doc.quests = result.log;
     this.persist(tokenId, doc);
-    const reward = this.grant(tokenId, { xp: result.xp, wav: result.wav, items: result.items, chips: result.chips });
+    const reward = this.grant(tokenId, { xp: result.xp, wav: result.wav, items: result.items, cards: result.cards });
     return { ok: true, reward, name: def.name, def };
   }
 
@@ -592,7 +757,7 @@ export class Profiles {
     const volume = { mon: volumeMon };
     return {
       factor: priceFactor(volume),
-      chips: stockForChips(shelfSeed(now), volume, sector),
+      cards: stockForChips(shelfSeed(now), volume, sector),
       supply: stockForSupply(shelfSeed(now), volume),
       refreshesIn: refreshLabel(now),
       wav: doc.bag.wav,
@@ -606,7 +771,7 @@ export class Profiles {
   buy(
     tokenId: number,
     sector: SectorId,
-    kind: 'chip' | 'item',
+    kind: 'card' | 'item',
     stockId: string,
     volumeMon: number,
     now = Date.now(),
@@ -614,14 +779,14 @@ export class Profiles {
   ): { ok: boolean; reason?: string; line?: ShopLine; grant?: GrantResult } {
     const doc = this.doc(tokenId);
     const volume = { mon: volumeMon };
-    const lines = kind === 'chip' ? stockForChips(shelfSeed(now), volume, sector) : stockForSupply(shelfSeed(now), volume);
+    const lines = kind === 'card' ? stockForChips(shelfSeed(now), volume, sector) : stockForSupply(shelfSeed(now), volume);
     const line = lines.find((l) => l.stockId === stockId);
     if (!line) return { ok: false, reason: 'not on the shelf today' };
 
-    const owned = this.saves.get(tokenId).chips;
+    const owned = this.saves.get(tokenId).cards;
     // A collection is a set: a second copy of a card the player can already field is WAV for nothing.
-    if (kind === 'chip' && (owned.includes(stockId) || born.includes(stockId))) return { ok: false, reason: 'you can already field that card' };
-    if (kind === 'chip' && owned.filter((c) => !GA_BY_ID.has(c)).length >= this.unlocks(tokenId).bagCap) return { ok: false, reason: 'the bag is full — sell a card first' };
+    if (kind === 'card' && (owned.includes(stockId) || born.includes(stockId))) return { ok: false, reason: 'you can already field that card' };
+    if (kind === 'card' && owned.filter((c) => !GA_BY_ID.has(c)).length >= this.unlocks(tokenId).bagCap) return { ok: false, reason: 'the bag is full — sell a card first' };
     const res = buyLine(line, doc.bag, owned);
     if (!res.ok) return { ok: false, reason: res.reason };
     doc.bag = res.bag;
@@ -633,28 +798,28 @@ export class Profiles {
       this.questEvents(tokenId, [{ type: 'buy' }]);
       return { ok: true, line, grant };
     }
-    if (!CHIP_BY_ID.has(stockId)) return { ok: false, reason: 'no such card' };
-    this.addChips(tokenId, [stockId]);
+    if (!CARD_BY_ID.has(stockId)) return { ok: false, reason: 'no such card' };
+    this.addCards(tokenId, [stockId]);
     this.questEvents(tokenId, [{ type: 'buy' }]);
     return { ok: true, line };
   }
 
-  sell(tokenId: number, chipId: string, signatureIds: string[]): { ok: boolean; reason?: string; wav?: number } {
-    const c = CHIP_BY_ID.get(chipId);
+  sell(tokenId: number, cardId: string, signatureIds: string[]): { ok: boolean; reason?: string; wav?: number } {
+    const c = CARD_BY_ID.get(cardId);
     if (!c) return { ok: false, reason: 'no such card' };
     if (!canSell(c, signatureIds)) return { ok: false, reason: 'that card belongs to a Chog' };
     const save = this.saves.get(tokenId);
-    const i = save.chips.indexOf(chipId);
+    const i = save.cards.indexOf(cardId);
     if (i < 0) return { ok: false, reason: 'you do not hold it' };
-    const chips = save.chips.slice();
-    chips.splice(i, 1);
-    this.saves.setChips(tokenId, chips);
+    const cards = save.cards.slice();
+    cards.splice(i, 1);
+    this.saves.setChips(tokenId, cards);
     const wav = sellPrice(c);
     const doc = this.doc(tokenId);
     doc.stats.sells += 1;
     this.persist(tokenId, doc);
     this.grant(tokenId, { wav });
-    this.questEvents(tokenId, [{ type: 'sellChip' }]);
+    this.questEvents(tokenId, [{ type: 'sellCard' }]);
     return { ok: true, wav };
   }
 
@@ -665,7 +830,7 @@ export class Profiles {
   use(
     tokenId: number,
     id: ItemId,
-  ): { ok: boolean; reason?: string; effect?: { heal?: number; amp?: boolean; ward?: boolean; scan?: boolean; chips?: string[]; refunded?: RefundLine[] } } {
+  ): { ok: boolean; reason?: string; effect?: { heal?: number; amp?: boolean; ward?: boolean; scan?: boolean; cards?: string[]; refunded?: RefundLine[] } } {
     const doc = this.doc(tokenId);
     const def = ITEMS[id];
     if (!def) return { ok: false, reason: 'no such item' };
@@ -676,7 +841,7 @@ export class Profiles {
     if (left > 0) doc.bag.items[id] = left;
     else delete doc.bag.items[id];
 
-    let effect: { heal?: number; amp?: boolean; ward?: boolean; scan?: boolean; chips?: string[]; refunded?: RefundLine[] } = {};
+    let effect: { heal?: number; amp?: boolean; ward?: boolean; scan?: boolean; cards?: string[]; refunded?: RefundLine[] } = {};
     switch (id) {
       case 'med':
         effect = { heal: 60 };
@@ -698,12 +863,12 @@ export class Profiles {
         effect = { scan: true };
         break;
       case 'pack': {
-        const commons = [...CHIP_BY_ID.values()].filter((c) => !c.klass).map((c) => c.id);
+        const commons = [...CARD_BY_ID.values()].filter((c) => !c.klass).map((c) => c.id);
         const picked = Array.from({ length: 3 }, () => commons[Math.floor(Math.random() * commons.length)]!);
-        const { taken, refunded } = this.addChips(tokenId, picked);
+        const { taken, refunded } = this.addCards(tokenId, picked);
         // Three commons from one bag is a roll with replacement, so a pack routinely repeats itself.
         // The copy that has nowhere to go is bought back rather than swallowed by the opening.
-        effect = { chips: taken, refunded };
+        effect = { cards: taken, refunded };
         break;
       }
     }
@@ -719,7 +884,7 @@ export class Profiles {
   sight(
     tokenId: number,
     keys: string[],
-  ): { added: string[]; xp: number; best: string | null; completions: { category: string; chip: string | null; wav: number }[] } {
+  ): { added: string[]; xp: number; best: string | null; completions: { category: string; card: string | null; wav: number }[] } {
     const doc = this.doc(tokenId);
     const res = sightInto(doc.album.seen, keys);
     if (!res.added.length) return { added: [], xp: 0, best: null, completions: [] };
@@ -733,7 +898,7 @@ export class Profiles {
     if (pending.length) {
       doc.album = markClaimed(doc.album, pending.map((p) => p.category));
       this.persist(tokenId, doc);
-      for (const p of pending) this.grant(tokenId, { wav: p.wav, chips: p.chip ? [p.chip] : [] });
+      for (const p of pending) this.grant(tokenId, { wav: p.wav, cards: p.card ? [p.card] : [] });
     }
     return { added: res.added, xp: grant.xp, best: res.best?.key ?? null, completions: pending };
   }
@@ -854,7 +1019,7 @@ export class Profiles {
     const outcome = res.outcome;
     let grant: GrantResult | undefined;
     if (outcome && outcome.kind !== 'shrine') {
-      grant = this.grant(tokenId, { xp: outcome.xp, wav: outcome.wav, chips: outcome.chips });
+      grant = this.grant(tokenId, { xp: outcome.xp, wav: outcome.wav, cards: outcome.cards });
     }
     return {
       ok: true,
@@ -886,6 +1051,7 @@ export class Profiles {
     tokenId: number,
     damageTaken = 0,
     scale = 1,
+    build?: ChogBuild,
   ): { ok: boolean; reason?: string; run?: AreaRun; outcome?: NodeOutcome | null; grant?: GrantResult; cleared?: { def: DungeonDef; first: boolean; grant?: GrantResult } } {
     const doc = this.doc(tokenId);
     if (!doc.area || !doc.run) return { ok: false, reason: 'not inside a fold' };
@@ -903,7 +1069,7 @@ export class Profiles {
     if (outcome.kind !== 'shrine') {
       // One grant, one receipt: the card a tile drops goes in with the XP and WAV it pays, so a
       // duplicate is bought back by the counter in the same breath rather than vanishing off the map.
-      room = this.grant(tokenId, { xp: outcome.xp, wav: outcome.wav, chips: outcome.chips });
+      room = this.grant(tokenId, { xp: outcome.xp, wav: outcome.wav, cards: outcome.cards });
     }
 
     // The core of a named dungeon: the first clear pays on top, and earns the title.
@@ -923,6 +1089,13 @@ export class Profiles {
           xp: Math.round(def.firstClear.xp * scale),
           wav: Math.round(def.firstClear.wav * scale),
           items: def.firstClear.items,
+          // The map is the key, and this is the door it opens. A fold's hand is a fixed list, not a
+          // roll: clear it and these cards are yours for good, so the CAREER ladder can name them
+          // before you go in and the DECK can show the hand you have earned rather than the
+          // library you might have rolled. A party scales the numbers; nobody scales a card, because
+          // a second copy of one is worth nothing to anybody. The first clear also earns the
+          // signature itself when it is still out there: the card that says who the Chog is.
+          cards: [...def.unlocks, ...(build?.signature && !this.saves.get(tokenId).cards.includes(build.signature) ? [build.signature] : [])],
         });
       }
       cleared = { def, first, ...(grant ? { grant } : {}) };
@@ -940,6 +1113,9 @@ export class Profiles {
     if (!doc.area || !doc.run) return null;
     const node = nodeById(doc.area, doc.run.at);
     if (!node?.enemy) return null;
+    // A room already cleared is empty ground — it must never read as "you still owe a clear",
+    // or the step gate traps you standing on a node you just beat.
+    if (doc.run.cleared.includes(doc.run.at)) return null;
     // `power` and the area's tier travel with the enemy because the bite a session deals is solved
     // from both: `power` is anchored on that tier's volley table, so a session that mirrors a node
     // has to use the same one the map was budgeted against.
@@ -981,76 +1157,221 @@ export class Profiles {
   }
 
   // ---------------------------------------------------------------------------
-  // The folder and the Library
+  // The deck and the Library
   // ---------------------------------------------------------------------------
 
-  /** Cards this Chog could put in a folder right now: born, owned and fused. */
+  /** Cards this Chog could put in a deck right now: born, owned and fused. */
   pool(tokenId: number, build: ChogBuild): string[] {
-    return cardPool(build, this.saves.get(tokenId).chips);
+    return cardPool(build, this.saves.get(tokenId).cards);
   }
 
   /**
-   * The folder licences this account's level has bought on top of the Chog's born shape. Caps are
-   * born + licence, so every folder entry point has to read them from the same place — a folder
+   * The deck licences this account's level has bought on top of the Chog's born shape. Caps are
+   * born + licence, so every deck entry point has to read them from the same place — a deck
    * judged against the born caps alone would silently throw a Mega card out on a level-up.
    */
-  licence(tokenId: number): FolderLicence {
-    return folderLicenceAt(this.level(tokenId));
+  licence(tokenId: number): DeckLicence {
+    return deckLicenceAt(this.level(tokenId));
   }
 
   /**
-   * The folder the next fight deals from. The player's own choice while it is still legal;
-   * if a card was sold or a rule moved under it, it is repaired in place, so a fight can
-   * never start from a folder the rules would refuse.
+   * How big a deck this token's deck is allowed to be right now.
+   *
+   * This is the join between the Line and the deck: the world's progress decides the *size*,
+   * the token still decides the shape (`copies`, the Mega and Giga caps, the banned element).
+   * A Chog that has never left Camp Zero has two slots and one card in them, which is a legal
+   * deck — `checkDeck` only refuses an over-full one.
    */
-  folderFor(tokenId: number, build: ChogBuild): string[] {
-    const doc = this.doc(tokenId);
-    if (!doc.folder) return defaultFolder(build);
-    const pool = this.pool(tokenId, build);
-    const licence = this.licence(tokenId);
-    if (checkFolder(folderRules(build, licence), doc.folder, new Set(pool)).ok) return doc.folder;
-    doc.folder = repairFolder(build, doc.folder, pool, licence);
-    this.persist(tokenId, doc);
-    return doc.folder;
+  slots(tokenId: number): number {
+    return slotsFor(this.doc(tokenId).line);
   }
 
-  /** Save a folder the player built. Refused with the reasons if the rules do not allow it. */
-  setFolder(tokenId: number, build: ChogBuild, folder: string[]): { ok: boolean; errors?: string[] } {
+  /** Every card the Line has handed this token, in the order it handed them over. */
+  lineCards(tokenId: number): string[] {
+    return unlockedBy(this.doc(tokenId).line);
+  }
+
+  /**
+   * Beat an encounter of the Line.
+   *
+   * Server-authoritative, like everything else here: the encounter has to exist, its region has
+   * to be open, and a repeat pays nothing but the first clear does — once, permanently, in the
+   * cards the encounter names. That fixed table is the whole reason the Line is a progression
+   * and not a loot roll, so this is the one place those ids are turned into things you own.
+   *
+   * Returns what it paid rather than a boolean, because the UI has to be able to say which card
+   * just landed, and a "no" has to say why.
+   */
+  lineCleared(
+    tokenId: number,
+    encounterIds: readonly string[],
+    build: ChogBuild,
+    deferCards = false,
+  ): { ok: boolean; reason?: string; cards?: string[]; xp?: number; wav?: number } {
+    const doc = this.doc(tokenId);
+    // Validate the whole message against a **snapshot**, then commit. Checking each id against
+    // the live `doc` while the loop below is appending to it means the first id can open a gate
+    // the second id then walks through — a single forged message listing all 42 encounters would
+    // clear the whole Line. That is exactly the bug these tests were written to catch.
+    const before = doc.line;
+    const fresh: EncounterDef[] = [];
+    for (const id of encounterIds) {
+      const e = ENCOUNTER_BY_ID.get(id);
+      if (!e) return { ok: false, reason: `no such encounter: ${id}` };
+      if (before.cleared.includes(id)) continue; // a repeat pays nothing
+      const gate = encounterGate(before, id);
+      if (!gate.open) return { ok: false, reason: gate.reason };
+      fresh.push(e);
+    }
+    if (!fresh.length) return { ok: false, reason: 'already cleared' };
+
+    const cards: string[] = [];
+    let xp = 0;
+    let wav = 0;
+    for (const e of fresh) {
+      for (const card of e.unlocks) {
+        if (!cards.includes(card) && !this.ownsCard(tokenId, card)) cards.push(card);
+      }
+      if (e.kind === 'warden') {
+        const region = REGION_BY_ID.get(e.region)!;
+        xp += region.firstClear.xp;
+        wav += region.firstClear.wav;
+      }
+    }
+
+    doc.line = { cleared: [...before.cleared, ...fresh.map((e) => e.id)] };
+    // Deferred cards are marked cleared above but granted nowhere: they fall on the dirt as
+    // piles and pay on pickup. Granting them here too would double-pay, and the take path
+    // re-grants through `giveCards`, so the deck still repairs itself the moment they land.
+    this.grant(tokenId, cards.length && !deferCards ? { cards: cards, xp, wav, pinned: true } : { xp, wav });
+
+    // A new card has to be usable the moment it lands, so the deck is re-checked against the
+    // size the Line has just grown and repaired in place rather than left illegal.
+    this.deckFor(tokenId, build);
+    return { ok: true, cards, xp, wav };
+  }
+
+  /** Does this token already hold the card, born cards included? */
+  private ownsCard(tokenId: number, id: string): boolean {
+    return this.saves.get(tokenId).cards.includes(id) || this.doc(tokenId).library.discovered.includes(id);
+  }
+
+  /** Where this token stands on the Line, for the map screen. Never a client assertion. */
+  lineView(tokenId: number, mobs?: { id: string; encounterId: string; region: string; kind: string; name: string; element: string; archetype: string; tier: number; home: { x: number; z: number }; roam: number; x: number; z: number; facing: number; alive: boolean }[]): {
+    regions: { id: string; name: string; n: number; state: 'done' | 'open' | 'sealed' }[];
+    slots: number;
+    cards: string[];
+    dungeons: { open: boolean; reason: string };
+    anomalies: { open: boolean; reason: string };
+  } {
+    const line = this.doc(tokenId).line;
+    return {
+      regions: REGIONS.map((r) => ({ id: r.id, name: r.name, n: r.n, state: regionState(line, r.id) })),
+      slots: slotsFor(line),
+      cards: unlockedBy(line),
+      dungeons: dungeonsGate(line),
+      anomalies: anomaliesGate(line),
+      /** Where the bodies are and which of them are standing, so the client can draw exactly this. */
+      ...(mobs ? { mobs } : {}),
+    };
+  }
+
+  /**
+   * The deck the next fight deals from. The player's own choice while it is still legal;
+   * if a card was sold or a rule moved under it, it is repaired in place, so a fight can
+   * never start from a deck the rules would refuse.
+   */
+  deckFor(tokenId: number, build: ChogBuild): string[] {
+    const slots = this.slots(tokenId);
+    const doc = this.doc(tokenId);
     const pool = this.pool(tokenId, build);
-    const check = checkFolder(folderRules(build, this.licence(tokenId)), folder, new Set(pool));
+    const licence = this.licence(tokenId);
+    // No saved deck: the best of what is held, so a card is usable the moment it lands —
+    // including the signature once the Line has handed it over. Empty hands stay empty.
+    if (!doc.deck) return autoDeck(build, pool, licence, slots);
+    if (checkDeck(deckRules(build, licence, slots), doc.deck, new Set(pool)).ok) return doc.deck;
+    doc.deck = repairDeck(build, doc.deck, pool, licence, slots);
+    this.persist(tokenId, doc);
+    return doc.deck;
+  }
+
+  /** Save a deck the player built. Refused with the reasons if the rules do not allow it. */
+  setDeck(tokenId: number, build: ChogBuild, deck: string[]): { ok: boolean; errors?: string[] } {
+    const pool = this.pool(tokenId, build);
+    const check = checkDeck(deckRules(build, this.licence(tokenId), this.slots(tokenId)), deck, new Set(pool));
     if (!check.ok) return { ok: false, errors: check.errors };
     const doc = this.doc(tokenId);
-    doc.folder = [...folder];
+    doc.deck = [...deck];
     this.persist(tokenId, doc);
     return { ok: true };
   }
 
-  /** Rebuild the folder from the best of what the player holds. */
-  autoFolder(tokenId: number, build: ChogBuild): string[] {
+  /** Rebuild the deck from the best of what the player holds. */
+  autoDeck(tokenId: number, build: ChogBuild): string[] {
     const doc = this.doc(tokenId);
-    doc.folder = autoFolder(build, this.pool(tokenId, build), this.licence(tokenId));
+    doc.deck = autoDeck(build, this.pool(tokenId, build), this.licence(tokenId), this.slots(tokenId));
     this.persist(tokenId, doc);
-    return doc.folder;
+    return doc.deck;
   }
 
-  /** Go back to the folder the token was born with. */
-  resetFolder(tokenId: number): void {
+  /** Clear the saved deck back to the auto default. */
+  resetDeck(tokenId: number): void {
     const doc = this.doc(tokenId);
-    doc.folder = null;
+    doc.deck = null;
     this.persist(tokenId, doc);
   }
 
-  folderView(tokenId: number, build: ChogBuild): FolderView {
-    const cards = this.folderFor(tokenId, build);
+  /**
+   * Take 1 of the 3 a combat node dealt. The options are server-dealt and the pick is
+   * validated against them, so a client cannot name a card it was never offered — and a
+   * duplicate is bought back by the counter through the normal grant path.
+   */
+  takeDraft(tokenId: number, cardId: string): { ok: boolean; reason?: string; cards?: string[] } {
+    const doc = this.doc(tokenId);
+    const draft = doc.run?.draft ?? null;
+    if (!doc.run || !draft) return { ok: false, reason: 'no draft waiting' };
+    if (!draft.options.includes(cardId)) return { ok: false, reason: 'not one of the three' };
+    const res = this.grant(tokenId, { cards: [cardId] });
+    doc.run = { ...doc.run, draft: null };
+    this.persist(tokenId, doc);
+    return { ok: true, cards: res.cards };
+  }
+
+  /**
+   * Thin the deck at a shrine rest: one held card leaves the collection, no payout.
+   * The rest has to be waiting, the card has to be held, and a signature belongs to
+   * its Chog — the same guard the counter honours, so the shrine cannot sell what
+   * the shop would refuse to touch.
+   */
+  shrineRemove(tokenId: number, cardId: string, signatureIds: string[]): { ok: boolean; reason?: string; removed?: string } {
+    const doc = this.doc(tokenId);
+    const rest = doc.run?.shrine ?? null;
+    if (!doc.run || !rest) return { ok: false, reason: 'no rest waiting' };
+    const c = CARD_BY_ID.get(cardId);
+    if (!c) return { ok: false, reason: 'no such card' };
+    if (!canSell(c, signatureIds)) return { ok: false, reason: 'that card belongs to a Chog' };
+    const save = this.saves.get(tokenId);
+    const i = save.cards.indexOf(cardId);
+    if (i < 0) return { ok: false, reason: 'you do not hold it' };
+    const cards = save.cards.slice();
+    cards.splice(i, 1);
+    this.saves.setChips(tokenId, cards);
+    doc.run = { ...doc.run, shrine: null };
+    this.persist(tokenId, doc);
+    return { ok: true, removed: cardId };
+  }
+
+  deckView(tokenId: number, build: ChogBuild): DeckView {
+    const cards = this.deckFor(tokenId, build);
     const pool = this.pool(tokenId, build);
-    const rules = folderRules(build, this.licence(tokenId));
-    const check = checkFolder(rules, cards, new Set(pool));
+    const rules = deckRules(build, this.licence(tokenId), this.slots(tokenId));
+    const check = checkDeck(rules, cards, new Set(pool));
     return {
       cards,
       rules,
       pool,
       check: { ok: check.ok, errors: check.errors, mega: check.mega, giga: check.giga, fused: check.fused },
-      born: !this.doc(tokenId).folder,
+      born: !this.doc(tokenId).deck,
     };
   }
 
@@ -1080,7 +1401,7 @@ export class Profiles {
     doc.stats.fusions += 1;
     if (out.granted.length) {
       doc.library = out.library;
-      this.addChips(tokenId, out.granted);
+      this.addCards(tokenId, out.granted);
     }
     this.persist(tokenId, doc);
     return { id: out.fired.id, name: GA_BY_ID.get(out.fired.result)?.name ?? out.fired.id, result: out.fired.result, first: out.granted.length > 0 };
@@ -1141,7 +1462,7 @@ export class Profiles {
   view(tokenId: number, sector: SectorId, volumeMon: number, build: ChogBuild, now = Date.now()): ProfileView {
     const doc = this.doc(tokenId);
     const signatureIds = [build.signature];
-    const chips = this.saves.get(tokenId).chips;
+    const cards = this.saves.get(tokenId).cards;
     const prog = progressOf(doc.xp);
     const u = unlocksAt(prog.level);
     const active = this.defsOf(doc.quests, now).filter((q) => doc.quests[q.id] && !doc.quests[q.id]!.turnedIn);
@@ -1159,8 +1480,9 @@ export class Profiles {
       toCap: prog.toCap,
       unlocks: u,
       wav: doc.bag.wav,
+      chog: doc.chog,
       items: doc.bag.items,
-      chips,
+      cards,
       bagCap: u.bagCap,
       amp: doc.amp,
       ward: doc.ward,
@@ -1210,14 +1532,14 @@ export class Profiles {
         : null,
       shops: this.shops(tokenId, sector, volumeMon, now),
       sellPrices: Object.fromEntries(
-        [...new Set(chips)].filter((id) => CHIP_BY_ID.has(id)).map((id) => [id, sellPrice(chipOf(id))]),
+        [...new Set(cards)].filter((id) => CARD_BY_ID.has(id)).map((id) => [id, sellPrice(cardOf(id))]),
       ),
       categoryPrizes: Object.fromEntries(
         albumStat([]).categories.map((c) => [c.category, categoryPrize(c.category)]),
       ),
       rarest,
       signatureIds,
-      folder: this.folderView(tokenId, build),
+      deck: this.deckView(tokenId, build),
       library: this.libraryView(tokenId),
     };
   }

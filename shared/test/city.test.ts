@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SECTORS, ZONES, arrivalFor, cityOf, isClear, layoutZone, type CityLayout, type Rect } from '../src/index.ts';
+import { SECTORS, ZONES, arrivalFor, boardSideFor, cityOf, isClear, layoutZone, type CityLayout, type Rect } from '../src/index.ts';
 
 /**
  * The city has to be *walkable*, not just drawn. A door behind a wall, an NPC standing
@@ -196,6 +196,19 @@ describe('the city', () => {
     const anchors = cityOf('ashflat').anchors;
     expect(anchors.filter((a) => a.kind === 'gate')).toEqual([]);
     expect(anchors.filter((a) => a.kind === 'fold')).toHaveLength(1);
+  });
+
+  it('keeps a clear footing beside every district quest board', () => {
+    for (const sector of SECTORS) {
+      const layout = cityOf(sector);
+      const board = layout.anchors.find((a) => a.kind === 'board');
+      expect(board, `${sector} has a quest board`).toBeDefined();
+      const at = boardSideFor(layout);
+      expect(Math.hypot(at.x - board!.x, at.z - board!.z), `${sector} footing by the board`).toBeLessThan(5);
+      for (const s of layout.solids) {
+        expect(Math.abs(at.x - s.x) > s.halfW || Math.abs(at.z - s.z) > s.halfD, `${sector} footing inside a solid`).toBe(true);
+      }
+    }
   });
 
   it('is called Genesis', () => {

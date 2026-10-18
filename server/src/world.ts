@@ -14,8 +14,13 @@ import {
   starterCard,
   SECTORS,
   VOLUME_WINDOW_MS,
-  CHIPS,
+  CARDS,
+  CARD_BY_ID,
+  isTraitCard,
+  wagerPayout,
+  MAX_WAGER,
   type ChogBuild,
+  type DropView,
   type DuelEndMsg,
   type DuelMsg,
   type MarketTick,
@@ -27,12 +32,29 @@ import {
   type SectorState,
   ITEMS,
   xpForQuest,
+  type ItemId,
   type Tier,
   type WaveEvent,
   type WorldSnapshot,
   keysOfSource,
   arrivalFor,
+  boardSideFor,
   cityOf,
+  lineLayout,
+  campOf,
+  allMobSpawns,
+  archetypeForEncounter,
+  encounterGate,
+  mobAt,
+  mobFacing,
+  mobSpawns,
+  ENCOUNTER_BY_ID,
+  REGION_BY_ID,
+  REGION_IDS,
+  regionGate,
+  encounterBudget,
+  quirkOf,
+  type RegionId,
   npcOf,
   poiOf,
   type Anchor,
@@ -46,7 +68,7 @@ import { BattleSession, type JoinSpec, type SessionEvent } from './battle.ts';
 import { CFG } from './config.ts';
 import { createFeed, type Feed } from './feed.ts';
 import { traits } from './meta.ts';
-import { Profiles, type GrantResult, type LevelUp, type RefundLine } from './profiles.ts';
+import { Profiles, VAULT_TOKEN, type GrantResult, type LevelUp, type RefundLine } from './profiles.ts';
 import { SaveStore, levelOf, type SaveRow } from './save.ts';
 import { Social, type Presence, type TradeOffer } from './social.ts';
 import { War } from './war.ts';
@@ -66,6 +88,15 @@ export const ROOM_CAP = 24;
  * a wall to everybody else.)
  */
 export const boundsOf = (sector: SectorId) => cityOf(sector).bounds;
+
+/**
+ * Where a player may stand in one region of the Line.
+ *
+ * The same shared function the client builds the terrain from (shared/src/line/layout.ts), for
+ * the reason the comment above gives: the moment the two sides derive the walkable rectangle
+ * separately, a player is walking through a wall that only one of them can see.
+ */
+export const boundsOfRegion = (region: RegionId) => lineLayout(region).bounds;
 /** A shop or a hall is a 16 × 12 room with its own coordinates; nothing in it is on the street. */
 const ROOM = { x0: -9, x1: 9, z0: -7, z1: 7 };
 /** The fastest a Chog runs (12.5 u/s) plus slack for a hitch, per second of real time. */
@@ -134,9 +165,27 @@ export interface Player {
   /** Kept on the player so the roster can show it without a per-row profile read. */
   level: number;
   /** On the street, or inside a building. Nobody sees you from the street while you are in a room. */
-  place: 'street' | 'room';
+  place: 'street' | 'room' | 'line';
+  /**
+   * Which region of the Line the player is walking, when place is 'line'.
+   *
+   * The Line is **not** a sector. Sectors (shflat | oltgrid | hollow) are the city
+   * districts and they carry the Wave Index, the anomaly bosses and the market hooks; the Line
+   * carries a different axis � six biomes walked in order � and bolting it on to SectorId would
+   * mean every place that reads a sector had to learn to mean two different things by 0.
+   */
+  region: RegionId | null;
   /** Where the street position was when the player stepped through a door. */
   street: { x: number; y: number };
+  /**
+   * Where the player stood in the Line when they last left it.
+   *
+   * Separate from street because the regions are not all at the origin: one parked slot would
+   * drop you into the middle of Ash Pine when you came back out of it. This is the same
+   * anti-teleport guard move() already applies to a door, extended to the six places a door
+   * can now be.
+   */
+  lineAt: Record<string, { x: number; y: number }>;
   /** When the last position was accepted, for the speed check. */
   at: number;
   /** Points of interest the player is standing in, so entering one fires once. */
@@ -155,6 +204,9 @@ export function fosterSource(): ChogSource {
     transferCount: 0,
     daysHeld: 0,
     attributes: one.attributes,
+    // The cap flag, not the borrowed traits: `deriveBuild` needs to know this is a foster so it
+    // can hold the shape under FOSTER_SHARE_CAP. Token #1 keeps its own extremes untouched.
+    foster: true,
   };
 }
 
@@ -186,12 +238,54 @@ function mergeGrants(grants: GrantResult[]): GrantResult {
   return {
     xp: grants.reduce((n, g) => n + g.xp, 0),
     wav: grants.reduce((n, g) => n + g.wav, 0),
-    chips: grants.flatMap((g) => g.chips),
+    cards: grants.flatMap((g) => g.cards),
     items: grants.flatMap((g) => g.items),
     refunded: grants.flatMap((g) => g.refunded),
     level: levels.length ? { from: levels[0]!.from, to: levels.at(-1)!.to, unlocks: [...new Set(levels.flatMap((l) => l.unlocks))] } : null,
   };
 }
+
+/**
+ * A piece of loot on the street.
+ *
+ * Loot used to land straight in the bag: you won and a menu was quietly fuller. That is a receipt.
+ * A drop is the same payout with a body — it falls where you stood, it burns in its rarity colour,
+ * and you walk over to take it. `owner` is why the street can be shared without the loot being:
+ * everyone sees the pile, only the player it fell for can pick it up.
+ */
+interface Drop {
+  id: string;
+  owner: string;
+  sector: SectorId;
+  /** The Line region it fell in, or null for the city street. Regions share coordinates. */
+  region: RegionId | null;
+  x: number;
+  z: number;
+  kind: 'card' | 'item' | 'wav';
+  /** The card id or item id. Absent on a money drop. */
+  key?: string;
+  /** For a money drop: how many WAV this pile is worth. */
+  amount?: number;
+  name: string;
+  element?: Element;
+  klass?: 'S' | 'M' | 'G';
+  rarity: 'common' | 'rare' | 'epic';
+  /** When it fell, so the sweep can age it without a timer per drop. */
+  bornAt: number;
+  /**
+   * Pickup is the grant. Line loot falls unpaid (the clear marked it, the dirt pays it);
+   * dungeon/fold/anomaly loot falls already paid, and its pile is the receipt. The take
+   * path grants only this side — granting both would double-pay every dungeon.
+   */
+  deferred: boolean;
+}
+
+/** How long loot waits on the street. Long enough to finish a fight, short enough to not litter. */
+const DROP_TTL_MS = 90_000;
+/** How close a body has to be to take a pile it owns. */
+const DROP_TAKE_RANGE = 2.2;
+/** How far from the body a pile scatters, so three drops are three things and not one. */
+const DROP_SCATTER = 1.15;
 
 export class World {
   readonly sectors = createSectors();
@@ -204,6 +298,14 @@ export class World {
   readonly rooms = new Map<string, Room>();
   /** One live field per room. The server, not the client, decides if a card lands. */
   readonly sessions = new Map<string, BattleSession>();
+  /** playerId -> the bout waiting for their boots, read once by `duelEnter`. */
+  private pendingPvp = new Map<string, { key: string; brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number } }>();
+  /**
+   * Loot lying on the street. Keyed by drop id, and owned: the street is shared, the loot is not.
+   * Bounded by the TTL sweep in `broadcast`, so a busy server cannot grow this forever.
+   */
+  private drops = new Map<string, Drop>();
+  private dropSerial = 0;
   private sessionEvents = new Set<(ev: SessionEvent) => void>();
   /** Chat lines the street scrolls. Bounded so uptime cannot grow it. */
   private chatLog: ChatLineData[] = [];
@@ -249,6 +351,7 @@ export class World {
       this.last = now;
       this.emit(tick(this.sectors, now, dt, this.players.size));
       this.stepSessions(Math.round(dt * 1000));
+      this.sweepDrops();
       this.broadcast();
       this.timer = setTimeout(loop, CFG.broadcastMs);
     };
@@ -343,7 +446,7 @@ export class World {
    * Advance every live field, and tell the people standing on it what happened.
    *
    * Sessions are keyed by room, so a fight is scoped to the instance that started it while
-   * the sector boss it damages stays shared — two instances of Voltgrid chip the same
+   * the sector boss it damages stays shared — two instances of Voltgrid card the same
    * anomaly, which is the whole point of an MMO world that is not a lobby per player.
    * A node or a Training Sim is keyed to one player and touches nothing shared.
    */
@@ -359,6 +462,17 @@ export class World {
       }
       // Who is on the field *before* the step: a body the volley downs stays on the roster and has
       // to be told, and so does the partner whose grace ran out inside it.
+      if (session.brawl && session.size < 2 && Date.now() - session.createdAt > 60_000) {
+        // The second pair never stepped on: dissolve the field, stakes home.
+        for (const p of [...this.players.values()].filter((q) => session.has(q.id))) {
+          p.inBattle = false;
+          this.pushDuelEnd(p, session, { won: false, reason: 'gone' });
+        }
+        this.endBrawl(session, null, false, true);
+        this.sessions.delete(key);
+        this.lastTick.delete(key);
+        continue;
+      }
       const members = [...this.players.values()].filter((p) => session.has(p.id));
       this.refreshFieldParty(session);
       const { events, cleared, downed, expired, gone, signals } = session.step(dtMs, this.sectors);
@@ -367,12 +481,11 @@ export class World {
       for (const e of events) {
         const owner = 'owner' in e ? this.players.get(e.owner) : undefined;
         if (!owner) continue;
-        if ((e.type === 'hit' || e.type === 'buster') && e.damage > 0) {
-          const chain = e.type === 'hit' ? e.chain : 0;
+        if (e.type === 'hit' && e.damage > 0) {
+          const chain = e.chain;
           owner.bestProgram = Math.max(owner.bestProgram, e.damage);
           this.profiles.best(owner.tokenId, e.damage, chain);
           this.trackFightQuests(owner.id, this.quest(owner.id, [{ type: 'damage', amount: Math.max(1, Math.round(e.damage / 500)) }, ...(chain ? [{ type: 'chainRun' as const, amount: chain }] : [])]));
-          if (e.type === 'buster' && e.charged) this.trackFightQuests(owner.id, this.quest(owner.id, this.profiles.onLaser(owner.tokenId)));
         } else if (e.type === 'dodge') {
           this.profiles.countFor(owner.tokenId, 'dodges');
           this.trackFightQuests(owner.id, this.quest(owner.id, [{ type: 'dodge' }]));
@@ -397,6 +510,14 @@ export class World {
       }
 
       // Only a body nobody picked up pays for the run: out of the fight, and off the anomaly.
+      // PvP decides itself: the engine named a winner (or a draw), so settle the pot and
+      // tell both plates. Nothing below applies — no lockouts, no loot, no wipes.
+      if (session.state.pvp && session.state.over) {
+        this.settlePvp(session, members);
+        this.sessions.delete(key);
+        this.lastTick.delete(key);
+        continue;
+      }
       for (const id of expired) {
         const p = this.players.get(id);
         if (!p) continue;
@@ -404,6 +525,7 @@ export class World {
         this.syncRunHp(p, session, true);
         this.downedUntil.set(id, now + SF.DEFEAT_LOCKOUT_MS);
         this.pushDuelEnd(p, session, { won: false, reason: 'wiped' });
+        if (session.brawl) this.endBrawl(session, session.state.winnerId);
       }
       if (expired.length) this.refreshFieldParty(session);
 
@@ -415,6 +537,7 @@ export class World {
           this.syncRunHp(p, session);
           this.pushDuelEnd(p, session, { won: false, reason: 'gone' });
         }
+        if (session.brawl) this.endBrawl(session, null, false, true);
         this.sessions.delete(key);
         this.lastTick.delete(key);
         continue;
@@ -422,7 +545,32 @@ export class World {
       if (!cleared) continue;
 
       for (const p of members) p.inBattle = false;
-      if (session.nodeFight) {
+      /*
+       * A Line encounter is checked FIRST, and the order is the whole fix.
+       *
+       * `lineEngage` builds its session with `node: true` — it is a node-shaped fight, reusing
+       * `battle.ts` and the whole `sf/` machinery — so it lands in the `nodeFight` arm below. That
+       * arm pays a DUNGEON run: it reads `spec.nodeId`, checks the player's own `doc.run.at`, and
+       * refuses the kill when the two disagree. On the Line there is no run at all, so `valid` is
+       * false, `kill` comes back null, and the arm pushes `won: false, reason: 'wiped'` — which is
+       * "you killed the mob and you lost", plus a defeat lockout for good measure.
+       *
+       * So the discriminator cannot be `nodeFight`; it is `encounterId`, which only a Line session
+       * carries. Checked before the node arm, and paying nothing here: `line.clear` is the claim,
+       * and the server re-checks the session, the gate and the win before `lineCleared` pays and
+       * `killLineMob` drops the purse.
+       */
+      if (session.spec.encounterId) {
+        for (const p of members) {
+          this.pushDuelEnd(p, session, {
+            won: true,
+            reason: 'cleared',
+            // The Line pays in loot on the ground like a fold does, and `line.clear` is what
+            // actually spawns it — this flag is what keeps the two paths telling the same story.
+            lootOnGround: true,
+          });
+        }
+      } else if (session.nodeFight) {
         const nodeId = session.spec.nodeId;
         // The field decided the node died; only now does the run get paid, and only for the
         // player who owns this fold.
@@ -448,6 +596,8 @@ export class World {
             reason: kill?.ok ? 'cleared' : 'wiped',
             ...(paid ? { grant: paid, level: paid.level } : {}),
             ...(kill?.cleared ? { first: kill.cleared.first } : {}),
+            // A fold room pays in loot and gets a body for it.
+            lootOnGround: true,
           });
         }
       } else if (session.training) {
@@ -457,9 +607,9 @@ export class World {
           this.trackFightQuests(p.id, this.quest(p.id, res.events));
           let grant = res.grant;
           if (res.first) {
-            // a common card of the Chog's own tribe that it does not hold: the first thing to put in a folder
-            const card = starterCard(p.build, this.saves.get(p.tokenId).chips);
-            if (card) grant = mergeGrants([grant, this.profiles.grant(p.tokenId, { chips: [card] })]);
+            // a common card of the Chog's own tribe that it does not hold: the first thing to put in a deck
+            const card = starterCard(p.build, this.saves.get(p.tokenId).cards);
+            if (card) grant = mergeGrants([grant, this.profiles.grant(p.tokenId, { cards: [card] })]);
           }
           const lv = this.noteLevel(p, grant.level);
           this.pushDuelEnd(p, session, { won: true, reason: 'cleared', grant, first: res.first, level: lv });
@@ -492,21 +642,21 @@ export class World {
   private pushDuelEnd(
     p: Player,
     session: BattleSession,
-    r: { won: boolean; reason: DuelEndMsg['reason']; grant?: { xp: number; wav: number; chips: string[]; items: string[]; refunded?: RefundLine[] }; first?: boolean; level?: LevelUp | null; quests?: string[] },
+    r: { won: boolean; reason: DuelEndMsg['reason']; grant?: { xp: number; wav: number; cards: string[]; items: string[]; refunded?: RefundLine[] }; first?: boolean; level?: LevelUp | null; quests?: string[]; lootOnGround?: boolean },
   ): void {
     if (r.reason === 'wiped') this.downedUntil.set(p.id, Date.now() + SF.DEFEAT_LOCKOUT_MS);
     const outcome = session.outcomeOf(p.id);
     const seconds = session.secondsOf(p.id);
-    const busting = outcome?.busting ?? SF.emptyBusting();
-    const grade = outcome?.level ?? SF.bustingLevel(busting, seconds);
+    const rank = outcome?.rank ?? SF.emptyRank();
+    const grade = outcome?.level ?? SF.rankLevel(rank, seconds);
     const msg: DuelEndMsg = {
-      t: 'duel', kind: 'end', won: r.won, reason: r.reason,
-      name: session.spec.name || SF.ARCHETYPES[session.archetype].name,
+      t: 'duel', kind: 'end', won: r.won, reason: r.reason, pvp: session.state.pvp || undefined,
+      name: session.state.pvp && session.brawl ? `${session.brawl.challengerName} vs ${session.brawl.rivalName}` : session.spec.name || SF.ARCHETYPES[session.archetype].name,
       seconds,
-      busting: { level: grade, rank: outcome?.rank ?? SF.rankOf(grade), counters: busting.counters, abacks: busting.abacks, read: SF.bustingRead(busting, seconds) },
+      rank: { level: grade, letter: outcome?.letter ?? SF.rankOf(grade), counters: rank.counters, abacks: rank.abacks, read: SF.rankRead(rank, seconds) },
       drop: outcome?.drop ?? SF.dropFor(grade),
       wave: outcome?.wave ?? 0,
-      chips: r.grant?.chips ?? [],
+      cards: r.grant?.cards ?? [],
       items: r.grant?.items ?? [],
       lockoutMs: r.reason === 'wiped' ? SF.DEFEAT_LOCKOUT_MS : 0,
       quests: [...new Set([...(this.fightQuests.get(p.id) ?? []), ...(r.quests ?? [])])],
@@ -520,15 +670,482 @@ export class World {
     this.fightQuests.delete(p.id);
     p.save = this.saves.get(p.tokenId);
     this.notifyProfile(p.id);
+    // The payout, made physical: what the fight just paid falls on the street where you stood.
+    // Called after the profile push so the bag and the pile agree even if the client reads either.
+    //
+    // Only the fights that are *about* loot. Training is a practice room: it hands out a card to
+    // teach the loop and then it is over, so a pile sitting on the street afterwards is a pile the
+    // player will walk over expecting a dungeon reward and receive the starter card instead. An
+    // anomaly and a fold both pay in loot and both get bodies for it.
+    if (r.won && r.lootOnGround) this.spawnDrops(p, r.grant?.cards ?? [], r.grant?.items ?? [], r.grant?.wav ?? 0);
+  }
+
+  // ------------------------------------------------------------------ loot on the ground
+
+  /**
+   * Put the payout on the street, scattered around the body that earned it.
+   *
+   * The scatter is deterministic per index rather than random: three cards should sit as three
+   * readable piles, and a random angle clusters them into one indistinguishable heap often enough
+   * to be worth the two lines it costs to avoid.
+   */
+  private spawnDrops(p: Player, cards: readonly string[], items: readonly string[], wav = 0, atOverride?: { x: number; y: number } | { x: number; z: number }, regionOverride?: RegionId | null, deferred = false): void {
+    const at = p.place === 'room' ? p.street : { x: p.x, y: p.y };
+    const base = atOverride ? ('z' in atOverride ? { x: atOverride.x, y: atOverride.z } : { x: atOverride.x, y: atOverride.y }) : at;
+    const region = regionOverride !== undefined ? regionOverride : (p.place === 'line' ? p.region : null);
+    let i = 0;
+    const place = (kind: 'card' | 'item', key: string): void => {
+      const angle = (i * 2.399) % (Math.PI * 2);
+      const radius = DROP_SCATTER * (0.6 + 0.4 * ((i % 3) / 2));
+      i += 1;
+      const id = `d${++this.dropSerial}`;
+      if (kind === 'card') {
+        const c = CARD_BY_ID.get(key);
+        if (!c) return;
+        const klass = SF.cardClass(c);
+        this.drops.set(id, {
+          id, owner: p.id, sector: p.sector, region,
+          x: base.x + Math.cos(angle) * radius, z: base.y + Math.sin(angle) * radius,
+          kind: 'card', key, name: c.name, element: c.element, deferred,
+          klass: klass === 'standard' ? 'S' : klass === 'mega' ? 'M' : 'G',
+          rarity: klass === 'standard' ? 'common' : klass === 'mega' ? 'rare' : 'epic',
+          bornAt: Date.now(),
+        });
+        return;
+      }
+      const item = key ? (ITEMS as Record<string, { name: string }>)[key] : undefined;
+      if (!item) return;
+      this.drops.set(id, {
+        id, owner: p.id, sector: p.sector, region,
+        x: base.x + Math.cos(angle) * radius, z: base.y + Math.sin(angle) * radius,
+        kind: 'item', key, name: item.name, deferred,
+        rarity: 'common',
+        bornAt: Date.now(),
+      });
+    };
+    for (const c of cards) place('card', c);
+    for (const it of items) place('item', it);
+    // Money is loot too, and it was the one part of the payout with nothing to look at. A chest
+    // that paid 400 WAV used to be a line in a log; now it is a pile on the ground that has to be
+    // walked to and clicked, which is the only reason any of the rest of this reads as a reward.
+    if (wav > 0) this.placeMoney(p, base, wav, region, deferred);
+    if (i > 0 || wav > 0) this.pushDrops(p.id);
+  }
+
+  /**
+   * A pile of WAV on the ground.
+   *
+   * Money was the one part of a payout with nothing to look at: a chest worth 400 WAV used to be a
+   * single line in a log. It now lands with the cards, in its own green, and is taken the same way —
+   * a reward you cannot see is a number, and a number is not why anybody cleared a fold. The amount
+   * is not granted here and never is: `grantLoot` already paid it, and paying it twice on pickup is
+   * exactly the duplicate the bag quietly buys back.
+   */
+  private placeMoney(p: Player, at: { x: number; y: number }, wav: number, region?: RegionId | null, deferred = false): void {
+    const angle = Math.PI * 0.75;
+    const id = `d${++this.dropSerial}`;
+    this.drops.set(id, {
+      id, owner: p.id, sector: p.sector, region: region !== undefined ? region : (p.place === 'line' ? p.region : null),
+      x: at.x + Math.cos(angle) * 0.5, z: at.y + Math.sin(angle) * 0.5,
+      kind: 'wav', name: `${wav.toLocaleString()} WAV`, amount: wav, deferred,
+      rarity: 'common', bornAt: Date.now(),
+    });
+  }
+
+  /** The drops this player can see: their own, where they are standing, still alive. */
+  private dropsFor(id: string): DropView[] {
+    const p = this.players.get(id);
+    if (!p) return [];
+    const now = Date.now();
+    const here = p.place === 'line' ? p.region : null;
+    const out: DropView[] = [];
+    for (const d of this.drops.values()) {
+      if (d.owner !== id || d.sector !== p.sector) continue;
+      if ((d.region ?? null) !== here) continue;
+      const ttl = d.kind === 'card' && d.deferred ? -1 : Math.max(0, Math.round((DROP_TTL_MS - (now - d.bornAt)) / 1000));
+      if (!(d.kind === 'card' && d.deferred) && ttl <= 0) continue;
+      out.push({
+        id: d.id, x: d.x, z: d.z, kind: d.kind, name: d.name,
+        ...(d.key ? { key: d.key } : {}),
+        ...(d.amount ? { amount: d.amount } : {}),
+        ...(d.element ? { element: d.element } : {}),
+        ...(d.klass ? { klass: d.klass } : {}),
+        rarity: d.rarity, ttl, owner: d.owner,
+      });
+    }
+    return out;
+  }
+
+  private pushDrops(id: string): void {
+    this.pushTo(id, { t: 'drops', drops: this.dropsFor(id) });
+  }
+
+  /**
+   * Take a pile.
+   *
+   * Ownership and distance are checked here and nowhere else: the client is allowed to say *which*
+   * pile, never that it may have it.
+   *
+   * Take a pile. On the deferred side (Line loot) the pile PAYS here: nothing was granted
+   * when it fell, so pickup is the grant. Everywhere else the pile is the receipt of a payout
+   * the kill already made, and take is only the ceremony. Ownership and distance were checked
+   * above; this only moves the loot.
+   */
+  private takeDrop(p: Player, dropId: string): { ok: boolean; reason?: string; name?: string } {
+    const d = this.drops.get(dropId);
+    if (!d || d.owner !== p.id) return { ok: false, reason: 'not yours' };
+    if ((d.region ?? null) !== (p.place === 'line' ? p.region : null)) return { ok: false, reason: 'too far' };
+    const age = Date.now() - d.bornAt;
+    if (!(d.kind === 'card' && d.deferred) && age > DROP_TTL_MS) { this.drops.delete(dropId); this.pushDrops(p.id); return { ok: false, reason: 'the street took it back' }; }
+    const at = p.place === 'room' ? p.street : { x: p.x, y: p.y };
+    if (Math.hypot(at.x - d.x, at.y - d.z) > DROP_TAKE_RANGE) return { ok: false, reason: 'too far' };
+
+    this.drops.delete(dropId);
+    // Only the deferred side pays here. Dungeon/fold/anomaly piles were granted at the kill;
+    // their take is the ceremony the old comment describes, and granting again would double-pay.
+    if (d.deferred) {
+      if (d.kind === 'wav' && d.amount) this.profiles.grant(p.tokenId, { wav: d.amount });
+      else if (d.kind === 'item' && d.key) this.profiles.grant(p.tokenId, { items: { [d.key]: 1 } as never });
+      else if (d.kind === 'card' && d.key) {
+        this.profiles.giveCards(p.tokenId, [d.key]);
+        this.profiles.unoweCard(p.tokenId, d.key);
+      }
+    }
+    this.notifyProfile(p.id);
+    this.pushDrops(p.id);
+    return { ok: true, name: d.name };
+  }
+
+  /** Age the street. Runs on the broadcast beat, so expiry needs no timer of its own. */
+  private sweepDrops(): void {
+    if (!this.drops.size) return;
+    const now = Date.now();
+    const gone = new Set<string>();
+    for (const [id, d] of this.drops) {
+      if ((d.kind === 'card' && d.deferred) || now - d.bornAt <= DROP_TTL_MS) continue;
+      this.drops.delete(id);
+      gone.add(d.owner);
+    }
+    // Only the owners whose pile expired need a fresh list.
+    for (const owner of gone) if (this.players.has(owner)) this.pushDrops(owner);
   }
 
   private rollLoot(drop: { rolls: number; rareChance: number }): string[] {
-    const common = CHIPS.filter((c) => SF.cardClass(c) === 'standard');
-    const rare = CHIPS.filter((c) => SF.cardClass(c) !== 'standard');
+    const common = CARDS.filter((c) => SF.cardClass(c) === 'standard');
+    const rare = CARDS.filter((c) => SF.cardClass(c) !== 'standard');
     return Array.from({ length: drop.rolls }, () => {
       const pool = Math.random() < drop.rareChance && rare.length ? rare : common;
       return pool[Math.floor(Math.random() * pool.length)]!.id;
     });
+  }
+
+// ---------------------------------------------------------------------------
+  // The Line
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Park wherever the player is standing before a place change, keyed by the place they are
+   * leaving. A single `street` slot was enough when there was a street and six rooms; there are
+   * now nine places and they do not share a coordinate frame, so this is a map.
+   */
+private park(p: Player, leaving: Player['place']): void {
+    if (leaving === 'street') p.street = { x: p.x, y: p.y };
+    else if (leaving === 'line' && p.region) p.lineAt[p.region] = { x: p.x, y: p.y };
+    // A room is 16x12 at the origin: there is nothing to park, because there is nowhere else in
+    // it to come back to.
+  }
+
+  /**
+   * The furthest region this token has earned the right to stand in.
+   *
+   * Regions open in order, so this is "the next one whose predecessor's warden is down" — never
+   * a value the client names for itself. Returning to a region you have already cleared puts
+   * you back there rather than at the frontier, because the frontier is not where a player who
+   * wants to go farm Ash Pine belongs.
+   */
+  private openestRegion(p: Player): RegionId {
+    const line = this.profiles.doc(p.tokenId).line;
+    let best: RegionId = REGION_IDS[0]!;
+    for (const r of REGION_IDS) if (regionGate(line, r).open) best = r;
+    if (p.region && REGION_IDS.indexOf(p.region) > REGION_IDS.indexOf(best)) return p.region;
+    return best;
+  }
+
+  /**
+   * Move a player into a region of the Line, or out of it back to the street.
+   *
+   * The only sanctioned way across: `move()` will not honour a client's own idea of where a
+   * region is, and `regionGate` — the same function `lineCleared` uses — is what says whether
+   * this one is earned. `from` is true when nobody asked (arriving from the city, or walking in
+   * from the previous region), in which case the frontier is chosen instead of a named region.
+   *
+   * The maps tab calls this with `from: false` and a named region, and gets the same refusal
+   * text a sealed region prints on the tab, because it is the same gate.
+   */
+  travel(id: string, region: RegionId | null, from = false): { ok: boolean; reason?: string; region?: RegionId } {
+    const p = this.players.get(id);
+    if (!p) return { ok: false, reason: 'no such player' };
+    this.duelLeave(id);
+    if (region === null) {
+      this.park(p, 'line');
+      p.place = 'street';
+      p.region = null;
+      // Off the road you land by the quest board. `park` still saves (rooms remember doors),
+      // but trips come home: the road and the folds end at the board, computed the same way
+      // on both sides, so nothing is sent.
+      const back = boardSideFor(cityOf(p.sector));
+      p.x = back.x; p.y = back.z;
+      p.street = { x: p.x, y: p.y };
+      p.at = Date.now();
+      return { ok: true };
+    }
+    const line = this.profiles.doc(p.tokenId).line;
+    const want = from ? this.openestRegion(p) : region;
+    const gate = regionGate(line, want);
+    if (!gate.open) return { ok: false, reason: gate.reason };
+    this.park(p, p.place);
+    const layout = lineLayout(want);
+    const back = p.lineAt[want];
+    p.place = 'line';
+    p.region = want;
+    p.x = back?.x ?? layout.spawn.x;
+    p.y = back?.y ?? layout.spawn.z;
+    p.at = Date.now();
+    p.inPoi.clear();
+    this.quest(id, [{ type: 'lineTravel', target: want }]);
+    return { ok: true, region: want };
+  }
+
+  /** Everyone currently walking one region. Regions are not rooms, so this is its own set. */
+  private playersOnLine(region: RegionId): string[] {
+    const out: string[] = [];
+    for (const p of this.players.values()) if (p.place === 'line' && p.region === region) out.push(p.id);
+    return out;
+  }
+
+  /**
+   * The mobs, as the server sees them: alive, fighting, dead, or waiting to stand back up.
+   *
+   * Keyed by mob id, not by region, because a player who walks out and back in should find the
+   * same fight they left — and because a warden that stays dead has to stay dead in exactly one
+   * place rather than in a per-region set that gets rebuilt on every arrival.
+   */
+  private lineMobs = new Map<string, { deadAt: number; inFight: string | null }>();
+
+  /**
+   * Walk into a live mob and the fight starts by itself.
+   *
+   * Three guards, each of which is a different way this could be exploited or annoyed:
+   *
+   *  - **already in a fight** — walking the field mid-duel does not open a second one, which is
+   *    how a player would otherwise stack two wardens;
+   *  - **dead or respawning** — a mob that was beaten stays down for `respawnS`, and a warden
+   *    stays down forever because it is a gate;
+   *  - **already cleared** — the first body banks the encounter; the second body of the same
+   *    drift is the same fight again, and it still opens (for the repeat purse), but a *cleared
+   *    warden's* region has moved on and there is nothing to start.
+   */
+  private checkLineMobs(id: string, p: Player): void {
+    if (!p.region) return;
+    if (this.sessionOf(id)) return;
+    const now = Date.now();
+    const line = this.profiles.doc(p.tokenId).line;
+    for (const m of mobSpawns(p.region)) {
+      const state = this.lineMobs.get(m.id);
+      if (state?.inFight) continue;
+      if (state && now - state.deadAt < m.respawnS * 1000) continue;
+      if (m.kind === 'warden' && line.cleared.includes(m.encounterId)) continue;
+      const at = mobAt(m, now);
+      if (Math.hypot(p.x - at.x, p.y - at.z) > m.reach) continue;
+      const res = this.lineEngage(id, p, m.encounterId, m.id);
+      if (res.ok) {
+        this.pushTo(id, {
+          t: 'line',
+          kind: 'ambush',
+          encounterId: m.encounterId,
+          mob: m.id,
+          name: m.name,
+        });
+        return;
+      }
+    }
+  }
+
+  /** Mark the mob dead when its fight is won, and pay the repeat purse when the cards are banked. */
+  private killLineMob(encounterId: string, winnerId: string): { wav: number; items: string[]; x: number; z: number } {
+    const now = Date.now();
+    let wav = 0;
+    const items: string[] = [];
+    let x = 0;
+    let z = 0;
+    let placed = false;
+    for (const [mobId, state] of this.lineMobs) {
+      if (!state.inFight) continue;
+      const [enc] = mobId.split('.').slice(0, 2).join('.').split('.');
+      void enc;
+      const spawn = allMobSpawns().find((m) => m.id === mobId);
+      if (!spawn || spawn.encounterId !== encounterId) continue;
+      this.lineMobs.set(mobId, { deadAt: now, inFight: null });
+      // The purse is the mob's, not the region's, so it pays on every kill — first or repeat. The
+      // `cleared` check only decides whether the REPEAT bonus is also owed, and that bonus is
+      // granted by `lineCleared` rather than dropped, so nothing here can double-pay.
+      wav += spawn.repeatWav;
+      // The pile falls where the body fell, not where the winner stood: the first killed body
+      // of this encounter anchors the scatter, so loot waits on the road where the fight was.
+      if (!placed) {
+        const at = mobAt(spawn, now);
+        x = at.x;
+        z = at.z;
+        placed = true;
+      }
+    }
+    // No marked body (a fight started by E on the site rather than by walking into a mob):
+    // fall back to the winner's own feet, which is where the old code always dropped.
+    if (!placed) {
+      const winner = this.players.get(winnerId);
+      if (winner) {
+        x = winner.x;
+        z = winner.y;
+      }
+    }
+    return { wav, items, x, z };
+  }
+
+  /**
+   * Every body in a region, where it is right now and whether it is standing.
+   *
+   * Positions are mobAt's pure function of the clock, so the client draws the same walk the
+   * server's proximity check walks into � and a dead mob reports live: false rather than
+   * vanishing, because the corpse fading out is the only feedback a win has on the field.
+   */
+  private mobsFor(region: RegionId | null) {
+    if (!region) return [];
+    const now = Date.now();
+    return mobSpawns(region).map((m) => {
+      const state = this.lineMobs.get(m.id);
+      const alive = !(state && (state.inFight || now - state.deadAt < m.respawnS * 1000));
+      const at = mobAt(m, now);
+      return {
+        id: m.id, encounterId: m.encounterId, region: m.region, kind: m.kind, name: m.name, element: m.element,
+        archetype: m.archetype, tier: m.tier, home: { x: +m.home.x.toFixed(1), z: +m.home.z.toFixed(1) }, roam: m.roam,
+        x: +at.x.toFixed(1), z: +at.z.toFixed(1), alive,
+        // The facing has to be on the wire. The client places the figure at exactly the position and
+        // yaw the server reported — it does not predict, because a figure that drifted would be a
+        // figure the player swings at and misses — and a missing yaw arrives as `undefined`, which
+        // three.js turns into a NaN rotation, which is a mob that silently does not render at all.
+        // Derived from the walk itself, so bodies turn into their patrol instead of sliding sideways.
+        facing: +mobFacing(m, now).toFixed(3),
+      };
+    });
+  }
+
+  /**
+   * The site the player is standing in, if any — the server's own answer, never the client's.
+   *
+   * This is the check the whole encounter system rests on. A client can send `line.enter` naming
+   * any encounter it likes; what the server asks is whether the player is standing on the thing.
+   */
+  siteUnder(p: Player, reach = 9): string | null {
+    if (p.place !== 'line' || !p.region) return null;
+    return lineLayout(p.region).siteAt(p.x, p.y, reach)?.id ?? null;
+  }
+
+  /**
+   * The body of an encounter the player is closest to right now.
+   *
+   * A fight started by walking into a mob names its body; a fight started by pressing E on the
+   * site names only the site — but the purse hangs off the BODY (`killLineMob` walks `lineMobs`
+   * looking for `inFight`), so an E-started fight without a marked body dropped nothing at all.
+   * Marking the nearest body of the site here makes both paths pay the same purse at the same
+   * place: where the mob stood, not where the winner stood.
+   */
+  private nearestLineMob(p: Player, encounterId: string): string | undefined {
+    if (!p.region) return undefined;
+    const now = Date.now();
+    let best: string | undefined;
+    let bestD = Infinity;
+    for (const m of mobSpawns(p.region)) {
+      if (m.encounterId !== encounterId) continue;
+      const state = this.lineMobs.get(m.id);
+      if (state?.inFight) continue;
+      if (state && now - state.deadAt < m.respawnS * 1000) continue;
+      const at = mobAt(m, now);
+      const d = Math.hypot(p.x - at.x, p.y - at.z);
+      if (d < bestD) {
+        bestD = d;
+        best = m.id;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Start the fight at a site on the Line.
+   *
+   * Drifts are `node` fights and wardens are the region's gate — the same two shapes the dungeon
+   * uses, so `battle.ts` and the whole `sf/` session machinery are reused rather than forked.
+   * The health comes from `line/budget.ts`, which derives it from the cards the region hands out
+   * *before* this site, so moving a card between two encounters re-tunes both fights without
+   * anyone touching a difficulty number.
+   *
+   * A cleared site is refused, not silently re-fought: the reward is already banked and the
+   * player is told so rather than being handed a fight that pays nothing.
+   */
+  private lineEngage(id: string, p: Player, encounterId: string, mobId?: string): { ok: boolean; reason?: string } {
+    const line = this.profiles.doc(p.tokenId).line;
+    if (!p.region) return { ok: false, reason: 'you are not on the Line' };
+    const gate = encounterGate(line, encounterId);
+    if (!gate.open) return { ok: false, reason: gate.reason };
+    const def = ENCOUNTER_BY_ID.get(encounterId);
+    const budget = encounterBudget(encounterId);
+    if (!def || !budget) return { ok: false, reason: 'no such encounter' };
+    if (line.cleared.includes(encounterId)) return { ok: false, reason: 'already cleared — walk on' };
+
+    // Keyed per encounter, not per player, so a party that walks into the same drift fights the
+    // same thing and its reward is shared once by `partyRewardScale`, not once per body.
+    const key = `line:${encounterId}`;
+    let session = this.sessions.get(key);
+    if (!session) {
+      const warden = def.kind === 'warden';
+      const duelTier = duelTierOf(warden ? 'boss' : 'node', def.tier);
+      // Tolls fights run one step deeper and carry the encounter's own bite: the first map
+      // is a tutorial that still hits back. Everywhere else the table plays as priced.
+      const quirk = quirkOf(encounterId);
+      const spicy = quirk.powerK && quirk.powerK !== 1 ? Math.round(SF.volleyAnchor(duelTier) * quirk.powerK) : 0;
+      session = new BattleSession(key, p.sector, {
+        name: warden ? REGION_BY_ID.get(def.region)!.boss.name : def.name,
+        hp: budget.hp,
+        maxHp: budget.hp,
+        element: def.element as Element,
+        // The map mob and the duel are one thing: both read `archetypeForEncounter`.
+        archetype: archetypeForEncounter(encounterId),
+        node: true,
+        encounterId,
+        region: def.region,
+        partyHp: warden ? 'boss' : 'node',
+        tier: duelTier,
+        level: Math.max(2, def.tier * 4),
+        difficulty: Math.min(6, def.tier + (def.region === 'tolls' ? 1 : 0)),
+        ...(spicy ? { power: spicy } : {}),
+      });
+      this.sessions.set(key, session);
+    }
+    // The encounter id travels with the join: a fight that starts at a patrolling body
+    // is nowhere near its site, and re-deriving it from the boots is what used to refuse
+    // every ambush while still marking the mob — an ambush push with no session behind it,
+    // and a body bricked in `inFight` forever. A refused join marks nothing.
+    const entered = this.duelEnter(id, 'line', encounterId);
+    if (!entered.ok) return entered;
+    /*
+     * Mark the mob, and mark it HERE rather than in the caller.
+     *
+     * `killLineMob` walks `lineMobs` looking for `inFight`, and only `checkLineMobs` used to set it
+     * — so an ambush dropped its purse and a fight started by pressing E on the site dropped
+     * nothing at all, because the loop found no body to kill. Whichever way a fight starts, the
+     * mob that is now being fought has to be the one that pays.
+     */
+    if (mobId) this.lineMobs.set(mobId, { deadAt: 0, inFight: id });
+    return { ok: true };
   }
 
   /**
@@ -541,7 +1158,7 @@ export class World {
     id: string,
     msg: {
       action: string;
-      kind?: 'chip' | 'item';
+      kind?: 'card' | 'item';
       stockId?: string;
       itemId?: string;
       questId?: string;
@@ -554,6 +1171,13 @@ export class World {
       door?: string;
       cards?: string[];
       flag?: string;
+      dropId?: string;
+      /** Which region of the Line the maps tab asked for. */
+      region?: string;
+      /** Which encounter of a region. Re-checked against the player's own position. */
+      encounterId?: string;
+      /** Which of the 3 dealt draft cards the player picked. */
+      card?: string;
     },
   ): { ok: boolean; reason?: string; [k: string]: unknown } {
     const p = this.players.get(id);
@@ -563,6 +1187,15 @@ export class World {
     switch (msg.action) {
       case 'profile':
         return { ok: true, profile: this.profileFor(id) };
+
+      case 'drops':
+        // Re-ask for the street's loot: what a client does on reconnect, and what makes a
+        // missed push self-healing instead of a pile that exists only in the server's head.
+        this.pushDrops(id);
+        return { ok: true, drops: this.dropsFor(id) };
+
+      case 'take':
+        return msg.dropId ? this.takeDrop(p, msg.dropId) : { ok: false, reason: 'which pile?' };
 
       case 'shop':
         return { ok: true, shops: this.profiles.shops(p.tokenId, p.sector, volume), wav: this.profiles.doc(p.tokenId).bag.wav };
@@ -659,7 +1292,7 @@ export class World {
         if (!field?.nodeFight || field.state.result !== 'win' || field.spec.areaId !== doc.area?.id || field.spec.nodeId !== doc.run?.at || doc.run?.failed) return { ok: false, reason: 'the current field has not been cleared' };
         const bodies = [...this.players.values()].filter((x) => field.has(x.id));
         const scale = bodies.length > 0 ? partyRewardScale(bodies.length, ownersOf(bodies)) : 1;
-        const res = this.profiles.clearCurrent(p.tokenId, 0, scale);
+        const res = this.profiles.clearCurrent(p.tokenId, 0, scale, p.build);
         // The room's own grant is what usually moves the needle, so its level-up is said here instead
         // of only being folded into the cached number a banner reads off later.
         if (res.ok && res.grant) this.noteLevel(p, res.grant.level);
@@ -691,21 +1324,141 @@ export class World {
         return res;
       }
 
+      case 'area.draft': {
+        // Take 1 of the 3 the last combat node dealt. The options were server-dealt and the
+        // pick is validated inside `takeDraft`, so naming a card you were never offered buys
+        // nothing — and a duplicate is bought back by the counter through the normal grant path.
+        const card = typeof msg.card === 'string' ? msg.card : '';
+        const res = this.profiles.takeDraft(p.tokenId, card);
+        this.notifyProfile(id);
+        // The sheet repaints off the reply, so the run rides along like area.step.
+        return { ...res, run: this.profiles.doc(p.tokenId).run };
+      }
+
+      case 'area.shrine': {
+        // Thin the deck at a shrine rest. Ownership and the signature guard live in
+        // `shrineRemove`, so the message names a card and the server decides.
+        const card = typeof msg.card === 'string' ? msg.card : '';
+        const res = this.profiles.shrineRemove(p.tokenId, card, [p.build.signature]);
+        this.notifyProfile(id);
+        // The sheet repaints off the reply, so the run rides along like area.step.
+        return { ...res, run: this.profiles.doc(p.tokenId).run };
+      }
+
       case 'area.close':
         this.duelLeave(id);
-        return this.profiles.closeArea(p.tokenId);
+        const shut = this.profiles.closeArea(p.tokenId);
+        // Out of a fold you land by the quest board — unless the fold was opened from the road,
+        // in which case there is a region to go back to and the client restores it instead.
+        if (p.place !== 'line') {
+          const home = boardSideFor(cityOf(p.sector));
+          p.x = home.x; p.y = home.z; p.street = { x: p.x, y: p.y }; p.at = Date.now();
+        }
+        return shut;
 
-      case 'area.state': {
+case 'area.state': {
         const view = this.profiles.areaView(p.tokenId);
         return { ok: true, ...view, enemy: this.profiles.areaEnemy(p.tokenId) };
       }
 
-      case 'folder.save': {
-        // The folder is validated against the rules and the player's own collection; a client
+      // ---- The Line ------------------------------------------------------------
+      // Four actions and one invariant: **the server never believes a client about where it
+      // is standing.** `line.state` is a report, `line.travel` is a request the gate decides,
+      // `line.enter` asks the layout whether the player is on the site, and `line.clear` asks
+      // the session whether the fight was actually won. None of them reads a position from the
+      // message.
+
+      case 'line.state': {
+        const view = this.profiles.lineView(p.tokenId, this.mobsFor(p.region));
+        return {
+          ok: true,
+          ...view,
+          /** Where the maps tab should put the highlight: the region you are standing in, or the frontier. */
+          at: p.region ?? this.openestRegion(p),
+          onTheLine: p.place === 'line',
+        };
+      }
+
+      case 'line.travel': {
+        const want = msg.region ? (REGION_IDS as readonly string[]).includes(msg.region) ? (msg.region as RegionId) : null : null;
+        if (msg.region && !want) return { ok: false, reason: 'no such region' };
+        const res = this.travel(id, want);
+        if (!res.ok) return res;
+        if (want) this.announce(`${p.build.callsign} took the road to ${REGION_BY_ID.get(res.region!)!.name}`, p.sector);
+        this.notifyProfile(id);
+        return { ...res, state: this.profiles.lineView(p.tokenId) };
+      }
+
+      case 'line.enter': {
+        const s = this.siteUnder(p);
+        if (!s) return { ok: false, reason: 'nothing here to fight' };
+        // The client's `encounterId` is never compared to anything on its own: the id came from
+        // the layout, and the layout is the same object the terrain was drawn from.
+        if (msg.encounterId && msg.encounterId !== s) {
+          return { ok: false, reason: 'that is not what you are standing on' };
+        }
+        const site = lineLayout(p.region!).encounters.find((e) => e.id === s);
+        if (!site) return { ok: false, reason: 'no such site' };
+        return this.lineEngage(id, p, site.id, this.nearestLineMob(p, site.id));
+      }
+
+      case 'line.talk': {
+        // The trailhead scout talks to anyone standing at the campfire — no quest, no gate,
+        // just the road rules. Proximity is re-checked here, never trusted from the client.
+        if (p.place !== 'line' || !p.region) return { ok: false, reason: 'you are not on the Line' };
+        const scout = campOf(p.region).npc;
+        if (Math.hypot(p.x - scout.x, p.y - scout.z) > 5) return { ok: false, reason: 'too far away' };
+        return {
+          ok: true,
+          talk: {
+            npc: { id: 'line-scout', name: scout.name, role: 'guide', tribe: 'prism' },
+            pages: [
+              'New boots. The board sent word — travel papers and everything. I am the scout they posted here: I watch the road, I do not walk it.',
+              'The rules out here: walk into a rust mite and the fight starts by itself. Win and the Line pays a card on the spot, plus a purse on the ground where the body fell — walk over and take it before it fades.',
+              'This camp is safe ground — nothing starts a fight within shouting distance of the fire. The big one at the far north is the warden: beat it and the region is yours. The board will want to hear about that.',
+            ],
+            options: [{ id: 'close', label: 'Back to the road', primary: true }],
+          },
+        };
+      }
+
+      case 'line.clear': {
+        // The win has to be the session's, not the message's. A drift is a real `BattleSession`;
+        // without one there is nothing to have won, and that is the whole answer.
+        const field = this.sessionOf(id);
+        const spec = field?.spec;
+        if (!field || spec?.encounterId !== msg.encounterId) {
+          return { ok: false, reason: 'no fight here to have won' };
+        }
+        if (field.state.result !== 'win') return { ok: false, reason: 'the fight is not over' };
+        const res = this.profiles.lineCleared(p.tokenId, [msg.encounterId!], p.build, true);
+        // The mob goes down with the fight, and what it was carrying lands on the ground next to
+        // the winner. First clears pay their named cards into the deck; repeats pay the purse
+        // the spawn table printed, in WAV on the dirt, because a cleared region has to stay worth
+        // walking. Wardens respawn never — `respawnS: 0` — so a gate that was crossed stays crossed.
+        const kill = this.killLineMob(msg.encounterId!, id);
+        /*
+         * What lands on the ground: everything the mob was carrying.
+         *
+         * First clears drop their named cards on the dirt next to the purse: `lineCleared`
+         * marked them cleared but granted nothing (deferred), so these piles are the only
+         * copies and `take` is the grant. Cards do not expire — a card is progression, not
+         * litter — and the profile remembers them as owed, so a restart re-plants them at
+         * the owner’s boots on join. Repeats pay only the purse, as before.
+         */
+        if (res.ok && res.cards?.length) this.profiles.oweCards(p.tokenId, res.cards);
+        this.spawnDrops(p, res.ok ? res.cards ?? [] : [], [], kill.wav, { x: kill.x, y: kill.z }, p.region, true);
+        this.quest(id, [{ type: 'lineClear', target: msg.encounterId! }]);
+        this.notifyProfile(id);
+        return { ...res, state: this.profiles.lineView(p.tokenId), repeatWav: kill.wav };
+      }
+
+      case 'deck.save': {
+        // The deck is validated against the rules and the player's own collection; a client
         // that sends a card it does not hold is told which one.
-        const res = this.profiles.setFolder(p.tokenId, p.build, msg.cards ?? []);
+        const res = this.profiles.setDeck(p.tokenId, p.build, msg.cards ?? []);
         if (res.ok) {
-          // "Equip" is a real act: a folder that fields a card the player collected, not the born set.
+          // "Equip" is a real act: a deck that fields a card the player collected, not the born set.
           const born = new Set(p.build.library);
           if ((msg.cards ?? []).some((c) => !born.has(c))) this.quest(id, [{ type: 'equip' }]);
         }
@@ -713,14 +1466,14 @@ export class World {
         return res;
       }
 
-      case 'folder.auto': {
-        const cards = this.profiles.autoFolder(p.tokenId, p.build);
+      case 'deck.auto': {
+        const cards = this.profiles.autoDeck(p.tokenId, p.build);
         this.notifyProfile(id);
         return { ok: true, cards };
       }
 
-      case 'folder.reset':
-        this.profiles.resetFolder(p.tokenId);
+      case 'deck.reset':
+        this.profiles.resetDeck(p.tokenId);
         this.notifyProfile(id);
         return { ok: true };
 
@@ -736,6 +1489,9 @@ export class World {
 
       case 'war':
         return { ok: true, war: this.war.view(), mine: this.war.of(p.tokenId) };
+
+      case 'ranks':
+        return { ok: true, ranks: this.ranksView(p.tokenId) };
 
       case 'album':
         return { ok: true, album: this.profiles.albumView(p.tokenId) };
@@ -836,7 +1592,7 @@ export class World {
     return { ok: true, name: res.name, wav: res.reward?.wav ?? 0, xp: res.reward?.xp ?? 0, level: lv?.to ?? null, items: res.reward?.items ?? [], thanks: res.def.thanks ?? '' };
   }
 
-  /** Stepping through a door: an objective like "go into the Chip Shop" is this. */
+  /** Stepping through a door: an objective like "go into the Card Shop" is this. */
   private enterDoor(p: Player, kind: string): { ok: boolean; reason?: string } {
     const door = cityOf(p.sector).anchors.find((a) => (a.kind === 'door' || a.kind === 'fold') && a.sub === kind && this.near(p, a, 5));
     if (!door) return { ok: false, reason: 'no such door here' };
@@ -964,12 +1720,16 @@ export class World {
    * Training Sim both begin at the Wave Station, so a forged message cannot start a fight from
    * the other side of the city.
    */
-  duelEnter(id: string, mode: 'anomaly' | 'train' | 'node' = 'anomaly'): { ok: boolean; reason?: string } {
+  duelEnter(
+    id: string,
+    mode: 'anomaly' | 'train' | 'node' | 'line' | 'pvp' = 'anomaly',
+    encounterId?: string,
+  ): { ok: boolean; reason?: string } {
     const p = this.players.get(id);
     if (!p) return { ok: false, reason: 'not connected' };
     const active = this.sessionOf(id);
     if (active) {
-      if (active.nodeFight !== (mode === 'node') || active.training !== (mode === 'train')) return { ok: false, reason: 'leave the current field first' };
+      if (active.nodeFight !== (mode === 'node') || active.training !== (mode === 'train') || active.state.pvp !== (mode === 'pvp')) return { ok: false, reason: 'leave the current field first' };
       this.pushDuelStart(p);
       return { ok: true };
     }
@@ -1020,13 +1780,46 @@ export class World {
         this.sessions.set(key, existing);
       }
       session = existing;
+} else if (mode === 'line') {
+      // The Line's fight was built and stored by `lineEngage`, keyed on the encounter rather
+      // than on the player, so a party that walks into the same drift shares one boss. The
+      // caller names the encounter because the fight can start at a patrolling body, and a
+      // body on patrol is not standing on its site. Both callers proved the position already
+      // (`line.enter` stood on the site, `checkLineMobs` touched the body) — this branch only
+      // has to find the field.
+      const region = p.region;
+      const site = encounterId ?? (region ? this.siteUnder(p) : null);
+      if (!region || !site) return { ok: false, reason: 'nothing here to fight' };
+      const found = this.sessions.get(`line:${site}`);
+      if (!found) return { ok: false, reason: 'nothing here to fight' };
+      session = found;
     } else {
       const station = this.stationOf(p.sector);
-      if (!station || !this.near(p, station, 7)) return { ok: false, reason: 'step up to the Wave Station first' };
+      if (mode !== 'pvp' && (!station || !this.near(p, station, 7))) return { ok: false, reason: 'step up to the Wave Station first' };
       if (mode === 'train') {
         const key = `train:${id}`;
         const boss = SF.trainingBoss(p.level, p.build.loadout.element);
         session = new BattleSession(key, p.sector, { ...boss, maxHp: boss.hp, training: true, tier: 'train' });
+        this.sessions.set(key, session);
+      } else if (mode === 'pvp') {
+        // The bout the acceptor agreed to: stored by `pvpAction`, and a duel
+        // nobody challenged for is refused the same way a room nobody stood in is.
+        const bout = this.pendingPvp.get(id);
+        if (!bout) return { ok: false, reason: 'no bout waiting' };
+        this.pendingPvp.delete(id);
+        const key = bout.key;
+        const found = this.sessions.get(key);
+        if (found && (found.state.over || found.size >= 2)) return { ok: false, reason: 'the bout is over — or full' };
+        session = found ?? new BattleSession(key, p.sector, {
+          name: 'PVP',
+          hp: 1,
+          maxHp: 1,
+          element: p.build.loadout.element,
+          pvp: true,
+          tier: 'glitch',
+          level: p.level,
+          brawl: bout.brawl,
+        });
         this.sessions.set(key, session);
       } else {
         const sector = this.sectors.find((s) => s.sector === p.sector);
@@ -1067,7 +1860,12 @@ export class World {
       tokenId: p.tokenId,
       aggro: p.build.loadout.voice.aggro ?? 0,
       resist: p.build.loadout.resist,
-      folder: this.profiles.folderFor(p.tokenId, p.build),
+      deck: this.profiles.deckFor(p.tokenId, p.build),
+      // The basic attack, priced off this token's own attributes. Carried on the body rather than
+      // looked up per deal so two Chogs in one party press different buttons and hit for
+      // different damage — the gap a common and a Legendary open, and the only gap that exists
+      // while the deck is still too small to fill a hand. `sf/loadout.ts basicMight`.
+      basic: SF.basicCard(p.build.loadout.element, p.build.basicMight),
       level: p.level,
       ...(session.nodeFight ? { hp, maxHp } : {}),
     };
@@ -1085,11 +1883,13 @@ export class World {
     if (!s) return;
     const body = s.bodyOf(p.id);
     if (!body) return;
+    const rivalBody = s.state.pvp ? s.state.players.find((b) => b.id !== p.id) ?? null : null;
     const pool = SF.ARCHETYPES[s.archetype].pool;
     this.pushTo(p.id, {
       t: 'duel', kind: 'start', view: s.view(p.id), place: s.state.place,
+      ...(rivalBody ? { rival: { tokenId: rivalBody.tokenId, name: rivalBody.name, element: rivalBody.tribe, traits: this.players.get(rivalBody.id)?.attributes ?? {} } } : {}),
       caps: SF.capsOf(body),
-      moves: pool.map((id) => SF.MOVES[id]!).filter((move, i) => i === 0 || move.depth <= s.difficulty).map(({ id, name, read }) => ({ id, name, read })),
+      moves: s.state.pvp ? [] : pool.map((id) => SF.MOVES[id]!).filter((move, i) => i === 0 || move.depth <= s.difficulty).map(({ id, name, read }) => ({ id, name, read })),
     });
   }
 
@@ -1110,6 +1910,12 @@ export class World {
     }
     // A fold the player walks out of mid-fight is not cleared; the node simply stays.
     if (s && reason === 'left') this.pushDuelEnd(p, s, { won: false, reason: 'left' });
+    if (s?.brawl && reason === 'left') {
+      // Walking out hands the bout to whoever is still on the field — or refunds it if
+      // nobody is, because a pot cannot strand on an empty room.
+      const still = [...this.players.values()].find((q) => q.id !== id && s.has(q.id))?.id ?? null;
+      this.endBrawl(s, still, true);
+    }
   }
 
   /** The Link ward: a storm cannot be hurt alone. `consume` is false when only peeking. */
@@ -1179,12 +1985,12 @@ export class World {
         SF.step(s, id, msg.dir!);
         break;
       case 'pick': {
-        // A dealt hand is readable from the join but pickable only inside the screen: the gauge is
+        // A dealt hand is readable from the join but pickable only inside the screen: the charge is
         // what opens it, and a client that claims otherwise gets a refusal it can show the player.
         const check =
-          body.custom && body.customOpen && Number.isInteger(msg.cell)
-            ? SF.canPick(body.custom, msg.cell!, SF.capsOf(body))
-            : { ok: false, reason: body.custom && !body.customOpen ? ('closed' as const) : ('empty' as const) };
+          body.hand && body.handOpen && Number.isInteger(msg.cell)
+            ? SF.canPick(body.hand, msg.cell!, SF.capsOf(body))
+            : { ok: false, reason: body.hand && !body.handOpen ? ('closed' as const) : ('empty' as const) };
         const ok = check.ok && SF.pickCard(s, id, msg.cell!);
         // Tapping a card fires it: there is no separate Execute step to take.
         if (ok) SF.execute(s, id);
@@ -1195,12 +2001,6 @@ export class World {
       case 'clear': SF.clearCards(s, id); break;
       case 'execute':
         reply({ kind: 'program', ok: SF.execute(s, id) });
-        break;
-      case 'buster':
-        if (typeof msg.down !== 'boolean') return reply({ kind: 'refused', reason: 'buster needs a press or release' });
-        if (msg.down) SF.pressBuster(s, id);
-        else SF.releaseBuster(s, id);
-        reply({ kind: 'buster', ok: SF.canAct(body) });
         break;
       case 'cover': {
         if (msg.with !== null && typeof msg.with !== 'string') return reply({ kind: 'cover', ok: false, reason: 'not-down' });
@@ -1353,6 +2153,182 @@ export class World {
     }
   }
 
+  /**
+   * The conversation about brawls. A challenge is an invitation to step on: both
+   * sides fight, live, on opposite halves. Whoever it concerns is told.
+   */
+  pvpAction(id: string, msg: { action?: string; with?: string; wager?: number }): void {
+    const me = this.players.get(id);
+    if (!me) return;
+    const other = msg.with ? this.players.get(String(msg.with)) : undefined;
+    switch (msg.action) {
+      case 'challenge': {
+        if (!other) return void this.pushTo(id, { t: 'pvp', refused: 'that player is gone' });
+        if (me.inBattle) return void this.pushTo(id, { t: 'pvp', refused: 'finish your fight first' });
+        const wager = Math.max(0, Math.min(MAX_WAGER, Math.floor(Number(msg.wager ?? 0))));
+        if (!Number.isFinite(wager)) return void this.pushTo(id, { t: 'pvp', refused: 'name a real amount' });
+        if (wager > 0 && this.profiles.chogOf(me.tokenId) < wager) {
+          return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
+        }
+        const r = this.social.challenge(id, other.id, wager);
+        if (!r.ok) return void this.pushTo(id, { t: 'pvp', refused: r.reason });
+        this.pushTo(other.id, { t: 'pvp', challenge: { from: id, name: me.build.callsign, wager } });
+        this.pushTo(id, { t: 'pvp', notice: wager > 0 ? `challenged ${other.build.callsign} for ${wager} $CHOG` : `challenged ${other.build.callsign}` });
+        return;
+      }
+      case 'accept': {
+        const r = this.social.acceptChallenge(id);
+        if (!r.ok || !r.from) return void this.pushTo(id, { t: 'pvp', refused: r.reason });
+        const from = this.players.get(r.from);
+        if (!from) return void this.pushTo(id, { t: 'pvp', refused: 'they left' });
+        if (me.inBattle) return void this.pushTo(id, { t: 'pvp', refused: 'finish your fight first' });
+        if (from.inBattle) {
+          this.pushTo(from.id, { t: 'pvp', notice: `${me.build.callsign} accepted, but you are already fighting` });
+          return void this.pushTo(id, { t: 'pvp', refused: 'they are already fighting' });
+        }
+        const wager = r.wager ?? 0;
+        if (wager > 0) {
+          if (this.profiles.chogOf(from.tokenId) < wager) {
+            this.pushTo(from.id, { t: 'pvp', refused: 'you cannot cover that anymore' });
+            return void this.pushTo(id, { t: 'pvp', refused: 'they cannot cover it anymore' });
+          }
+          if (this.profiles.chogOf(me.tokenId) < wager) {
+            return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
+          }
+          // Both stakes leave now, into the fight itself: a disconnect mid-brawl
+          // can never strand a half-locked pot.
+          this.profiles.addChog(from.tokenId, -wager);
+          if (!this.profiles.addChog(me.tokenId, -wager)) {
+            this.profiles.addChog(from.tokenId, wager);
+            return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
+          }
+        }
+
+
+        // Both boots step on: the challenger builds the field, the acceptor joins it, and the
+        // only gap left is the piloting. Either door failing refunds both stakes on the spot.
+        const bout = { rivalId: id, rivalName: me.build.callsign, challengerName: from.build.callsign, challengerId: from.id, challengerToken: from.tokenId, rivalToken: me.tokenId, wager };
+        const key = `pvp:${from.id}:${id}`;
+        this.pendingPvp.set(from.id, { key, brawl: bout });
+        this.pendingPvp.set(id, { key, brawl: bout });
+        const entered = this.duelEnter(from.id, 'pvp');
+        const joined = entered.ok ? this.duelEnter(id, 'pvp') : entered;
+        if (!joined.ok) {
+          this.pendingPvp.delete(from.id);
+          this.pendingPvp.delete(id);
+          const stuck = this.sessions.get(key);
+          if (stuck) {
+            this.pushDuelEnd(from, stuck, { won: false, reason: 'gone' });
+            from.inBattle = false;
+            this.sessions.delete(key);
+            this.lastTick.delete(key);
+          }
+          if (wager > 0) {
+            this.profiles.addChog(from.tokenId, wager);
+            this.profiles.addChog(me.tokenId, wager);
+          }
+          this.pushTo(from.id, { t: 'pvp', refused: joined.reason });
+          return void this.pushTo(id, { t: 'pvp', refused: joined.reason });
+        }
+        this.pushTo(id, { t: 'pvp', notice: wager > 0 ? `${from.build.callsign} stepped in for ${wager} $CHOG a side — the bout is on` : `${from.build.callsign} stepped in — the bout is on` });
+        this.pushTo(from.id, { t: 'pvp', notice: `${me.build.callsign} accepted — the bout is on` });
+        return;
+      }
+      case 'decline': {
+        const from = this.social.declineChallenge(id);
+        if (from) this.pushTo(from, { t: 'pvp', declined: me.build.callsign });
+        this.pushTo(id, { t: 'pvp', notice: 'challenge declined' });
+        return;
+      }
+    }
+  }
+
+  /**
+   * Close out a brawl exactly once: both sides hear how it ended, and a locked pot pays
+   * the field's winner minus the team's cut. Win, wipe and walkout all land here, so the
+   * `told` flag is what keeps one fight from telling its story — or paying its pot — twice.
+   * A field that vanished refunds both stakes instead: money cannot strand on a fight
+   * that never happened.
+   */
+  /**
+   * The RANKS boards with live names: whoever is standing on the street shows their
+   * callsign, everyone else their token number. Names are not stored anywhere.
+   */
+  /**
+   * Settle a decided bout: both plates hear it, the pot pays the body still standing,
+   * and a draw sends both stakes home. Called once, from the tick that sees `over`.
+   */
+  private settlePvp(session: BattleSession, members: Player[]): void {
+    const winner = session.state.winnerId;
+    for (const p of members) {
+      p.inBattle = false;
+      this.pushDuelEnd(p, session, { won: !!winner && p.id === winner, reason: winner ? 'cleared' : 'draw' });
+    }
+    if (winner) {
+      const name = session.state.players.find((b) => b.id === winner)?.name ?? session.brawl?.challengerName ?? 'somebody';
+      this.announce(`${name} won the bout`, session.sector);
+    }
+    this.endBrawl(session, winner);
+  }
+
+  private ranksView(you: number): import('@chog/shared').RanksView {
+    const view = this.profiles.ranks();
+    view.you = you;
+    const names = new Map<number, string>();
+    for (const q of this.players.values()) names.set(q.tokenId, q.build.callsign);
+    for (const board of [view.level, view.pvp, view.chog, view.line]) {
+      for (const row of board) {
+        const live = names.get(row.tokenId);
+        if (live) row.name = live;
+      }
+    }
+    return view;
+  }
+
+  private endBrawl(session: BattleSession, winnerId: string | null, fled = false, refund = false): void {
+    const b = session.brawl;
+    if (!b || b.told) return;
+    b.told = true;
+    if (refund || !winnerId) {
+      // The field fell apart, the second pair never came, or both went down together:
+      // both stakes go home, and the boards hear nothing — a draw is not a loss.
+      if (b.wager > 0) {
+        this.profiles.addChog(b.challengerToken, b.wager);
+        this.profiles.addChog(b.rivalToken, b.wager);
+      }
+      const story = refund ? 'the field fell apart — stakes returned' : 'a draw — stakes returned';
+      for (const pid of [b.challengerId, b.rivalId]) {
+        this.pushTo(pid, { t: 'pvp', result: { story, winnerId: null, refunded: b.wager > 0 ? b.wager : 0 } });
+        this.notifyProfile(pid);
+      }
+      return;
+    }
+    const wonChallenger = winnerId === b.challengerId;
+    const pay = b.wager > 0 ? wagerPayout(b.wager) : null;
+    if (pay) {
+      this.profiles.addChog(wonChallenger ? b.challengerToken : b.rivalToken, pay.prize);
+      this.profiles.addChog(VAULT_TOKEN, pay.rake);
+    }
+    this.profiles.recordBrawl(b.challengerToken, wonChallenger);
+    this.profiles.recordBrawl(b.rivalToken, !wonChallenger);
+    const purse = pay ? ` (+${pay.prize} $CHOG)` : '';
+    const loser = wonChallenger ? b.rivalName : b.challengerName;
+    const winner = wonChallenger ? b.challengerName : b.rivalName;
+    const money = pay ? { prize: pay.prize, rake: pay.rake } : {};
+    const rival = this.players.get(b.rivalId);
+    if (rival) {
+      const mine = winnerId === b.rivalId ? `you beat ${b.challengerName}${purse}` : fled ? `you fled ${b.challengerName}${purse}` : `${b.challengerName} beat you${purse}`;
+      this.pushTo(rival.id, { t: 'pvp', result: { story: mine, winnerId, ...money } });
+      this.notifyProfile(rival.id);
+    }
+    const champ = this.players.get(b.challengerId);
+    if (champ) {
+      const mine = winnerId === b.challengerId ? `you beat ${b.rivalName}${purse}` : fled ? `you fled ${b.rivalName}${purse}` : `${b.rivalName} beat you${purse}`;
+      this.pushTo(champ.id, { t: 'pvp', result: { story: mine, winnerId, ...money } });
+      this.notifyProfile(champ.id);
+    }
+  }
+
   /** Step out of a party (or drop out of it by closing the page) and tell whoever is left. */
   leaveParty(id: string): void {
     const before = this.social.partyOf(id);
@@ -1385,28 +2361,114 @@ export class World {
   }
 
   /**
-   * Move cards between two players in one pass.
+   * Offer a trade: cards and items, to anyone standing on the street. Everything the
+   * server can check is checked here — real ids, the offerer holding what they promise,
+   * no signature on the table — so a bad offer is refused, not mailed.
+   */
+  tradeOffer(fromId: string, toId: string, giving: unknown, wanting: unknown, givingItems: unknown, wantingItems: unknown): { ok: boolean; reason?: string; offer?: TradeOffer } {
+    const a = this.players.get(fromId);
+    const b = this.players.get(toId);
+    if (!a || !b) return { ok: false, reason: 'that player is gone' };
+    if (fromId === toId) return { ok: false, reason: 'you cannot trade with yourself' };
+    const cards = (v: unknown): string[] | null => {
+      if (!Array.isArray(v)) return null;
+      const ids = v.filter((x): x is string => typeof x === 'string');
+      if (ids.length !== v.length || !ids.every((id) => CARD_BY_ID.has(id))) return null;
+      return ids;
+    };
+    const items = (v: unknown): string[] | null => {
+      if (!Array.isArray(v)) return null;
+      const ids = v.filter((x): x is string => typeof x === 'string');
+      if (ids.length !== v.length || !ids.every((id) => id in ITEMS)) return null;
+      return ids;
+    };
+    const counts = (ids: string[]): Map<string, number> => {
+      const m = new Map<string, number>();
+      for (const id of ids) m.set(id, (m.get(id) ?? 0) + 1);
+      return m;
+    };
+    const give = cards(giving);
+    const want = cards(wanting);
+    const giveItems = items(givingItems);
+    const wantItems = items(wantingItems);
+    if (!give || !want || !giveItems || !wantItems) return { ok: false, reason: 'that offer names things that do not exist' };
+    if (!give.length && !want.length && !giveItems.length && !wantItems.length) return { ok: false, reason: 'an empty offer trades nothing' };
+    if (!give.every((c) => a.save.cards.includes(c))) return { ok: false, reason: 'you no longer hold it' };
+    const bag = this.profiles.doc(a.tokenId).bag.items as Record<string, number>;
+    for (const [id, n] of counts(giveItems)) {
+      if ((bag[id] ?? 0) < n) return { ok: false, reason: 'you no longer hold it' };
+    }
+    if (give.includes(a.build.signature)) return { ok: false, reason: 'your signature card cannot be traded' };
+    if (want.includes(b.build.signature)) return { ok: false, reason: 'their signature card cannot be traded' };
+    if (want.some((c) => a.save.cards.includes(c))) return { ok: false, reason: 'you already hold one of those' };
+    if (give.some((c) => b.save.cards.includes(c))) return { ok: false, reason: 'they already hold one of those' };
+    const trait = (id: string): boolean => {
+      const c = CARD_BY_ID.get(id);
+      return c !== undefined && isTraitCard(c);
+    };
+    if (give.some(trait) || want.some(trait)) return { ok: false, reason: 'trait cards cannot be traded' };
+    const offer = this.social.offer(fromId, toId, give, want, giveItems, wantItems);
+    return { ok: true, offer };
+  }
+
+  /**
+   * Answer a trade: re-check everything the offer promised — both sides still hold it,
+   * no signature crossed the table since — and only then move a single card or item.
+   */
+  tradeAccept(byId: string, tradeId: string): { ok: boolean; reason?: string; swap?: { to: string; give: string[]; take: string[]; giveItems: string[]; takeItems: string[] } } {
+    const t = this.social.trades.get(tradeId);
+    if (!t) return { ok: false, reason: 'gone' };
+    if (t.to !== byId) return { ok: false, reason: 'not yours' };
+    const from = this.players.get(t.from);
+    const by = this.players.get(byId);
+    if (!from || !by) return { ok: false, reason: 'that player is gone' };
+    if (t.giving.includes(from.build.signature) || t.wanting.includes(by.build.signature)) {
+      return { ok: false, reason: 'a signature card cannot be traded' };
+    }
+    const trait = (id: string): boolean => {
+      const c = CARD_BY_ID.get(id);
+      return c !== undefined && isTraitCard(c);
+    };
+    if (t.giving.some(trait) || t.wanting.some(trait)) return { ok: false, reason: 'trait cards cannot be traded' };
+    const holdings = Object.fromEntries([...this.players.values()].map((pl) => [pl.id, pl.save.cards]));
+    const itemHoldings = Object.fromEntries([...this.players.values()].map((pl) => [pl.id, { ...(this.profiles.doc(pl.tokenId).bag.items as Record<string, number>) }]));
+    const r = this.social.accept(tradeId, byId, holdings, itemHoldings);
+    if (!r.ok) return r;
+    if (r.swap.give.some((c) => from.save.cards.includes(c)) || r.swap.take.some((c) => by.save.cards.includes(c))) {
+      return { ok: false, reason: 'someone already holds one of those' };
+    }
+    // The swapper refuses signatures too, but a refusal with the reason beats a swap
+    // that silently does nothing — which is what the old route reported as accepted.
+    if (!this.swapCards(r.swap.to, byId, r.swap.give, r.swap.take, r.swap.giveItems, r.swap.takeItems)) {
+      return { ok: false, reason: 'the trade fizzled' };
+    }
+    return { ok: true, swap: r.swap };
+  }
+
+  /**
+   * Move cards and items between two players in one pass.
    *
    * Both sides are written from the same read, so a card cannot end up in two
-   * folders. The Social layer already proved both parties still hold what they
+   * decks. The Social layer already proved both parties still hold what they
    * promised; this is the only place the transfer actually happens.
    */
-  swapCards(from: string, to: string, give: string[], take: string[]): boolean {
+  swapCards(from: string, to: string, give: string[], take: string[], giveItems: string[] = [], takeItems: string[] = []): boolean {
     const a = this.players.get(from);
     const b = this.players.get(to);
     if (!a || !b) return false;
     // A Chog's own signature card leaves with the token, not with a trade. Without
     // this, holding the NFT would be a temporary loan.
     if (take.includes(a.build.signature) || give.includes(b.build.signature)) return false;
-    const mine = a.save.chips;
-    const theirs = b.save.chips;
+    const mine = a.save.cards;
+    const theirs = b.save.cards;
     if (!take.every((c) => mine.includes(c)) || !give.every((c) => theirs.includes(c))) return false;
-    a.save.chips = [...mine.filter((c) => !take.includes(c)), ...give];
-    b.save.chips = [...theirs.filter((c) => !give.includes(c)), ...take];
-    this.saves.setChips(a.tokenId, a.save.chips);
-    this.saves.setChips(b.tokenId, b.save.chips);
-    this.saves.chapter(a.tokenId, 'trade', `traded ${take.join('+') || 'nothing'} for ${give.join('+') || 'nothing'}`);
-    this.saves.chapter(b.tokenId, 'trade', `traded ${give.join('+') || 'nothing'} for ${take.join('+') || 'nothing'}`);
+    if ((giveItems.length || takeItems.length) && !this.profiles.moveItems(a.tokenId, b.tokenId, takeItems, giveItems)) return false;
+    a.save.cards = [...mine.filter((c) => !take.includes(c)), ...give];
+    b.save.cards = [...theirs.filter((c) => !give.includes(c)), ...take];
+    this.saves.setChips(a.tokenId, a.save.cards);
+    this.saves.setChips(b.tokenId, b.save.cards);
+    this.saves.chapter(a.tokenId, 'trade', `traded ${[...take, ...takeItems].join('+') || 'nothing'} for ${[...give, ...giveItems].join('+') || 'nothing'}`);
+    this.saves.chapter(b.tokenId, 'trade', `traded ${[...give, ...giveItems].join('+') || 'nothing'} for ${[...take, ...takeItems].join('+') || 'nothing'}`);
     for (const [x, other] of [[a, b], [b, a]] as [Player, Player][]) {
       this.profiles.countFor(x.tokenId, 'trades');
       this.quest(x.id, [{ type: 'trade' }]);
@@ -1561,15 +2623,21 @@ export class World {
   snapshot(forPlayerId?: string): WorldSnapshot {
     const me = forPlayerId ? this.players.get(forPlayerId) : undefined;
     const visible = me
-      ? [...(this.rooms.get(me.room)?.players ?? [])]
+      ? [...(me.place === 'line' && me.region ? this.playersOnLine(me.region) : this.rooms.get(me.room)?.players ?? [])]
           .map((id) => this.players.get(id))
           .filter((p): p is Player => !!p)
       : [...this.players.values()];
     // Whoever is inside a building is not on the street, whatever their room coordinates say.
-    const onStreet = visible.filter((p) => p.place === 'street');
+// On the Line, a player is visible to the other people in the *same region* — not to the whole
+    // world. The six regions are 420 units across and far apart, so showing a Tolls Chog to
+    // someone standing in the Static Line would be showing them a stranger walking on the other
+    // side of the world.
+    const forRegion = me?.region ?? null;
+    const forSector = me?.sector;
+    const onStreet = visible.filter((p) => (p.place === 'street' && p.sector === forSector) || (p.place === 'line' && p.region === forRegion));
     return {
       sectors: this.sectors,
-      players: onStreet.map(({ build, save: _s, room: _r, street: _st, at: _at, inPoi: _ip, place: _pl, ...rest }) => ({ ...rest, name: build.callsign })),
+      players: onStreet.map(({ build, save: _s, room: _r, street: _st, lineAt: _la, at: _at, inPoi: _ip, place: _pl, ...rest }) => ({ ...rest, name: build.callsign })),
       feed: { mode: this.feed.mode, describe: this.feed.describe(), seen: { ...this.seen } },
       room: me?.room,
       anomalies: this.recentAnomalies(),
@@ -1624,9 +2692,9 @@ export class World {
     }
     const build = deriveBuild(source);
     const room = this.assignRoom(sector);
-    // Arrive at the district's own spawn, with a little scatter so a crowd logging in
+    // Arrive beside the district's quest board, with a little scatter so a crowd logging in
     // does not stand in one place.
-    const arrival = arrivalFor(cityOf(sector), null);
+    const arrival = boardSideFor(cityOf(sector));
     const p: Player = {
       id,
       tokenId: source.tokenId,
@@ -1650,6 +2718,8 @@ export class World {
       attributes: source.attributes ?? {},
       level: this.profiles.level(source.tokenId),
       place: 'street',
+      region: null,
+      lineAt: {},
       street: { x: 0, y: 0 },
       at: Date.now(),
       inPoi: new Set(),
@@ -1671,7 +2741,23 @@ export class World {
       if (this.profiles.sight(p.tokenId, keysOfSource(op.attributes)).added.length) this.notifyProfile(p.id);
     }
     this.profiles.questEvents(p.tokenId, [{ type: 'visit', sector }]);
+    // Loot outlives the process only on paper: a restart empties the drops map, so cards
+    // still owed come back as piles at the owner’s boots. Anything with a live pile already
+    // is left exactly where it fell.
+    this.replantOwed(id, p);
+
     return p;
+  }
+
+  /** Re-drop owed Line cards that have no live pile. See `oweCards`. */
+  private replantOwed(id: string, p: Player): void {
+    const owed = this.profiles.owedCardsOf(p.tokenId);
+    if (!owed.length) return;
+    const live = new Set(
+      [...this.drops.values()].filter((d) => d.owner === id && d.kind === 'card').map((d) => d.key),
+    );
+    const missing = owed.filter((c) => !live.has(c));
+    if (missing.length) this.spawnDrops(p, missing, [], 0, { x: p.x, y: p.y }, p.place === 'line' ? p.region : undefined, true);
   }
 
   /** Register the socket that receives this player's progression pushes. */
@@ -1781,24 +2867,38 @@ export class World {
     const now = Date.now();
     // Stepping through a door swaps coordinate systems. The street position is parked
     // and restored, so a round trip through the shop cannot be used to teleport.
-    if ((patch.place === 'room' || patch.place === 'street') && patch.place !== p.place) {
-      if (patch.place === 'room') p.street = { x: p.x, y: p.y };
-      else {
-        p.x = p.street.x;
-        p.y = p.street.y;
+if ((patch.place === 'room' || patch.place === 'street' || patch.place === 'line') && patch.place !== p.place) {
+      // Into the Line, and back out of it. The per-region parking is what stops a round trip
+      // through Ash Pine from dropping you into the middle of Tolls — the two are different
+      // coordinate systems that share a plane, so one parked slot is not enough.
+      if (patch.place === 'line') {
+        const region = p.region;
+        if (region) this.park(p, patch.place);
+        else this.travel(id, this.openestRegion(p), true);
+      } else if (patch.place === 'room') {
+        this.park(p, 'street');
+        p.place = 'room';
+        p.at = now;
+      } else {
+        const back = p.place === 'line' ? p.lineAt[p.region ?? ''] : p.street;
+        if (back) {
+          p.x = back.x;
+          p.y = back.y;
+        }
+        p.place = 'street';
       }
-      p.place = patch.place;
       p.at = now;
       return;
     }
     if (typeof patch.x === 'number' && Number.isFinite(patch.x) && typeof patch.y === 'number' && Number.isFinite(patch.y)) {
-      const b = p.place === 'room' ? ROOM : boundsOf(p.sector);
+      const b = p.place === 'room' ? ROOM : p.place === 'line' && p.region ? boundsOfRegion(p.region) : boundsOf(p.sector);
       let nx = Math.max(b.x0, Math.min(b.x1, patch.x));
       let ny = Math.max(b.z0, Math.min(b.z1, patch.y));
-      if (p.place === 'street') {
+      if (p.place === 'street' || p.place === 'line') {
         // Speed is checked against the last position the server accepted, not the `vx` the
         // client reports: a client that asks to be 40 units away is walked there at run
-        // speed, which is also why a quest step cannot be satisfied by teleporting to it.
+        // speed, which is also why a quest step cannot be satisfied by teleporting to it, and
+        // also why an encounter cannot be reached by sending a message rather than walking.
         const dt = Math.max(0.05, Math.min(1, (now - p.at) / 1000));
         const reach = MAX_SPEED * dt + 2.5;
         const dx = nx - p.x;
@@ -1824,7 +2924,12 @@ export class World {
     if (typeof patch.hp === 'number' && Number.isFinite(patch.hp)) {
       p.hp = Math.max(0, Math.min(100, patch.hp));
     }
-    if (p.place === 'street') this.checkPois(p);
+if (p.place === 'street') this.checkPois(p);
+    // On the Line, walking into a mob starts the fight — automatically, with no key and no menu.
+    // This is the same shape as `checkPois`: the server re-derives "is the player standing on
+    // the thing" from its own accepted position, so a forged message cannot start a fight from
+    // across the region.
+    if (p.place === 'line') this.checkLineMobs(id, p);
   }
 
   /** Legacy fire/laser packets never score placements or touch a sector. */
@@ -1876,15 +2981,15 @@ export class World {
       // Profile grants own card capacity and duplicate buybacks; SaveStore only records the clear.
       w.save = this.saves.recordClear(w.tokenId, tier, sector.peakWave, []);
       const reward = this.profiles.onClear({ tokenId: w.tokenId, tier, sector: sector.sector, damage: own.bestOf(w.id), scale });
-      const grant = mergeGrants([reward.grant, this.profiles.grant(w.tokenId, { chips: cards })]);
+      const grant = mergeGrants([reward.grant, this.profiles.grant(w.tokenId, { cards: cards })]);
       this.war.add({ tokenId: w.tokenId, tribe: w.tribe, sector: sector.sector, points: this.profiles.warPoints({ tier, scale, hotSector: hot, sector: sector.sector, volumeMon: this.volume.mon }), clear: true });
       if (party.length > 1) this.profiles.countFor(w.tokenId, 'links');
       this.trackFightQuests(w.id, this.quest(w.id, [...reward.events, ...(party.length > 1 ? [{ type: 'link' as const }] : [])]));
       this.noteLevel(w, grant.level);
       w.save = this.saves.get(w.tokenId);
-      this.emit([{ type: 'reward', sector: sector.sector, tokenId: w.tokenId, tier, chips: grant.chips, kills: w.save.kills, level: w.level }]);
+      this.emit([{ type: 'reward', sector: sector.sector, tokenId: w.tokenId, tier, cards: grant.cards, kills: w.save.kills, level: w.level }]);
       w.inBattle = false;
-      this.pushDuelEnd(w, own, { won: true, reason: 'cleared', grant, level: grant.level });
+      this.pushDuelEnd(w, own, { won: true, reason: 'cleared', grant, level: grant.level, lootOnGround: true });
     }
     // A spectator still gets a results plate, but never a reward for an earlier boss's damage.
     for (const own of fields) {

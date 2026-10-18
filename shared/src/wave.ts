@@ -102,7 +102,7 @@ export type SectorSignal =
   | { type: 'ravaged'; sector: SectorId; boss: Boss }
   | { type: 'cleared'; sector: SectorId; boss: Boss }
   /** Loot actually written to the token's save, so the reward is on screen. */
-  | { type: 'reward'; sector: SectorId; tokenId: number; tier: Tier; chips: string[]; kills: number; level: number }
+  | { type: 'reward'; sector: SectorId; tokenId: number; tier: Tier; cards: string[]; kills: number; level: number }
   | { type: 'tier'; sector: SectorId; from: Tier; to: Tier };
 
 export function tierFor(wave: number): Tier {
@@ -184,7 +184,7 @@ export function routeOf(ev: WaveEvent, states: SectorState[]): SectorId {
 }
 
 /**
- * Tuned against a measured program: a 4-chip link lands ~2-5k with affinity.
+ * Tuned against a measured program: a 4-card link lands ~2-5k with affinity.
  * At the previous 1400/4200/9000 a single good program deleted a glitch boss,
  * which left no fight to have. Storm is deliberately beyond one player inside
  * the 180s TTL — that is what makes it a co-op event rather than a bigger number.

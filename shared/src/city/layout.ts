@@ -1121,6 +1121,30 @@ export function arrivalFor(layout: CityLayout, from: SectorId | null | undefined
   return sp ? { x: sp.x, z: sp.z } : { x: 0, z: 0 };
 }
 
+/**
+ * The foot of the district's quest board: where new arrivals appear and where the road and
+ * the folds bring you back. Both the server and the client call this, which is how they agree
+ * on your position without sending it — the same contract `arrivalFor` keeps for gates.
+ */
+export function boardSideFor(layout: CityLayout): { x: number; z: number } {
+  const board = layout.anchors.find((a) => a.kind === 'board');
+  if (!board) {
+    const sp = layout.anchors.find((a) => a.kind === 'spawn');
+    return sp ? { x: sp.x, z: sp.z } : { x: 0, z: 0 };
+  }
+  // Beside the board, not inside it: the first offset clear of every solid wins, so a stall
+  // wall or planter between two districts cannot swallow the spawn.
+  const offs = [[2.4, 0], [-2.4, 0], [0, 2.4], [0, -2.4], [2.4, 2.4], [-2.4, 2.4], [2.4, -2.4], [-2.4, -2.4]];
+  for (const [dx, dz] of offs) {
+    const x = board.x + dx!;
+    const z = board.z + dz!;
+    if (layout.solids.every((s) => Math.abs(x - s.x) > s.halfW + 0.7 || Math.abs(z - s.z) > s.halfD + 0.7)) {
+      return { x, z };
+    }
+  }
+  return { x: board.x + 2.4, z: board.z };
+}
+
 /** The area a point is in, by name, or null on the open street. */
 export function areaAt(layout: CityLayout, x: number, z: number): Area | null {
   for (const a of layout.areas) {

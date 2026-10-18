@@ -61,14 +61,14 @@ export const AFFINITY: Record<string, Partial<Vector>> = {
   m_sneak: { SIG: 1, SPD: 1 },
   m_flat: { GRD: 1, CAP: 1 },
   // Head, the gear.
-  g_gauge: { SPD: 2 },
+  g_charge: { SPD: 2 },
   g_hp: { GRD: 2 },
   g_slots: { CAP: 2 },
   g_crit: { SIG: 2 },
   g_guard: { GRD: 1, CAP: 1 },
   g_drain: { PWR: 1, RES: 1 },
   g_speed: { SPD: 1, GRD: 1 },
-  // Body, the folder profile.
+  // Body, the deck profile.
   f_standard: { CAP: 2, PWR: 1 },
   f_balanced: { CAP: 1, GRD: 1, SPD: 1 },
   f_mega: { PWR: 2, CAP: 1 },
@@ -105,7 +105,7 @@ export const AFFINITY: Record<string, Partial<Vector>> = {
   stance: { SPD: 1 },
 };
 
-/** Tier index 0..4 -> the shared budget and the folder's card slots. */
+/** Tier index 0..4 -> the shared budget and the deck's card slots. */
 export const TIER_INDEX = { common: 0, uncommon: 1, rare: 2, epic: 3, legendary: 4 } as const;
 export const BASE_BUDGET = 30;
 export const BUDGET_PER_TIER = 3;
@@ -128,6 +128,45 @@ export function profileOf(vec: Vector): Vector {
   const total = ATTRS.reduce((s, a) => s + vec[a], 0) || 1;
   const out = zero();
   for (const a of ATTRS) out[a] = vec[a] / total;
+  return out;
+}
+
+/**
+ * The most any one attribute may take of a **foster** Chog's budget.
+ *
+ * A foster wears token #1's traits — the showcase skew — without holding anything, and token #1
+ * is one of the most extreme shapes in the collection. Uncapped that hands a free visitor the
+ * rarest profile on day one, and the collection's whole shape argument becomes decorative: why
+ * hold a Legendary for a lean the default already has. A quarter of the budget is the line: eight
+ * points against an even spread's five, so a foster still leans and no longer monocultures.
+ *
+ * This caps the foster path and nothing else. A held token's skew is precisely what rarity buys,
+ * and capping that too would flatten every Legendary into a Common — the opposite of the deal.
+ */
+export const FOSTER_SHARE_CAP = 0.25;
+
+/**
+ * Clamp every share of a profile at `cap`, giving the overflow back to whoever still has room.
+ *
+ * Water-filling: the crowded attributes are pinned at the cap, the surplus is spread over the
+ * ones underneath, and if that pushes a new attribute over the cap the next pass pins that too.
+ * It terminates because each pass pins strictly more attributes than the last.
+ */
+export function capShares(profile: Vector, cap: number): Vector {
+  const out: Vector = { ...profile };
+  for (let pass = 0; pass < ATTRS.length; pass++) {
+    let over = 0;
+    let open = 0;
+    for (const a of ATTRS) {
+      if (out[a] > cap) {
+        over += out[a] - cap;
+        out[a] = cap;
+      } else if (out[a] < cap) open += 1;
+    }
+    // Nothing overflowed, or everything is already pinned — either way there is nothing to hand out.
+    if (over <= 1e-9 || open === 0) break;
+    for (const a of ATTRS) if (out[a] < cap) out[a] += over / open;
+  }
   return out;
 }
 
@@ -208,10 +247,12 @@ export function gridEdge(cap: number, tierIndex: number): number {
   return Math.max(3, Math.min(5, 2 + Math.round(cap / 4) + Math.floor(tierIndex / 2)));
 }
 
-/** Folder slots. Rarity widens the deck here rather than strengthening it. */
-export function folderSlots(tierIndex: number): number {
-  return 24 + tierIndex * 2;
-}
+/**
+ * Deck slots used to live here, priced off the Tier: `24 + tier * 2`, so every Chog woke up
+ * holding two dozen cards it never chose. They moved to `line.ts slotsFor`, where the size of a
+ * deck is something the *world* pays for — two to start, eighteen once the Line is walked —
+ * and the token only decides the shape of it. See `docs/THE-LINE.md` §4.4.
+ */
 
 /** Which elements this Chog may put cards of. Its own weakness is excluded. */
 export function usableElements(element: Element, weakness: Element): Element[] {

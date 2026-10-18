@@ -4,6 +4,7 @@ import { CameraDirector, type Bounds, type Rig, type RigName } from './camera.ts
 import { WU } from './city/materials.ts';
 import type { DungeonMood } from './dungeon/themes.ts';
 import { Pipeline, type Look } from './render/pipeline.ts';
+import type { LineMood } from './line/theme.ts';
 
 /**
  * One renderer for the top screen. The framing lives in `camera.ts` and the post chain in
@@ -128,7 +129,8 @@ export class Stage {
   private mood: Mood = MOODS.ashflat;
   private post = true;
   private dpr = 1;
-  private size = { w: 1, h: 1 };
+  /** The drawing-buffer size in CSS pixels. Public so a debug read can see what it was. */
+  size = { w: 1, h: 1 };
   /** The ground under the ground, so past the last tile of the map there is haze, not a void. */
   private readonly floor: THREE.Mesh;
 
@@ -254,6 +256,48 @@ export class Stage {
     if (this.skyMesh) this.skyMesh.visible = false;
   }
 
+  /**
+   * A region of the Line.
+   *
+   * The one mood family that keeps `skyMesh`: the city hides its gradient behind buildings and
+   * the dungeon behind rock, but open country has an actual horizon, and a horizon with a flat
+   * colour behind it is the loudest way to make outdoors look like an interior.
+   *
+   * `haze` is the control that matters. It is a 0..1 the mood declares and this turns into fog
+   * *distance*, which is what makes Glass Marsh read as a place you cannot see across and the
+   * Relay Flats read as a plain with weather in it, rather than both being "some fog".
+   */
+  setLineMood(m: LineMood): void {
+    const far = 150 + (1 - m.haze) * 320;
+    this.pipeline.setLook({
+      bloom: { strength: 0.5, radius: 0.6, threshold: 0.74 },
+      exposure: m.look.exposure,
+      vignette: 0.46,
+      saturation: m.look.saturation,
+      contrast: m.look.contrast,
+      shadowTint: [0.94, 0.93, 1.05],
+      highlightTint: [1.05, 1.0, 0.96],
+      tilt: 0.1,
+      grain: 0.03,
+      tone: 'neutral',
+    });
+    this.scene.fog = new THREE.Fog(new THREE.Color(m.fog).getHex(), 26, far);
+    this.scene.background = new THREE.Color(m.skyTop);
+    // `skyMesh` is a flat plane parked 260 units behind the origin and only ever framed by the
+    // battle rig. On a 420-unit region it would sit in the middle of the terrain as a rectangle,
+    // so it stays hidden and the horizon is the background colour plus the fog. Poking uniforms
+    // on it does nothing anyway: it is a `MeshBasicMaterial` with a baked texture, not a shader.
+    if (this.skyMesh) this.skyMesh.visible = false;
+    this.hemi.color = new THREE.Color(m.hemi);
+    this.hemi.groundColor = new THREE.Color(m.bounce);
+    this.hemi.intensity = m.hemiI;
+    this.key.color = new THREE.Color(m.key);
+    this.key.intensity = m.keyI;
+    this.fill.color = new THREE.Color(m.fill);
+    this.fill.intensity = m.fillI;
+    this.floor.visible = false; // the terrain is the ground
+  }
+
   /** Take the lens (the duel poses it every frame), or hand it back with `null`. */
   setCameraControl(fn: ((camera: THREE.PerspectiveCamera, dt: number) => void) | null): void {
     this.director.setCustom(fn);
@@ -277,9 +321,10 @@ export class Stage {
     this.director.focusOn(x, y, z);
   }
 
-  follow(x: number, z: number, facing: number, moving: boolean, dt: number) {
-    this.director.follow(x, z, facing, moving, dt);
-    WU.uPlayer.value.set(x, 1.1, z);
+  follow(x: number, z: number, facing: number, moving: boolean, dt: number, groundY = 0) {
+    this.director.follow(x, z, facing, moving, dt, groundY);
+    // The player-hole dither in city/materials.ts has to follow the feet, not the world's zero.
+    WU.uPlayer.value.set(x, groundY + 1.1, z);
   }
 
   /** Cut straight to the target after a door, a teleport or a district change. */
@@ -309,11 +354,27 @@ export class Stage {
     this.post = on;
   }
 
+  /**
+   * How many times the drawing buffers have actually been reallocated.
+   *
+   * The bloom chain owns thirteen render targets, and `EffectComposer.setSize` /
+   * `UnrealBloomPass.setSize` tear every one of them down and rebuild it. Doing that mid-frame
+   * stalls the GPU and can present a black canvas, so this counter exists to be read while
+   * something visual is misbehaving: if it climbs while the field is up, a ResizeObserver is
+   * firing on a layout change that has nothing to do with the window.
+   */
+  resizes = 0;
+
   resizeTo(element: HTMLElement) {
     const w = element.clientWidth;
     const h = element.clientHeight;
     if (!w || !h) return;
+    // Same pixels, same buffers. A ResizeObserver fires on any observed box change, including
+    // ones that round to the integer size we already have, and each of those used to rebuild
+    // the whole post chain for nothing.
+    if (w === this.size.w && h === this.size.h) return;
     this.size = { w, h };
+    this.resizes += 1;
     this.renderer.setSize(w, h, false);
     this.pipeline.setSize(w, h, this.dpr);
     this.camera.aspect = w / h;
@@ -372,6 +433,26 @@ export class Stage {
     this.floor.position.z = this.camera.position.z - 20;
     if (this.post) this.pipeline.render(dt);
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Quality preset's pixel cap. Rebuilds the targets once — fine on a click. */
+  setPixelRatioCap(cap: number): void {
+    this.dpr = Math.min(devicePixelRatio || 1, cap);
+    this.renderer.setPixelRatio(this.dpr);
+    this.pipeline.setSize(this.size.w, this.size.h, this.dpr);
+  }
+
+  /** Quality preset's shadow switch. Materials recompile once, on the click. */
+  setShadows(on: boolean): void {
+    this.key.castShadow = on;
+    this.renderer.shadowMap.enabled = on;
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const mat = mesh.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) for (const m of mat) m.needsUpdate = true;
+      else if (mat) mat.needsUpdate = true;
+    });
   }
 
   /**

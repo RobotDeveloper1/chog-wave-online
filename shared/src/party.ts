@@ -138,7 +138,7 @@ export function pincerBonus(cols: ReadonlyMap<string, number> | Iterable<number>
 
 /**
  * How close in time two volleys have to land to count as one beat. 1500 ms is a little over
- * the gauge's own rhythm at low levels: you are not required to fire in lockstep, only to be
+ * the charge's own rhythm at low levels: you are not required to fire in lockstep, only to be
  * firing about the same thing at about the same time.
  */
 export const LINK_WINDOW_MS = 1500;

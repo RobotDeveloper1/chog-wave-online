@@ -1,5 +1,5 @@
 import './hud.css';
-import { BUILD_VERSION, GAME_NAME, SECTOR_NAME, type MarketTick, type ProfileView, type QuestView, type SectorState } from '@chog/shared';
+import { BUILD_TAG, BUILD_VERSION, GAME_NAME, SECTOR_NAME, type MarketTick, type ProfileView, type QuestView, type SectorState } from '@chog/shared';
 import { ELEMENT_COLOUR, ELEMENT_ICON, ICON, ITEM_ICON } from './icons.ts';
 import { Minimap, type MapMarker } from './minimap.ts';
 
@@ -18,6 +18,8 @@ export interface Identity {
   element: string;
   tribe: string;
   foster: boolean;
+  /** The entered Chog, snapshotted off its own live model. Shown when no flat art exists. */
+  face?: string | null;
 }
 
 export interface Stats {
@@ -42,6 +44,10 @@ export interface DialogueView {
   name: string;
   role: string;
   tribe: string;
+  /** A Chog token whose face shows in the box; absent keeps the tribe glyph. */
+  tokenId?: number;
+  /** The speaker's own 3D-model face (a PNG data URL from portrait.ts). Preferred over tokenId. */
+  face?: string;
   /** Pages of speech, one per advance. */
   pages: string[];
   options: { id: string; label: string; primary?: boolean }[];
@@ -71,7 +77,7 @@ export class Hud {
   readonly canvas: HTMLCanvasElement;
   readonly minimap: Minimap;
   readonly hud: HTMLElement;
-  /** The lower screen's three surfaces: the tab strip, the Custom Screen and the menu sheet. */
+  /** The lower screen's three surfaces: the tab strip, the Hand and the menu sheet. */
   readonly tabsEl: HTMLElement;
   readonly csEl: HTMLElement;
   readonly sheetEl: HTMLElement;
@@ -110,6 +116,7 @@ export class Hud {
             <div id="hud-dock" class="hit"></div>
             <div id="hud-dialogue" class="panel"></div>
             <div id="hud-vizlabel">VISUALIZER · WAVE LAYER</div>
+            <div id="hud-build">build ${BUILD_VERSION} - ${BUILD_TAG}</div>
             <div id="hud-levelup"></div>
             <div id="hud-fade"></div>
           </div>
@@ -183,20 +190,23 @@ export class Hud {
   private renderPlayer(id: Identity | null, s: Stats | null): void {
     const el = this.el['hud-player']!;
     const col = ELEMENT_COLOUR[id?.element ?? 'void'] ?? 'var(--violet)';
-    const hasArt = id && !id.foster && id.tokenId >= 1 && id.tokenId <= 1969;
+    // The flat collection art first: it is the token's own face. The entered model's
+    // snapshot covers tokens with no art file, and the glyph covers having neither.
+    const artToken = id ? (id.foster ? 1 : id.tokenId) : null;
+    const hasArt = artToken !== null && artToken >= 1 && artToken <= 1969;
     const pct = (a: number, b: number): number => Math.max(0, Math.min(100, (a / Math.max(1, b)) * 100));
     el.style.setProperty('--el', col);
     el.innerHTML = `
       <div class="portrait">
         <div class="ring">
-          ${hasArt ? `<div class="img" style="background-image:url(/art/${id!.tokenId}.png)"></div>` : `<div class="glyph">${ELEMENT_ICON[id?.element ?? 'void'] ?? ''}</div>`}
+          ${hasArt ? `<div class="img" style="background-image:url(/art/${artToken}.png)"></div>` : id?.face ? `<div class="img" style="background-image:url(${id.face})"></div>` : `<div class="glyph">${ELEMENT_ICON[id?.element ?? 'void'] ?? ''}</div>`}
         </div>
         <div class="lv num">${s ? s.level : '–'}</div>
       </div>
       <div class="pinfo">
         <div class="pname"><span class="el">${ELEMENT_ICON[id?.element ?? 'void'] ?? ''}</span>${esc(id?.name ?? 'LINKING…')}</div>
         <div class="psub num">${id ? (id.foster ? 'FOSTER SIGNAL' : `CHOG #${String(id.tokenId).padStart(4, '0')}`) : ''} · ${esc((id?.tribe ?? '').toUpperCase())}</div>
-        <div class="meter hp"><i style="width:${s ? pct(s.hp, s.hpMax) : 100}%"></i><div class="tick"></div><span class="num">${s ? `${Math.round(s.hp)}/${Math.round(s.hpMax)}` : ''}</span></div>
+        <div class="meter hp"><i style="width:${s ? pct(s.hp, s.hpMax) : 100}%"></i><div class="tick"></div><span class="num">${s ? `${Math.round(s.hp)}/${Math.round(s.hpMax)}` : '—/—'}</span></div>
         <div class="meter xp" title="experience"><i style="width:${s ? pct(s.into, s.need) : 0}%"></i></div>
         <div class="prow"><span class="wav num">${ICON.wav}${s ? s.wav.toLocaleString() : '0'}</span>
           <div class="meter laser" style="flex:1" title="laser eyes"><i style="width:${s ? Math.round(s.laser * 100) : 0}%"></i></div></div>
@@ -359,14 +369,20 @@ export class Hud {
       .join('')}`;
   }
 
-  /** Someone asked this player to join a party: a prompt that lasts as long as the invitation does. */
-  setInvite(inv: { from: string; name: string } | null): void {
+  /** Someone asked this player something: a prompt that lasts as long as the invitation does. */
+  setInvite(inv: { from: string; name: string; kind?: 'party' | 'brawl' | 'trade'; summary?: string } | null): void {
     const el = this.el['hud-invite']!;
     if (!inv) {
       el.classList.remove('on');
       return;
     }
-    el.innerHTML = `<small>PARTY INVITATION</small><b>${esc(inv.name)}</b><span>wants you in their party</span><div class="btns"><button data-p="accept"><span class="key">Y</span> ACCEPT</button><button data-p="decline"><span class="key">N</span> DECLINE</button></div>`;
+    const btns = `<div class="btns"><button data-p="accept"><span class="key">Y</span> ACCEPT</button><button data-p="decline"><span class="key">N</span> DECLINE</button></div>`;
+    el.innerHTML =
+      inv.kind === 'trade'
+        ? `<small>TRADE OFFER</small><b>${esc(inv.name)}</b><span>${esc(inv.summary ?? 'wants to swap cards and items')}</span>${btns}`
+        : inv.kind === 'brawl'
+          ? `<small>BRAWL CHALLENGE</small><b>${esc(inv.name)}</b><span>${esc(inv.summary ?? 'wants to fight you live')}</span>${btns}`
+          : `<small>PARTY INVITATION</small><b>${esc(inv.name)}</b><span>wants you in their party</span>${btns}`;
     el.classList.add('on');
   }
 
@@ -419,10 +435,10 @@ export class Hud {
     const sig = JSON.stringify(g);
     if (el.dataset.sig === sig) return;
     el.dataset.sig = sig;
-    el.className = `on ${g.state}`;
+    el.className = `hit on ${g.state}`;
     el.innerHTML = `<span class="tag">${g.state === 'ready' ? 'HAND IN' : 'NEXT'}</span>
       <span class="body"><span class="act">${esc(g.act)}</span><b>${esc(g.title)}</b><span class="do">${esc(g.text)}</span></span>
-      ${g.where ? `<span class="where">${esc(g.where)}</span>` : ''}`;
+      <span class="where">${esc(g.where)}</span>`;
   }
 
   // -------------------------------------------------------------------- level up
@@ -496,7 +512,7 @@ export class Hud {
 
   /**
    * The lower screen slides up over the picture when it is asked for and away when it is not.
-   * In a fight it is the Custom Screen's, and the duel decides when it comes up.
+   * In a fight it is the Hand's, and the duel decides when it comes up.
    */
   menu(open: boolean): void {
     this.deck.classList.toggle('menu', open);
@@ -523,6 +539,19 @@ export class Hud {
     this.typing = null;
     this.dlg = null;
     this.el['hud-dialogue']!.classList.remove('on');
+  }
+
+  /** Drop the speaker's 3D face in once its model has streamed in (NPCs load on approach). */
+  setFace(url: string | null): void {
+    if (!this.dlg || !url) return;
+    const el = this.el['hud-dialogue']!.querySelector('.face') as HTMLElement | null;
+    if (el && !el.style.backgroundImage) {
+      el.classList.add('art');
+      el.style.backgroundImage = `url(${url})`;
+      el.style.backgroundSize = 'cover';
+      el.style.backgroundPosition = 'center 16%';
+      el.textContent = '';
+    }
   }
 
   /** One press, one page: finish the line if it is still typing, then turn it. */
@@ -592,8 +621,12 @@ export class Hud {
     const col = ELEMENT_COLOUR[v.tribe] ?? 'var(--violet)';
     const el = this.el['hud-dialogue']!;
     el.style.setProperty('--c', col);
+    // The speaker's 3D-model face when we have it; otherwise the element glyph.
+    const face = v.face
+      ? `<div class="face art" style="background-image:url(${v.face});background-size:cover;background-position:center 16%"></div>`
+      : `<div class="face">${ELEMENT_ICON[v.tribe] ?? ICON.sparkle}</div>`;
     el.innerHTML = `
-      <div class="face">${ELEMENT_ICON[v.tribe] ?? ICON.sparkle}</div>
+      ${face}
       <div class="body">
         <div class="who"><b>${esc(v.name)}</b><small>${esc(v.role.toUpperCase())}</small></div>
         <div class="say"></div>

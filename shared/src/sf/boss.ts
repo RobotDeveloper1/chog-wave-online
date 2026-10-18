@@ -1,5 +1,6 @@
 import { FIRST_PLAYER_LANE, LANES, centreFile, clampFile, type Panel } from './field.ts';
 import type { Element } from '../types.ts';
+import { quirkOf } from '../line/quirks.ts';
 
 /**
  * What stands on the far side of the field.
@@ -58,6 +59,12 @@ export interface BossMove {
  *
  *   BAGHOLDER · FRONTRUN · MIDCURVE · DOUBLE SPEND · MARGIN CALL
  *   SANDWICH · RUG PULL · WICK · CANDLESTICK · GOD CANDLE
+ *   STOP LOSS · REORG · CIRCUIT BREAKER · SUNK COST · NIBBLE · TOLL
+ *
+ * The last six are the Line's own signatures, each teaching the dodge its ground
+ * already taught. A walker cuts where you stand because the farm track taught you to
+ * step; a tollkeeper counts to four because the gate taught you to count; a husk sinks
+ * three files because the causeway taught you the low row is the argument.
  */
 export const MOVES: Record<string, BossMove> = {
   bagholder: {
@@ -100,9 +107,33 @@ export const MOVES: Record<string, BossMove> = {
     id: 'god-candle', name: 'GOD CANDLE', spread: 'flank', reach: 'both', tell: 1.5, from: 4, depth: 6,
     read: 'the whole board but its own file. There is one answer and it is to walk in.',
   },
+  'stop-loss': {
+    id: 'stop-loss', name: 'STOP LOSS', spread: 'you', reach: 'near', tell: 1.0, from: 1, depth: 1,
+    read: 'it cuts where you stand, low. Step anywhere once.',
+  },
+  reorg: {
+    id: 'reorg', name: 'REORG', spread: 'pincer', reach: 'near', tell: 1.1, from: 1, depth: 2,
+    read: 'your file and its own, both low. Step back a lane — the low row is the argument.',
+  },
+  'circuit-breaker': {
+    id: 'circuit-breaker', name: 'CIRCUIT BREAKER', spread: 'row', reach: 'far', tell: 1.2, from: 1, depth: 2,
+    read: 'the whole far row halts. Step home — low is the only room.',
+  },
+  'sunk-cost': {
+    id: 'sunk-cost', name: 'SUNK COST', spread: 'spiral', reach: 'near', tell: 1.35, from: 1, depth: 2,
+    read: 'three files sink around it, low. Step back a lane, or far around the edges.',
+  },
+  nibble: {
+    id: 'nibble', name: 'NIBBLE', spread: 'own', reach: 'near', tell: 0.85, from: 1, depth: 1,
+    read: 'a quick bite on its own file, and the warning is short because the answer is: do not stand there.',
+  },
+  toll: {
+    id: 'toll', name: 'TOLL', spread: 'row', reach: 'near', tell: 1.35, from: 1, depth: 1,
+    read: 'the whole low row, exact change only. Step back a lane — sideways buys nothing.',
+  },
 };
 
-export type Archetype = 'spark' | 'baron' | 'front' | 'mirror' | 'surge' | 'glitch' | 'dummy';
+export type Archetype = 'spark' | 'baron' | 'front' | 'mirror' | 'surge' | 'glitch' | 'dummy' | 'imp' | 'wisp' | 'husk' | 'mite' | 'walker' | 'tollkeeper';
 
 export interface ArchetypeInfo {
   name: string;
@@ -144,12 +175,36 @@ export const ARCHETYPES: Record<Archetype, ArchetypeInfo> = {
     blurb: 'A wash trade. It fires your own last program back down the files you used.',
   },
   glitch: {
-    name: 'GLITCH', element: 'prism', pool: ['bagholder', 'frontrun', 'double-spend', 'midcurve'], guard: 0, walls: false, mirrors: false,
-    blurb: 'A loose signal. One file at a time; step aside when it flashes.',
+    name: 'GLITCH', element: 'prism', pool: ['reorg', 'bagholder', 'frontrun', 'double-spend', 'midcurve'], guard: 0, walls: false, mirrors: false,
+    blurb: 'A loose signal. It shorts your file and its own, low — step back a lane when it flashes.',
+  },
+  imp: {
+    name: 'IMP', element: 'burn', pool: ['stop-loss', 'frontrun', 'rug-pull', 'bagholder', 'double-spend'], guard: 0, walls: false, mirrors: false,
+    blurb: 'A fast little exit. It leads with the cut at your feet, so the first warning is always under you.',
+  },
+  wisp: {
+    name: 'WISP', element: 'frost', pool: ['circuit-breaker', 'bagholder', 'frontrun', 'double-spend'], guard: 0, walls: true, mirrors: false,
+    blurb: 'A thin ring that walls one file for the whole fight, and halts the far row when it speaks. Everything else about it is smoke.',
+  },
+  husk: {
+    name: 'HUSK', element: 'void', pool: ['sunk-cost', 'bagholder', 'midcurve', 'double-spend', 'sandwich'], guard: 0.25, walls: false, mirrors: false,
+    blurb: 'Dead weight with a shell. It sinks the three files around it; a BREAK card strips it, but even bare fists get through.',
   },
   dummy: {
     name: 'TRAINING SIM', element: 'prism', pool: ['bagholder'], guard: 0, walls: false, mirrors: false,
     blurb: 'A slow practice signal. It warns early and hits soft. Nothing here can hurt you for long.',
+  },
+  mite: {
+    name: 'MITE', element: 'burn', pool: ['nibble', 'bagholder', 'frontrun'], guard: 0, walls: false, mirrors: false,
+    blurb: 'Small and skittish. It never stands where it stood — aim at the file, not the animal.',
+  },
+  walker: {
+    name: 'WALKER', element: 'burn', pool: ['stop-loss', 'frontrun', 'bagholder'], guard: 0, walls: false, mirrors: false,
+    blurb: 'It cuts where you stand and runs where you fled. Dodge twice, in two directions.',
+  },
+  tollkeeper: {
+    name: 'TOLLKEEPER', element: 'burn', pool: ['toll', 'stop-loss', 'frontrun', 'bagholder'], guard: 0.4, walls: false, mirrors: false,
+    blurb: 'The gate. Armoured, planted, and every fourth volley is the whole low row. Bring something piercing and count to four.',
   },
 };
 
@@ -167,12 +222,44 @@ const LEAD_WEIGHT = 2.2;
  * `rand` is injected because a boss that picks its hardest option at random is the one thing a
  * duel must not be able to blame on the player.
  */
-export function pickMove(archetype: string, phase: number, depth: number, rand: () => number): BossMove {
-  const pool = (ARCHETYPES[archetypeOf(archetype)] ?? ARCHETYPES.glitch)
+/**
+ * What the boss remembers between volleys. The session owns it and hands it back on every
+ * pick, so a pattern is a fact about the fight rather than a mood of the random number
+ * generator — the fourth volley is the TOLL because three came before it, not because a die
+ * said so.
+ */
+export interface PickMem {
+  lastMove: string | null;
+  /** How many times in a row `lastMove` has been picked. */
+  streak: number;
+  /** Volleys telegraphed so far this fight. */
+  volleys: number;
+  /** The encounter quirk, when the fight is one — null everywhere else. */
+  quirk: string | null;
+}
+
+export function pickMove(archetype: string, phase: number, depth: number, rand: () => number, mem?: PickMem): BossMove {
+  let pool = (ARCHETYPES[archetypeOf(archetype)] ?? ARCHETYPES.glitch)
     .pool.map((id) => MOVES[id]!)
     .filter((m) => m.from <= phase && m.depth <= Math.max(1, depth));
   const fallback = pool.find((m) => m.id === 'bagholder') ?? MOVES.bagholder!;
   if (pool.length <= 1) return fallback;
+  const q = quirkOf(mem?.quirk);
+  const knows = (id: string): boolean => pool.some((m) => m.id === id);
+  const volleys = mem?.volleys ?? 0;
+  // The tollkeeper counts: every fourth volley is the TOLL, on the count.
+  if (q.toll && volleys % 4 === 3 && knows('toll')) return MOVES.toll!;
+  // Cornered past half: every other volley comes at you personally.
+  if (q.cornered && phase >= 3 && volleys % 2 === 1 && knows('frontrun')) return MOVES.frontrun!;
+  // Bloodscent: after the cut, run down where you fled.
+  if (q.bloodscent && mem?.lastMove === 'stop-loss' && knows('frontrun') && rand() < 0.65) {
+    return MOVES.frontrun!;
+  }
+  // No three-in-a-row: a boss that repeats itself is a metronome, not a hunter.
+  if (mem && mem.streak >= 2 && mem.lastMove) {
+    const rest = pool.filter((m) => m.id !== mem.lastMove);
+    if (rest.length) pool = rest;
+  }
   const weights = pool.map((m, i) => (i === 0 ? LEAD_WEIGHT : 1) + (m.from - 1) * 0.45 + (m.depth - 1) * 0.35);
   const total = weights.reduce((a, b) => a + b, 0);
   let roll = rand() * total;

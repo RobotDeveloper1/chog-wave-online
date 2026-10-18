@@ -6,20 +6,24 @@ import {
   ATTR_MAX,
   ATTR_MIN,
   BASE_BUDGET,
+  FOSTER_SHARE_CAP,
   TIER_INDEX,
   affinityAggro,
   affinityDamage,
   affinityOf,
   allocate,
   auditLine,
-  critChance,
-  folderSlots,
+  capShares,
+  critChance,  
   gridEdge,
   profileOf,
   provenance,
   usableElements,
+  type Vector,
 } from '../src/formula.ts';
 import { affinityKeys, loadoutOf } from '../src/traits.ts';
+import * as formula from '../src/formula.ts';
+import { deriveBuild } from '../src/derive.ts';
 
 /** The trait families a real reading produces, in the order the formula wants. */
 function familiesOf(attrs: Record<string, string>): string[] {
@@ -96,6 +100,81 @@ describe('budget allocation', () => {
   });
 });
 
+describe('the foster cap', () => {
+  const even = (): Vector => ({ PWR: 1 / 6, GRD: 1 / 6, SPD: 1 / 6, SIG: 1 / 6, RES: 1 / 6, CAP: 1 / 6 });
+
+  /**
+   * A showcase-style monoculture, built from real trait values: every category that can point at
+   * SIG does. Raw affinity 11 of 18 — a share of 0.61 against an even spread's 0.17, which is the
+   * shape the cap exists to refuse a visitor.
+   */
+  const MONOCULTURE = {
+    Aura: 'Purple',           // void  → SIG 2, PWR 1
+    Eyes: 'Sunset visor',     // visor → SIG 2
+    Head: 'Red Headband',     // crit  → SIG 2
+    Skin: 'Black',            // void  → SIG 2
+    Background: 'Aqua',       // hollow→ SIG 1, GRD 1
+    Body: 'Banana suit',      // chaos → SIG 1, SPD 2, RES 1
+    Accessory: 'cigar_steady',// h_cigar → SIG 1, CAP 1
+  };
+
+  it('leaves a spread that already fits alone', () => {
+    const out = capShares(even(), FOSTER_SHARE_CAP);
+    for (const a of ATTRS) expect(out[a]).toBeCloseTo(1 / 6, 10);
+  });
+
+  it('pins the crowded attribute at the cap and hands the rest to whoever has room', () => {
+    // A showcase-style monoculture: one attribute at ninety percent.
+    const out = capShares({ PWR: 0.9, GRD: 0.02, SPD: 0.02, SIG: 0.02, RES: 0.02, CAP: 0.02 }, FOSTER_SHARE_CAP);
+    for (const a of ATTRS) expect(out[a]).toBeLessThanOrEqual(FOSTER_SHARE_CAP + 1e-9);
+    expect(out.PWR).toBeCloseTo(FOSTER_SHARE_CAP, 10);
+    // Still a distribution: the cap takes from the leader, it does not create points.
+    expect(ATTRS.reduce((s, a) => s + out[a], 0)).toBeCloseTo(1, 10);
+  });
+
+  it('terminates when several attributes are over the cap', () => {
+    const out = capShares({ PWR: 0.4, GRD: 0.3, SPD: 0.3, SIG: 0, RES: 0, CAP: 0 }, FOSTER_SHARE_CAP);
+    for (const a of ATTRS) expect(out[a]).toBeLessThanOrEqual(FOSTER_SHARE_CAP + 1e-9);
+    expect(ATTRS.reduce((s, a) => s + out[a], 0)).toBeCloseTo(1, 10);
+  });
+
+  it('holds the shape under the cap through a real foster build', () => {
+    const foster = deriveBuild({
+      tokenId: 900_001,
+      transferCount: 0,
+      daysHeld: 0,
+      attributes: MONOCULTURE,
+      foster: true,
+    });
+    expect(foster.hasTraits).toBe(true);
+    expect(ATTRS.reduce((s, a) => s + foster.attrs[a], 0)).toBe(BASE_BUDGET);
+    // 25% of the budget in points, rounded up by the apportionment.
+    const ceiling = Math.ceil(BASE_BUDGET * FOSTER_SHARE_CAP);
+    for (const a of ATTRS) {
+      expect(foster.attrs[a]).toBeLessThanOrEqual(ATTR_MAX);
+      expect(foster.attrs[a]).toBeLessThanOrEqual(ceiling);
+    }
+  });
+
+  it('does not cap a held token — the skew is what rarity buys', () => {
+    const held = deriveBuild({ tokenId: 1, transferCount: 0, daysHeld: 0, attributes: MONOCULTURE });
+    const foster = deriveBuild({
+      tokenId: 900_002,
+      transferCount: 0,
+      daysHeld: 0,
+      attributes: MONOCULTURE,
+      foster: true,
+    });
+    // Same traits, same budget: the only difference is the cap, and it must actually bite.
+    expect(ATTRS.reduce((s, a) => s + held.attrs[a], 0)).toBe(BASE_BUDGET);
+    expect(held.attrs.SIG).toBeGreaterThan(foster.attrs.SIG);
+    expect(held.attrs.SIG).toBeGreaterThan(Math.ceil(BASE_BUDGET * FOSTER_SHARE_CAP));
+    // A foster is not a cripple either — it still leans toward the shape it was capped into.
+    expect(foster.attrs.SIG).toBe(Math.max(...ATTRS.map((a) => foster.attrs[a])));
+    expect(foster.attrs.SIG).toBeGreaterThan(Math.ceil(BASE_BUDGET / ATTRS.length));
+  });
+});
+
 describe('provenance', () => {
   it('saturates rather than growing without bound', () => {
     expect(provenance(400, 0).affinity).toBeLessThan(1.000001);
@@ -139,9 +218,12 @@ describe('derived combat numbers', () => {
     expect(gridEdge(10, 4)).toBeLessThanOrEqual(5);
   });
 
-  it('widens the folder with tier, which is where rarity actually lives', () => {
-    expect(folderSlots(4)).toBeGreaterThan(folderSlots(0));
-    expect(folderSlots(0)).toBe(24);
+  it('no longer prices deck size off the Tier — the world does that now', () => {
+    // `folderSlots(tier) = 24 + tier * 2` meant a Chog woke up holding two dozen cards it
+    // never chose. Rarity still widens a deck — through `deckShape`'s copies and the
+    // Mega/Giga caps the Tier sets — but it no longer decides how big it is. See
+    // `docs/THE-LINE.md` §4.4 and `line.ts slotsFor`.
+    expect(formula).not.toHaveProperty('folderSlots');
   });
 
   it('bans the weakness element from the deck', () => {

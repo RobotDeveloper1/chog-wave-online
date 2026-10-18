@@ -1,4 +1,4 @@
-import { CHIPS, GA_BY_ID, chip } from './chips.ts';
+import { CARDS, GA_BY_ID, card } from './cards.ts';
 import type { Element } from './types.ts';
 
 /**
@@ -7,12 +7,12 @@ import type { Element } from './types.ts';
  * Three cards that belong together collapse into one named heavy card at the
  * moment you queue them — not in a crafting menu somewhere else. That is the
  * whole reason it feels good: the discovery happens inside the decision you are
- * already making, under the gauge clock.
+ * already making, under the charge clock.
  *
  * The Library is the reason to come back. A recipe you have never fired is
- * invisible, so a folder can hold the exact three cards that make something and
+ * invisible, so a deck can hold the exact three cards that make something and
  * you will not know until you try. Firing it for the first time teaches your
- * Chog permanently: the fused card joins your folder and you can then run it
+ * Chog permanently: the fused card joins your deck and you can then run it
  * without the triple. The DS original tracked a library and paid nothing for it.
  * Here the payout is the card itself, which is also the power curve.
  */
@@ -27,9 +27,9 @@ export interface Recipe {
   hint: string;
 }
 
-// The heavy cards fusion produces (GA_CHIPS) are defined in chips.ts so `chip()` can read them.
+// The heavy cards fusion produces (GA_CARDS) are defined in cards.ts so `card()` can read them.
 
-const byElement = (e: Element) => CHIPS.filter((c) => c.element === e).map((c) => c.id);
+const byElement = (e: Element) => CARDS.filter((c) => c.element === e).map((c) => c.id);
 
 /**
  * Every element has one obvious triple: its own three cards. Those are the
@@ -85,9 +85,9 @@ export const RECIPE_BY_RESULT: ReadonlyMap<string, Recipe> = new Map(RECIPES.map
  * A recipe matches when its three cards are all present in the queue. Copies
  * count: two Emberpaws and a Cinder Fang is not an Emberpaw triad.
  */
-export function findRecipe(queueChipIds: readonly string[]): Recipe | null {
+export function findRecipe(queueCardIds: readonly string[]): Recipe | null {
   const counts = new Map<string, number>();
-  for (const id of queueChipIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const id of queueCardIds) counts.set(id, (counts.get(id) ?? 0) + 1);
   for (const r of RECIPES) {
     const needed = new Map<string, number>();
     for (const id of r.needs) needed.set(id, (needed.get(id) ?? 0) + 1);
@@ -107,7 +107,7 @@ export const emptyLibrary = (): Library => ({ discovered: [] });
 
 export interface FusionOutcome {
   library: Library;
-  /** Cards to add to the folder because they were newly discovered. */
+  /** Cards to add to the deck because they were newly discovered. */
   granted: string[];
   fired: Recipe | null;
 }
@@ -117,8 +117,8 @@ export interface FusionOutcome {
  * two recipes only teaches you one of them — which is what keeps a good draw
  * feeling like a choice rather than a windfall.
  */
-export function resolveTurn(library: Library, queueChipIds: readonly string[]): FusionOutcome {
-  const fired = findRecipe(queueChipIds);
+export function resolveTurn(library: Library, queueCardIds: readonly string[]): FusionOutcome {
+  const fired = findRecipe(queueCardIds);
   if (!fired) return { library, granted: [], fired: null };
   if (library.discovered.includes(fired.id)) {
     return { library, granted: [], fired };
@@ -137,5 +137,5 @@ export function libraryLine(library: Library): string {
 }
 
 export function describeRecipe(r: Recipe): string {
-  return `${r.needs.map((id) => chip(id).name).join(' + ')} = ${GA_BY_ID.get(r.result)?.name ?? '?'}`;
+  return `${r.needs.map((id) => card(id).name).join(' + ')} = ${GA_BY_ID.get(r.result)?.name ?? '?'}`;
 }

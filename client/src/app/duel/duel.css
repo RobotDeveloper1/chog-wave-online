@@ -1,7 +1,7 @@
-/* The field HUD and automatic Custom Screen share the console's dark, recessed plates. */
+/* The field HUD and automatic Hand share the console's dark, recessed plates. */
 #duel {
   position: absolute; inset: 0; display: none; pointer-events: none;
-  font-size: clamp(11px, calc(var(--sh) / 50), 28px); color: var(--ink);
+  font-size: clamp(14px, calc(var(--sh) / 38), 30px); color: var(--ink);
 }
 #deck.dueling #duel { display: block; }
 #deck.dueling #hud > *:not(#hud-fade):not(#hud-toasts) { display: none !important; }
@@ -19,7 +19,7 @@
 #duel button:focus-visible, #duel summary:focus-visible, #cs.duel button:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
 #duel button small, #cs.duel button small { display: block; font-size: .72em; font-weight: 400; }
 
-/* The Custom screen is a side panel in this framing, not a lower DS screen: a hinge
+/* The Hand is a side panel in this framing, not a lower DS screen: a hinge
    line across the middle of the field would be a seam between nothing and nothing. */
 #cs.duel {
   border-top: 8px solid #04020a;
@@ -48,14 +48,16 @@
 .boss-hp i { background: var(--c); }
 #duel .sub { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .2em .7em; margin-top: .45em; font: 400 .58em/1.4 var(--mono); color: var(--dim); }
 .d-boss .wall { margin-top: .4em; padding-top: .3em; border-top: 1px solid var(--edge); font: 400 .6em var(--mono); color: var(--gold); }
+.d-boss .status { color: var(--gold); }
+.d-chain .barrier { color: var(--mint); font-weight: 700; }
 .d-chain { display: flex; flex-wrap: wrap; align-items: baseline; gap: .5em; margin-top: .5em; font: 400 .62em var(--mono); color: var(--dim); }
 .d-chain b { color: var(--ink); font-size: 1.25em; }
 .d-chain > span { color: var(--gold); }
 .d-chain small { margin-left: auto; font-size: .9em; color: var(--c); }
-.d-gauge { left: 50%; top: .9em; width: 36%; transform: translateX(-50%); }
-.d-gauge .bar { position: relative; height: 1.55em; border: 1px solid var(--edge-hi); border-radius: 4px; background: var(--recess); overflow: hidden; }
-.d-gauge i { position: absolute; inset: 0 auto 0 0; background: var(--violet); }
-.d-gauge .label { position: absolute; inset: 0; display: grid; place-items: center; font: 400 .64em var(--mono); letter-spacing: .06em; color: #fff; text-shadow: 0 1px 2px #000; }
+.d-charge { left: 50%; top: .9em; width: 36%; transform: translateX(-50%); }
+.d-charge .bar { position: relative; height: 1.55em; border: 1px solid var(--edge-hi); border-radius: 4px; background: var(--recess); overflow: hidden; }
+.d-charge i { position: absolute; inset: 0; transform-origin: left center; background: var(--violet); }
+.d-charge .label { position: absolute; inset: 0; display: grid; place-items: center; font: 400 .64em var(--mono); letter-spacing: .06em; color: #fff; text-shadow: 0 1px 2px #000; }
 /* The grade is one strip, not a plaque: rank, what feeds it, what it buys, in a single line. */
 #duel .d-grade { left: 50%; top: 3.05em; width: auto; max-width: 46%; transform: translateX(-50%); padding: .2em .8em; display: flex; align-items: baseline; gap: .9em; white-space: nowrap; }
 .d-grade > b { color: var(--gold); font: 800 1.05em var(--ui); }
@@ -125,51 +127,52 @@
 .d-event div:last-child { color: var(--ink); }
 .d-hint { left: 1em; bottom: .8em; width: 80%; font: 400 .61em/1.45 var(--mono); color: var(--dim); text-shadow: 0 1px 2px #000; }
 
-/* Holds use stable pointer capture; browser panning must not steal the Buster or direction pad. */
+/* Holds use stable pointer capture; browser panning must not steal the direction pad. */
 .d-controls { left: 1em; bottom: 2.5em; display: flex; align-items: center; gap: .8em; }
 .d-pad { display: grid; grid-template-columns: repeat(3, 4.2em); grid-template-rows: repeat(3, 2.25em); gap: .22em; }
+/* The pad says it is dead before the player tests it. The buttons were already disabled the whole
+   time; nothing told the eye, which is why a locked Hand read as a broken keyboard. */
+.d-pad.dead { opacity: .38; filter: saturate(.3); }
+.d-pad.dead button { cursor: not-allowed; }
 #duel .d-pad button { padding: .2em; font-size: .65em; touch-action: none; user-select: none; }
 .d-pad .back { grid-column: 2; grid-row: 1; }
 .d-pad .left { grid-column: 1; grid-row: 2; }
 .d-pad .right { grid-column: 3; grid-row: 2; }
 .d-pad .forward { grid-column: 2; grid-row: 3; }
 .d-pad .position { grid-column: 2; grid-row: 2; display: grid; place-items: center; font: 400 .52em var(--mono); color: var(--mint); }
-#duel .d-buster { position: relative; width: 12em; min-height: 5.3em; padding: .75em; overflow: hidden; text-align: left; touch-action: none; user-select: none; }
-.d-buster i { position: absolute; inset: 0 auto 0 0; background: rgba(147,106,255,.22); }
-.d-buster b, .d-buster small, .d-buster span { position: relative; display: block; }
-.d-buster b { font: 800 .86em var(--ui); letter-spacing: .12em; }
-#duel .d-buster small { margin-top: .3em; font-size: .53em; }
-.d-buster span { margin-top: .65em; color: var(--dim); font: 400 .51em var(--mono); }
-#duel .d-buster.ready { border-color: var(--mint); }
-.d-buster.ready i { background: rgba(67,226,168,.25); }
-.d-buster.ready span { color: var(--mint); }
 #duel .d-controls button:disabled { opacity: .35; }
-#deck.dueling.customopen .d-controls { opacity: .35; }
-#deck.dueling.customopen .d-stats[open], #deck.dueling.customopen .d-manual[open] { max-height: 27%; }
+#deck.dueling.handopen .d-controls { opacity: .35; }
+#deck.dueling.handopen .d-stats[open], #deck.dueling.handopen .d-manual[open] { max-height: 27%; }
 #duel .d-leave { right: 1em; bottom: 1em; padding: .6em 1em; font-size: .67em; color: var(--dim); }
 #duel .d-leave:hover { border-color: var(--rose); }
 /* The button in the middle of the field: the one thing on screen that asks to be pressed. Big,
    centred under the fight, and it only starts breathing when there is something to fire. */
-#duel .d-bust { left: 50%; bottom: 3.2em; transform: translateX(-50%); z-index: 6;
+#duel .d-fire { left: 50%; bottom: 3.2em; transform: translateX(-50%); z-index: 6;
   min-width: 9em; padding: .55em 1.4em .5em; border-radius: 999px;
   border: 1px solid var(--edge-hi); border-bottom: 3px solid #06301f; background: var(--plate);
   color: var(--dim); font: 800 1.1em var(--ui); letter-spacing: .12em; cursor: pointer; }
-#duel .d-bust small { display: block; font: 400 .55em var(--mono); letter-spacing: .1em; color: var(--faint); }
-#duel .d-bust:disabled { opacity: .5; cursor: default; }
-#duel .d-bust.ready { background: var(--mint); color: #04170f; border-color: var(--mint); animation: bustbeat 1s ease-in-out infinite alternate; }
-#duel .d-bust.ready small { color: #0b3a29; }
-@keyframes bustbeat { from { box-shadow: 0 0 0 0 rgba(92, 240, 186, .5); } to { box-shadow: 0 0 0 .8em rgba(92, 240, 186, 0); } }
-#deck.dueling.customopen .d-event { max-width: 32%; }
-#deck.dueling.customopen .d-down, #deck.dueling.customopen .d-cover, #deck.dueling.customopen .d-ward { left: 1em; transform: none; width: 30%; }
-#deck.dueling.customopen .d-leave { right: auto; left: 1em; bottom: 21em; }
+#duel .d-fire small { display: block; font: 400 .55em var(--mono); letter-spacing: .1em; color: var(--faint); }
+#duel .d-fire:disabled { opacity: .5; cursor: default; }
+#duel .d-fire.ready { background: var(--mint); color: #04170f; border-color: var(--mint); animation: firebeat 1s ease-in-out infinite alternate; }
+#duel .d-fire.ready small { color: #0b3a29; }
+@keyframes firebeat { from { box-shadow: 0 0 0 0 rgba(92, 240, 186, .5); } to { box-shadow: 0 0 0 .8em rgba(92, 240, 186, 0); } }
+#deck.dueling.handopen .d-event { max-width: 32%; }
+#deck.dueling.handopen .d-down, #deck.dueling.handopen .d-cover, #deck.dueling.handopen .d-ward { left: 1em; transform: none; width: 30%; }
+#deck.dueling.handopen .d-leave { right: auto; left: 1em; bottom: 21em; }
 
-.d-low, .d-flash, .d-floats { inset: 0; pointer-events: none; }
-.d-low { transition: box-shadow .4s; }
+.d-low, .d-flash, .d-floats { inset: 0; pointer-events: none; }.d-low { transition: box-shadow .4s; }
 .d-low.on { box-shadow: inset 0 0 8em rgba(255,40,70,.35); }
-.d-flash { background: radial-gradient(ellipse, transparent, rgba(255,40,70,.5)); opacity: 0; }
-.d-flash.on { animation: sf-hurt .45s ease-out; }
-@keyframes sf-hurt { from { opacity: 1; } to { opacity: 0; } }
-.dfloat { position: absolute; transform: translate(-50%, -50%); font: 800 1.7em var(--ui); color: #fff; white-space: nowrap; text-shadow: 0 .08em 0 rgba(0,0,0,.75); }
+.d-flash { background: radial-gradient(ellipse, transparent, rgba(255,40,70,.5)); opacity: 0; will-change: opacity; }
+/* The dodge reads as a reward, not as nothing happening. The hurt flash is red closing in; this is
+   mint closing in, so the two never get confused in peripheral vision — the whole point is that you
+   know the step worked without looking away from the panels. */
+.d-flash.dodge { background: radial-gradient(ellipse, transparent, rgba(70,240,180,.42)); }
+/* The grace bar: the dodge's reward, in the panel you already look at. It only exists while the
+   window is live, so its presence is itself the message. */
+.d-grace { display: flex; align-items: center; gap: .4em; margin-top: .3em; font: 400 .6em var(--mono); color: var(--mint); }
+.d-grace b { letter-spacing: .1em; }
+.d-grace i { flex: 1; height: .45em; background: var(--mint); border-radius: 2px; transform-origin: left center; transform: scaleX(var(--g, 0)); transition: transform .06s linear; }
+.dfloat { position: absolute; left: 0; top: 0; font: 800 1.7em var(--ui); color: #fff; white-space: nowrap; text-shadow: 0 .08em 0 rgba(0,0,0,.75); }
 .dfloat span { display: block; animation: sf-float 1.1s cubic-bezier(.2,.8,.2,1) both; }
 @keyframes sf-float { 0% { transform: translateY(.5em) scale(.5); opacity: 0; } 14% { transform: translateY(-.3em) scale(1.2); opacity: 1; } 100% { transform: translateY(-3.4em); opacity: 0; } }
 .dfloat.weak { color: var(--volt); font-size: 2.3em; }
@@ -200,36 +203,63 @@
 #duel .receipt button.primary { width: 100%; min-height: 44px; padding: .65em; background: var(--mint); color: #04170f; border-color: var(--mint); font-weight: 800; }
 #duel .receipt button.primary:hover { background: #5cf0ba; }
 
-/* Automatic Custom: six server-owned candidates, literal field readout, ordered program. */
+/* Automatic Hand: six server-owned candidates, literal field readout, ordered program. */
 #cs.on.duel { display: block; padding: 0; overflow: auto; }
 /* DS bottom screen: the cards ARE the screen. No side readout panel — the field is up top. */
-.sf-custom { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(12em, 1fr) auto; gap: .5em; min-height: 100%; padding: .65em; font-size: clamp(10px, calc(var(--ph) / 34), 16px); }
+.sf-hand { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(12em, 1fr) auto; gap: .5em; min-height: 100%; padding: .65em; font-size: clamp(14px, calc(var(--ph) / 22), 22px); }
 .cs-field { display: none; }
-.sf-custom > header, .sf-custom > footer { grid-column: 1 / -1; }
-.sf-custom > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3em; padding-bottom: .4em; border-bottom: 1px solid var(--edge); color: var(--mint); font: 400 .8em var(--mono); }
-.sf-custom > header small { color: var(--dim); font-size: .82em; }
-.sf-custom > section { min-width: 0; padding: .5em; border: 1px solid var(--edge); background: var(--recess); border-radius: 5px; }
-.sf-custom h3 { margin: 0 0 .55em; color: var(--dim); font: 400 .75em var(--mono); letter-spacing: .05em; }
-.sf-custom h3 small { float: right; font-size: .86em; }
+.sf-hand > header, .sf-hand > footer { grid-column: 1 / -1; }
+.sf-hand > header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .3em; padding-bottom: .4em; border-bottom: 1px solid var(--edge); color: var(--mint); font: 400 .8em var(--mono); }
+.sf-hand > header small { color: var(--dim); font-size: .82em; }
+.sf-hand > section { min-width: 0; padding: .5em; border: 1px solid var(--edge); background: var(--recess); border-radius: 5px; }
+.sf-hand h3 { margin: 0 0 .55em; color: var(--dim); font: 400 .75em var(--mono); letter-spacing: .05em; }
+.sf-hand h3 small { float: right; font-size: .86em; }
 .cs-hand { position: relative; }
-/* Six cards, all of them, at a glance: the art is a thumbnail on the left and the numbers carry the
-   right half, because a hand you have to scroll or squint at is a hand you cannot plan with. */
-.cs-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(3.4em, 1fr)); gap: .4em; height: 100%; }
-#cs.duel .sf-card { --c: var(--violet); display: grid; grid-template-columns: 3.1em minmax(0, 1fr); gap: .45em; align-items: center; min-width: 0; padding: .3em; text-align: left; background: color-mix(in srgb, var(--c) 8%, var(--plate)); border-color: color-mix(in srgb, var(--c) 40%, var(--edge)); font-size: .8em; }
-#cs.duel .sf-card .card-art { width: 3.1em; aspect-ratio: 1; object-fit: cover; display: block; border: 1px solid color-mix(in srgb, var(--c) 45%, #000); border-radius: 3px; }
-#cs.duel .sf-card.held { opacity: .6; filter: saturate(.55); }
-.card-top { display: flex; justify-content: space-between; gap: .25em; color: var(--c); font: 400 .65em var(--mono); }
-.card-top b { font-size: .9em; font-weight: 400; }
-.card-name { font: 800 .9em/1.2 var(--ui); overflow-wrap: anywhere; }
-.card-power { color: var(--ink); font: 400 .88em var(--mono); }
-#cs.duel .card-power small { margin-top: .3em; color: var(--dim); font-size: .64em; line-height: 1.35; }
-.card-state { border-top: 1px solid var(--edge); padding-top: .3em; color: var(--c); font: 400 .62em/1.35 var(--mono); overflow-wrap: anywhere; }
-#cs.duel .sf-card.picked { box-shadow: inset 0 0 0 1px var(--c); background: color-mix(in srgb, var(--c) 20%, var(--plate)); }
-#cs.duel .sf-card.locked { background: var(--plate); border-style: dashed; }
-.sf-card.locked .card-state { color: var(--rose); }
-.sf-card.locked .card-name, .sf-card.locked .card-power { color: var(--dim); }
-.sf-card.waiting { opacity: .3; border: 1px dashed var(--edge); color: var(--dim); }
-.cs-charge { position: absolute; inset: .5em; display: grid; place-content: center; gap: .6em; text-align: center; background: rgba(10,6,22,.94); border: 1px solid var(--edge); border-radius: 4px; }
+/* Six cards, all of them, filling the screen: the art IS the card, and every number rides on it.
+   The tiles are squares so the art reads as art, and the rows are capped so the hand never has to
+   scroll — a hand you have to scroll is a hand you cannot plan with. */
+.cs-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: .4em; height: 100%; }
+/* ── one card ───────────────────────────────────────────────────────────────────────────────────
+   The art fills the tile; a scrim under the text is what makes it legible over a bright card. The
+   old card was a row with a 3em stamp beside five lines of text, six of them in the same shape —
+   a spreadsheet, not a hand. */
+#cs.duel .sf-card { --c: var(--violet); position: relative; display: block; min-width: 0; min-height: 4.4em; padding: 0; overflow: hidden; text-align: left; background: var(--plate); border: 1px solid color-mix(in srgb, var(--c) 42%, var(--edge)); border-radius: 5px; font-size: .9em; cursor: pointer; transition: transform .1s, box-shadow .12s, filter .15s; }
+#cs.duel .sf-card:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 0 0 1px var(--c), 0 6px 14px rgba(0,0,0,.5); }
+#cs.duel .sf-card:disabled { cursor: default; }
+#cs.duel .sf-card .card-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; border: 0; border-radius: 0; }
+/* The scrim: three bands so the top badges, the middle and the name all sit on something dark
+   without tinting the whole picture into mud. */
+.card-veil { position: absolute; inset: 0; background:
+    linear-gradient(to bottom, rgba(6,4,14,.78) 0, rgba(6,4,14,.1) 30%, rgba(6,4,14,0) 46%, rgba(6,4,14,.86) 74%, rgba(6,4,14,.95) 100%); }
+.card-top { position: absolute; inset: .3em .35em auto; display: flex; align-items: center; gap: .3em; color: #fff; font: 400 .78em var(--mono); text-shadow: 0 1px 3px #000; }
+.card-top small { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; letter-spacing: .04em; }
+.card-top b { padding: .05em .35em; border: 1px solid color-mix(in srgb, var(--c) 60%, #fff); border-radius: 3px; background: rgba(6,4,14,.6); color: var(--c); font-weight: 800; font-size: 1.05em; }
+.card-dot { width: .5em; height: .5em; border-radius: 50%; background: var(--c); box-shadow: 0 0 .4em var(--c); flex: 0 0 auto; }
+.card-foot { position: absolute; inset: auto .35em .3em; display: flex; flex-direction: column; gap: .1em; }
+.card-name { color: #fff; font: 800 .95em/1.15 var(--ui); text-shadow: 0 1px 4px #000; overflow-wrap: anywhere; }
+.card-pw { display: flex; align-items: baseline; gap: .2em; color: var(--mint); font: 800 1.1em/1 var(--mono); text-shadow: 0 1px 4px #000; }
+.card-pw i { color: var(--dim); font-size: .7em; font-style: normal; }
+#cs.duel .card-foot small { color: #cfc6e8; font: 400 .72em/1.3 var(--mono); letter-spacing: .02em; text-shadow: 0 1px 3px #000; }
+#cs.duel .card-foot small em { color: var(--gold); font-style: normal; }
+/* Picked: the card is still all there. It goes quiet and wears its place in the firing order, so
+   a queued program is six seconds from being one you can still see and undo. */
+#cs.duel .sf-card.picked .card-art { filter: saturate(.5) brightness(.55); }
+#cs.duel .sf-card.picked { box-shadow: inset 0 0 0 2px var(--c), 0 0 12px color-mix(in srgb, var(--c) 45%, transparent); }
+.card-order { position: absolute; top: .3em; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: .25em; padding: .1em .5em; border-radius: 999px; background: var(--c); color: #0a0714; font: 800 .6em var(--mono); letter-spacing: .08em; }
+.card-order i { font-size: 1.35em; font-style: normal; }
+.card-nope { position: absolute; inset: 0; display: grid; place-content: center; background: rgba(8,5,18,.72); color: var(--rose); font: 800 .68em var(--mono); letter-spacing: .08em; text-align: center; }
+#cs.duel .sf-card.locked { border-style: dashed; }
+#cs.duel .sf-card.locked .card-art { filter: grayscale(.8) brightness(.5); }
+#cs.duel .sf-card.held .card-art { filter: saturate(.55) brightness(.7); }
+#cs.duel .sf-card.held { opacity: .72; }
+.sf-card.waiting { display: grid; place-content: center; gap: .2em; min-height: 4.4em; border: 1px dashed var(--edge); background: var(--plate); color: var(--dim); font: 400 .68em var(--mono); text-align: center; }
+.sf-card.waiting b { font: 400 .9em var(--mono); }
+/* A veil, not a lid. The hand is dealt and meant to be READ while the Charge fills — the copy
+   right on this plate says so. At .94 alpha it blacked the cards out instead, and because dodging
+   is what fills the Charge, the player met a near-black slab the moment they dodged. Dim it, name
+   the wait, keep the cards legible underneath. */
+.cs-charge { position: absolute; inset: .5em; display: grid; place-content: center; gap: .5em; text-align: center; background: rgba(10,6,22,.42); border: 1px solid var(--edge); border-radius: 4px; }
+.cs-charge b, .cs-charge .time, .cs-charge small { text-shadow: 0 .06em .3em #000, 0 0 .6em #000; }
 .cs-charge b { font: 800 1em var(--ui); }
 .cs-charge .time { color: var(--mint); font: 400 1.8em var(--mono); }
 .cs-charge small { font: 400 .7em/1.4 var(--mono); color: var(--dim); }
@@ -239,13 +269,22 @@
 .cs-aim > div { padding: .3em 0; border-bottom: 1px solid var(--edge); }
 .cs-aim b, .cs-aim span { display: block; }
 .cs-aim span, .cs-aim p { color: var(--dim); }
-.sf-custom .cs-prog { grid-column: 1 / -1; }
-.cs-queue { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .3em; }
-.qcard { display: flex; align-items: center; gap: .5em; min-width: 0; padding: .4em; border: 1px solid var(--edge); border-left: 2px solid var(--c); border-radius: 3px; background: var(--plate); font: 400 .74em var(--mono); }
-.qcard b { color: var(--c); }
-.qcard span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qcard small { color: var(--dim); font-size: .8em; }
-.cs-queue p { grid-column: 1 / -1; margin: .3em 0; font: 400 .75em/1.4 var(--mono); color: var(--dim); }
+.sf-hand .cs-prog { grid-column: 1 / -1; }
+/* The firing order is a strip, not a stack. A program is read left to right in one glance — right
+   to left is how you decode it wrong — and six cards in a row is what "six seconds from being
+   damage" looks like. */
+.cs-queue { display: flex; align-items: stretch; gap: .3em; overflow-x: auto; padding-bottom: .15em; }
+.qcard { position: relative; display: flex; flex-direction: column; gap: .05em; flex: 0 0 5.6em; min-width: 0; padding: .3em .4em; border: 1px solid var(--edge); border-top: 2px solid var(--c); border-radius: 3px; background: var(--plate); overflow: hidden; }
+.qcard img.qart { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: .3; }
+.qcard::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, rgba(8,5,18,.35), rgba(8,5,18,.92)); }
+.qcard > * { position: relative; z-index: 1; }
+.qnum { position: absolute; top: .2em; right: .35em; color: var(--c); font: 800 .8em var(--mono); }
+.qnm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #fff; font: 700 .68em/1.2 var(--ui); text-shadow: 0 1px 3px #000; }
+.qcard small { color: var(--dim); font: 400 .6em var(--mono); }
+.qcard small em { color: var(--gold); font-style: normal; }
+.qcard.linked { box-shadow: inset 0 0 0 1px var(--c); }
+.qcard.linked small em { color: var(--gold); }
+.cs-queue p { margin: .3em 0; font: 400 .75em/1.4 var(--mono); color: var(--dim); }
 .cs-sum { margin: .5em 0; font: 400 .72em/1.5 var(--mono); color: var(--dim); }
 .cs-sum b { color: var(--mint); font-size: 1.5em; }
 .cs-sum small, .cs-sum > span { display: block; }
@@ -256,16 +295,23 @@
 #cs.duel .cs-btns .exe:hover { background: #5cf0ba; }
 .cs-wait { padding: .4em; font: 400 .8em/1.5 var(--mono); color: var(--dim); }
 .cs-wait b { color: var(--ink); }
-.sf-custom > footer { color: var(--faint); font: 400 .66em/1.4 var(--mono); }
+.sf-hand > footer { color: var(--faint); font: 400 .66em/1.4 var(--mono); }
 
 /* Keep the field legible and holds reachable on small touch screens. */
 #deck.touch #duel { font-size: clamp(11px, calc(min(var(--vw), var(--vh)) / 40), 18px); }
 #deck.touch .d-pad { grid-template-columns: repeat(3, max(3.5em, 44px)); grid-template-rows: repeat(3, max(2.6em, 38px)); }
-#deck.touch .d-buster { min-height: 72px; }
 #deck.touch .d-party button { min-height: 44px; }
-#deck.touch .sf-custom { font-size: 11px; }
+#deck.touch .sf-hand { font-size: 11px; }
 #deck.touch .cs-btns button { min-height: 44px; }
 @media (max-width: 800px) {
+  /* Six squares across is four too many on a phone. Two columns keeps the art big and the name on
+     one line, and the hand still fits without scrolling. */
+  .cs-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(3, minmax(0, 1fr)); }
+  #cs.duel .sf-card { font-size: .74em; }
+  .qcard { flex: 0 0 4.8em; }
+  .cs-btns { grid-template-columns: 1fr 1fr; }
+  #cs.duel .cs-btns .exe { grid-column: 1 / -1; }
+  .cs-queue { grid-template-columns: minmax(0, 1fr); }
   .d-you { width: 26%; }
   .d-boss { width: 29%; }
   #duel .who b { font-size: .78em; }
@@ -274,14 +320,13 @@
   .d-party { width: 26%; }
   #duel .d-stats, #duel .d-manual { width: 29%; }
   #duel .d-controls { gap: .4em; }
-  #duel .d-buster { width: 10em; }
   .d-event { bottom: 12em; }
 }
 @media (orientation: portrait) {
   #deck.touch .d-you, #deck.touch .d-boss { top: .7em; width: calc(50% - 1.4em); }
   #deck.touch .d-you { left: .7em; }
   #deck.touch .d-boss { right: .7em; }
-  #deck.touch .d-gauge { top: 8.1em; width: calc(100% - 1.4em); }
+  #deck.touch .d-charge { top: 8.1em; width: calc(100% - 1.4em); }
   #deck.touch .d-grade { left: auto; right: .7em; top: 10.4em; width: 43%; max-width: none; transform: none; }
   #deck.touch .d-party { left: .7em; top: 10.4em; width: 49%; max-height: 13em; }
   #deck.touch .d-stats, #deck.touch .d-manual { right: .7em; width: 43%; }
@@ -290,7 +335,6 @@
   #deck.touch details[open] { width: calc(100% - 1.4em); max-height: 42%; }
   #deck.touch .d-warn { top: 20em; left: .7em; width: 49%; transform: none; }
   #deck.touch .d-controls { left: .7em; right: .7em; bottom: 3em; justify-content: space-between; }
-  #deck.touch .d-buster { width: 12em; max-width: 40%; }
   #deck.touch .d-event { left: .7em; bottom: 16em; max-width: none; width: calc(100% - 1.4em); }
   #deck.touch .d-hint { left: .7em; bottom: .7em; width: 77%; }
   #deck.touch .d-leave { right: .7em; bottom: .7em; min-height: 44px; }
@@ -298,13 +342,23 @@
   #deck.touch .d-down { bottom: 22em; }
   #deck.touch .d-cover { bottom: 25em; }
   #deck.touch .d-ward { bottom: 31em; }
-  #deck.touch.dueling.customopen .d-controls { bottom: calc(var(--dock) + 1em); }
-  #deck.touch.dueling.customopen .d-event { display: none; }
-  #deck.touch.dueling.customopen .d-hint { bottom: calc(var(--dock) + 13em); }
-  #deck.touch.dueling.customopen .d-leave { left: auto; right: .7em; bottom: calc(var(--dock) + 13em); }
-  #deck.touch.dueling.customopen .d-down, #deck.touch.dueling.customopen .d-cover, #deck.touch.dueling.customopen .d-ward { display: none; }
+  #deck.touch.dueling.handopen .d-controls { bottom: calc(var(--dock) + 1em); }
+  #deck.touch.dueling.handopen .d-event { display: none; }
+  #deck.touch.dueling.handopen .d-hint { bottom: calc(var(--dock) + 13em); }
+  #deck.touch.dueling.handopen .d-leave { left: auto; right: .7em; bottom: calc(var(--dock) + 13em); }
+  #deck.touch.dueling.handopen .d-down, #deck.touch.dueling.handopen .d-cover, #deck.touch.dueling.handopen .d-ward { display: none; }
   #deck.touch .receipt h2 { font-size: 1.55em; }
 }
 @media (prefers-reduced-motion: reduce) {
   #duel *, #cs.duel * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* resonance: same-element neighbours in the program light their link */
+.cs-queue .qcard.linked { border-color: var(--c); box-shadow: inset 0 -3px 0 var(--c), 0 0 10px color-mix(in srgb, var(--c) 45%, transparent); }
+.cs-prog.fusion { box-shadow: inset 0 0 0 1px var(--gold); }
+.cs-fusion { margin: .35em 0; padding: .3em .6em; border: 1px solid var(--gold); color: var(--gold); font: 700 .72em var(--mono); letter-spacing: .12em; text-align: center; }
+.cs-sum .cs-preview { display: block; margin-top: .25em; color: var(--mint); font: 700 .78em var(--mono); }
+
+/* Resonance lines: a linked card carries its element colour down its whole left edge,
+   so a chain reads as one bar snapped into segments instead of separate tiles. */
+.cs-queue .qcard.linked { border-left: 3px solid var(--c); }

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { areaAt, cityOf, npcOf, type Anchor, type CityLayout, type NpcDef, type QuestMark, type SectorId } from '@chog/shared';
+import { areaAt, boardSideFor, cityOf, npcOf, type Anchor, type CityLayout, type NpcDef, type QuestMark, type SectorId } from '@chog/shared';
 import { DISTRICTS } from './art.ts';
-import { loadChogNFT, type Chog, type PartsModel } from './chogLoader.ts';
+import { hullMaterial, loadChogNFT, type Chog, type PartsModel } from './chogLoader.ts';
+import { faceUrl } from './portrait.ts';
 import { buildCity, type CityScene } from './city/build.ts';
 import type { DynamicState } from './city/landmarks.ts';
 import type { ICON } from './hud/icons.ts';
@@ -79,6 +80,7 @@ export class Explorer {
   walk: WalkLayout = { solids: [], bounds: { minX: 0, maxX: 0, minZ: 0, maxZ: 0 } };
 
   private people = new Map<string, Person>();
+  private faces = new Map<string, string | null>();
   private targets: Target[] = [];
   private marks: Record<string, QuestMark> = {};
   private caught = new Set<string>();
@@ -129,13 +131,14 @@ export class Explorer {
   arrival(from: SectorId | null): { x: number; z: number } {
     const gate = from ? this.layout.anchors.find((a) => a.kind === 'gate' && a.sub === from) : undefined;
     if (gate) return { x: gate.x + (gate.x < 0 ? 7 : -7), z: gate.z };
-    const sp = this.layout.anchors.find((a) => a.kind === 'spawn');
-    return sp ? { x: sp.x, z: sp.z } : { x: 0, z: 0 };
+    // Fresh arrivals appear beside the quest board — same point the server joins at.
+    return boardSideFor(this.layout);
   }
 
   private leave(): void {
     for (const p of this.people.values()) this.despawn(p);
     this.people.clear();
+    this.faces.clear();
     this.setBeacons([]);
     this.waveOrbs.clear();
     if (this.waveGroup) this.root.remove(this.waveGroup);
@@ -176,7 +179,7 @@ export class Explorer {
           x: a.x,
           z: a.z,
           radius: a.radius ?? 2.8,
-          hint: station ? 'pulse into the wave' : a.kind === 'fold' ? 'enter the data area' : 'go inside',
+          hint: station ? 'pulse into the wave' : a.kind === 'fold' ? 'enter the request' : 'go inside',
           icon: station ? 'bolt' : a.kind === 'fold' ? 'gate' : 'door',
           colour: station ? '#7ffcff' : a.kind === 'fold' ? '#ff9a3c' : '#7fd8ff',
         });
@@ -238,6 +241,19 @@ export class Explorer {
   setVisible(on: boolean): void {
     this.root.visible = on;
     this.life?.setPaused(!on);
+  }
+
+  /** The NPC's own 3D-model face, rendered once and cached. null until its model streams in. */
+  face(id: string): string | null {
+    const cached = this.faces.get(id);
+    if (cached) return cached;
+    const p = this.people.get(id);
+    const url = p?.chog ? faceUrl(p.chog.root) : null;
+    // Only a real face is worth remembering. The avatar streams in as you walk up to it, so a miss
+    // now has to stay a miss — caching the null is what made the portrait never appear for anyone
+    // whose model finished loading after the dialogue opened.
+    if (url) this.faces.set(id, url);
+    return url;
   }
 
   setViz(on: boolean): void {
@@ -315,6 +331,39 @@ export class Explorer {
     this.root.add(this.beacons);
   }
 
+  private traitPools: Promise<{ parts: Record<string, Record<string, string>>; skins: Record<string, Record<string, string>> }> | null = null;
+
+  /** The traits this NPC wears, picked deterministically from the same pools
+   *  a player's token draws from — so the city's people are individuals, and
+   *  the DEALER you met yesterday is wearing the same hat today. */
+  private async npcTraits(id: string): Promise<Record<string, string>> {
+    try {
+      this.traitPools ??= Promise.all([
+        fetch(this.model.partsUrl).then((r) => r.json()),
+        fetch(this.model.skinsUrl).then((r) => r.json()),
+      ]).then(([index, skins]) => ({
+        parts: (index as { parts: Record<string, Record<string, string>> }).parts,
+        skins: skins as Record<string, Record<string, string>>,
+      }));
+      const pools = await this.traitPools;
+      let seed = hashOf(id) || 1;
+      const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+      const pick = (obj: Record<string, unknown>) => {
+        const keys = Object.keys(obj);
+        return keys.length ? keys[Math.floor(rnd() * keys.length)]! : '';
+      };
+      return {
+        Skin: pick(pools.skins),
+        Body: pick(pools.parts.Body ?? {}),
+        Head: pick(pools.parts.Head ?? {}),
+        Eyes: pick(pools.parts.Eyes ?? {}),
+        Mouth: pick(pools.parts.Mouth ?? {}),
+      };
+    } catch {
+      return {};
+    }
+  }
+
   private async spawn(p: Person): Promise<void> {
     if (p.loading || p.chog || p.board) return;
     p.loading = true;
@@ -327,7 +376,7 @@ export class Explorer {
       p.group.add(p.board);
     } else {
       try {
-        const chog = await loadChogNFT({ ...this.model, traits: {}, tokenId: 1 + (hashOf(def.id) % 1900), tint: TRIBE_TINT[def.tribe] ?? {} });
+        const chog = await loadChogNFT({ ...this.model, traits: await this.npcTraits(def.id), tokenId: 1 + (hashOf(def.id) % 1900), tint: TRIBE_TINT[def.tribe] ?? {} });
         // The person may have been despawned while the model was loading.
         if (!this.people.has(def.id)) return;
         p.chog = chog;
@@ -352,9 +401,12 @@ export class Explorer {
     p.group.traverse((o) => {
       const m = o as THREE.Mesh;
       if (m.isMesh) {
-        // Chog geometry is shared by every clone; only what is ours to free is freed.
         const mat = m.material as THREE.Material | THREE.Material[];
-        for (const x of Array.isArray(mat) ? mat : [mat]) x.dispose?.();
+        for (const x of Array.isArray(mat) ? mat : [mat]) {
+          // The hull is module-level and shared by EVERY Chog. Disposing it here tore the program
+          // out from under every other Chog on screen, and on D3D that stall is the black flash.
+          if (x && x !== hullMaterial) x.dispose?.();
+        }
       }
     });
     p.chog = null;
@@ -431,6 +483,10 @@ export class Explorer {
       } else if (p && d > STREAM_OUT) {
         this.despawn(p);
         this.people.delete(a.id);
+      } else if (p && !p.chog && !p.board && !p.loading) {
+        // A model that failed to load once is not a person who never existed: try again while we
+        // are still close, instead of leaving a faceless stand-in for the rest of the session.
+        void this.spawn(p);
       }
     }
     for (const b of this.beaconParts) {
@@ -479,19 +535,22 @@ export class Explorer {
   markers(opts: { anomaly: boolean; tracked: { kind: 'npc' | 'poi' | 'door'; id: string }[]; remotes: { x: number; z: number }[] }): MapMarker[] {
     const out: MapMarker[] = [];
     const tracked = new Set(opts.tracked.map((t) => `${t.kind}:${t.id}`));
+    // The first tracked target is the current objective; offers and later objectives share
+    // the gold kind, so the edge arrow needs to know which one is the sentence's subject.
+    const mainKey = opts.tracked.length ? `${opts.tracked[0]!.kind}:${opts.tracked[0]!.id}` : null;
     for (const a of this.layout.anchors) {
       if (a.kind === 'npc' || a.kind === 'board') {
         const def = npcOf(a.id)?.npc;
         if (def?.hidden && !this.viz) continue;
         const mark = this.marks[a.id];
         const kind = mark === 'turnin' ? 'turnin' : mark === 'offer' || tracked.has(`npc:${a.id}`) ? 'quest' : a.kind === 'board' ? 'board' : 'npc';
-        out.push({ x: a.x, z: a.z, kind, label: a.label });
+        out.push({ x: a.x, z: a.z, kind, label: a.label, ...(mainKey === `npc:${a.id}` ? { main: true as const } : {}) });
       } else if (a.kind === 'door' || a.kind === 'fold') {
         if (a.sub === 'home') continue;
         const hot = opts.anomaly && a.sub === 'station';
-        out.push({ x: a.x, z: a.z, kind: hot ? 'anomaly' : tracked.has(`door:${a.sub}`) ? 'quest' : 'door', label: a.label });
+        out.push({ x: a.x, z: a.z, kind: hot ? 'anomaly' : tracked.has(`door:${a.sub}`) ? 'quest' : 'door', label: a.label, ...(mainKey === `door:${a.sub}` ? { main: true as const } : {}) });
       } else if (a.kind === 'gate') out.push({ x: a.x, z: a.z, kind: 'gate', label: a.label });
-      else if (a.kind === 'poi') out.push({ x: a.x, z: a.z, kind: tracked.has(`poi:${a.id}`) ? 'quest' : 'poi', label: a.label });
+      else if (a.kind === 'poi') out.push({ x: a.x, z: a.z, kind: tracked.has(`poi:${a.id}`) ? 'quest' : 'poi', label: a.label, ...(mainKey === `poi:${a.id}` ? { main: true as const } : {}) });
       else if (a.kind === 'wave' && this.viz && !this.caught.has(a.id)) out.push({ x: a.x, z: a.z, kind: 'wave' });
     }
     for (const r of opts.remotes) out.push({ x: r.x, z: r.z, kind: 'remote' });
@@ -500,7 +559,10 @@ export class Explorer {
 
   /** The anchor of a person or a place by id, for "walk toward this" on the tracker. */
   positionOf(kind: 'npc' | 'poi' | 'door', id: string): { x: number; z: number } | null {
-    const a = this.layout.anchors.find((q) => (kind === 'door' ? (q.kind === 'door' || q.kind === 'fold') && q.sub === id : q.id === id));
+    const a = this.layout.anchors.find((q) =>
+      kind === 'door'
+        ? (q.kind === 'door' || q.kind === 'fold') && q.sub === id
+        : q.id === id && (kind === 'npc' ? q.kind === 'npc' || q.kind === 'board' : q.kind === 'poi'));
     return a ? { x: a.x, z: a.z } : null;
   }
 }
