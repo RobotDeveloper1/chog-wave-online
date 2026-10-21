@@ -567,7 +567,8 @@ const byBand: Record<string, string[]> = {};
 for (const p of priced) (byBand[p.band] ??= []).push(`lv${p.level}:${p.dps}`);
 console.log(`difficulty priced in ${Math.round(performance.now() - pricedAt)}ms — ` + Object.entries(byBand).map(([b, v]) => `${b} dps ${v.join(' ')}`).join('  |  '));
 
-server.listen(CFG.port, () => {
+if (CFG.host) server.listen(CFG.port, CFG.host, onReady); else server.listen(CFG.port, onReady);
+function onReady(): void {
   console.log(`chog-wave server :${CFG.port}  build ${BUILD_VERSION} (${BUILD_TAG})  feed=${world.feedMode}`);  const r = world.start();
   if (r instanceof Promise) r.catch((e) => console.error('feed start failed:', (e as Error).message));
 
@@ -593,7 +594,7 @@ server.listen(CFG.port, () => {
 
   const prune = setInterval(() => auth.prune(), 60_000);
   prune.unref?.();
-});
+}
 
 const shutdown = (): void => {
   clearInterval(heartbeat);

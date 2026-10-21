@@ -151,7 +151,7 @@ export type FieldEvent =
   | { type: 'hit'; owner: string; cardId: string; damage: number; counter: boolean; weak: number; chain: number; element: Element; cls: CardClass; kind: CardKind }
   | { type: 'miss'; owner: string; cardId: string; files: number[] }
   | { type: 'blocked'; owner: string; cardId: string; file: number }
-  | { type: 'telegraph'; panels: Panel[]; files: number[]; ms: number; move: string; label: string; damage: number; atFile: number }
+  | { type: 'telegraph'; panels: Panel[]; files: number[]; ms: number; move: string; label: string; damage: number; atFile: number; owner?: string }
   | { type: 'strike'; panels: Panel[]; files: number[]; move: string; label: string }
   | { type: 'took-hit'; owner: string; damage: number; file: number }
   | { type: 'dodge'; owner: string; file: number }

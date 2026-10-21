@@ -474,9 +474,21 @@ export class Duel {
           this.resolveShot(e.owner, e.cardId, { hit: false, blocked: true });
           this.floater(this.bossPoint(), 'BLOCKED', 'miss');
           break;
-        case 'telegraph':
-          sfx.warn();
+        case 'telegraph': {
+          if (!mine) { sfx.warn(); break; }
+          // PvP launch feedback: the warning lives on the rival's screen, so this
+          // screen gets the throw - the target row flashed through the same side
+          // mirror as strikes, the lead card on a banner, amber for outgoing.
+          const ml = this.mySide === 1 ? (lane: number): number => this.lanes - 1 - lane : (lane: number): number => lane;
+          for (const p of e.panels) {
+            this.arena?.flash(p.file, ml(p.lane), 1.0);
+            this.arena?.rings.spawn(new THREE.Vector3(fileX(p.file, this.files), 0.5, laneZ(ml(p.lane), this.lanes)), new THREE.Color(1.5, 0.9, 0.3), 3.5, 0.5, false);
+          }
+          this.floater(this.bossPoint(1), e.label, 'chain');
+          this.animate('attack');
+          sfx.fire();
           break;
+        }
         case 'strike':
           // Strikes read through the panel pulse plus a red ring per struck panel: the
           // beam quads retired here flashed the field black on this machine every time
@@ -589,7 +601,12 @@ export class Duel {
     this.toldFreeze = null;
     this.ui.setFrozen(false);
     this.cover(null);
-    this.send({ action: 'step', dir });
+    // Side 1 reads the field lane-mirrored (self-near), so its near/far intent is
+    // flipped on screen: un-mirror back/forward before sending, the same way
+    // strikes are mirrored on the way in. The wire stays absolute.
+    const out = this.mySide === 1 && dir !== 'left' && dir !== 'right'
+      ? (dir === 'back' ? 'forward' : 'back') : dir;
+    this.send({ action: 'step', dir: out });
     // No predicted file/lane: the next snapshot is the only movement authority.
   }
 

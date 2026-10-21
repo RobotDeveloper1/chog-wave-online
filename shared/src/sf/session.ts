@@ -988,6 +988,7 @@ function pvpProgram(s: DuelSession, b: DuelBody, cards: BattleCard[]): void {
     panels,
     files: list,
     ms,
+    owner: b.id,
     move: 'pvp-program',
     label: lead.name,
     damage: Math.max(1, damage),

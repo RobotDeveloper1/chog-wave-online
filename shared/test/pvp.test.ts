@@ -101,6 +101,12 @@ describe('programs become warnings', () => {
     expect(h.on).toEqual(['b']);
   });
 
+  it('signs the telegraph with the attacker, so their screen can play the throw', () => {
+    const { s, a } = duel();
+    fire(s, a, 'hot_heart');
+    expect(s.events.find((e) => e.type === 'telegraph')).toMatchObject({ owner: 'a', label: 'Hot Heart' });
+  });
+
   it('lands on the rival and nobody else', () => {
     const { s, a, b } = duel();
     fire(s, a, 'hot_heart');

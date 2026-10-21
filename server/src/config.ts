@@ -26,6 +26,8 @@ export function dataFile(first: string, ...rest: string[]): string {
 
 export const CFG = {
   port: Number(process.env.PORT ?? 8787),
+  /** Bind address. Empty binds all interfaces (dev default); production sets 127.0.0.1 behind Caddy. */
+  host: process.env.HOST ?? '',
   rpcUrl: process.env.MONAD_RPC || MONAD_RPC_URL,
   chogGenesis: process.env.CHOG_GENESIS_CONTRACT || CHOG_GENESIS_ADDRESS,
   chogToken: process.env.CHOG_TOKEN_CONTRACT || '0x350035555E10d9AfAF1566AaebfCeD5BA6C27777',

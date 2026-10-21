@@ -550,7 +550,7 @@ export class World {
       this.emit(signals);
 
       for (const e of events) {
-        const owner = 'owner' in e ? this.players.get(e.owner) : undefined;
+        const owner = 'owner' in e && e.owner ? this.players.get(e.owner) : undefined;
         if (!owner) continue;
         if (e.type === 'hit' && e.damage > 0) {
           const chain = e.chain;
