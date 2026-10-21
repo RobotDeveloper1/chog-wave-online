@@ -85,6 +85,8 @@ export class Social {
   invites = new Map<string, PartyInvite>();
   /** playerId -> the brawl challenge waiting for them (one at a time) */
   challenges = new Map<string, BrawlChallenge>();
+  /** playerId -> the house invitation waiting for them (one at a time) */
+  houseInvites = new Map<string, PartyInvite>();
   /** playerId -> pending offers addressed to them */
   private inbox = new Map<string, Set<string>>();
 
@@ -144,6 +146,8 @@ export class Social {
     for (const [to, inv] of this.invites) if (inv.from === id) this.invites.delete(to);
     this.challenges.delete(id);
     for (const [to, ch] of this.challenges) if (ch.from === id) this.challenges.delete(to);
+    this.houseInvites.delete(id);
+    for (const [to, inv] of this.houseInvites) if (inv.from === id) this.houseInvites.delete(to);
     const party = this.partyOf(id);
     if (!party) return;
     party.members = party.members.filter((m) => m !== id);
@@ -236,6 +240,43 @@ export class Social {
     const ch = this.challenges.get(to);
     this.challenges.delete(to);
     return ch?.from ?? null;
+  }
+
+  // ------------------------------------------------------------------- home
+
+  /**
+   * Ask someone to come over: if they accept, they step into your room.
+   * One invitation at a time per addressee, like a party invite.
+   */
+  inviteHome(from: string, to: string, now = Date.now()): { ok: boolean; reason?: string } {
+    if (from === to) return { ok: false, reason: 'you live there already' };
+    this.houseInvites.set(to, { from, at: now });
+    return { ok: true };
+  }
+
+  /** The house invitation waiting for `to`, unless it has run out. */
+  homeInviteFor(to: string, now = Date.now()): PartyInvite | null {
+    const inv = this.houseInvites.get(to);
+    if (!inv) return null;
+    if (now - inv.at > INVITE_TTL_MS) {
+      this.houseInvites.delete(to);
+      return null;
+    }
+    return inv;
+  }
+
+  /** Say yes: the host's name comes back so the world can walk you in. */
+  acceptHomeInvite(to: string, now = Date.now()): { ok: boolean; reason?: string; from?: string } {
+    const inv = this.homeInviteFor(to, now);
+    if (!inv) return { ok: false, reason: 'that invitation has run out' };
+    this.houseInvites.delete(to);
+    return { ok: true, from: inv.from };
+  }
+
+  declineHomeInvite(to: string): string | null {
+    const inv = this.houseInvites.get(to);
+    this.houseInvites.delete(to);
+    return inv?.from ?? null;
   }
 
   /** The leader sends someone out of the party. */

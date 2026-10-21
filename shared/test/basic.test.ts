@@ -3,9 +3,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { BASIC_CARDS, BASIC_IDS, anyCard, isBasicId } from '../src/cards.ts';
 import { deriveBuild } from '../src/derive.ts';
-import { BASIC_BASE, BASIC_PWR, BASIC_SPD, FOSTER_BASIC_SHARE, basicCard, basicCardFor, basicMight } from '../src/sf/loadout.ts';
+import { BASIC_BASE, BASIC_PWR, BASIC_SPD, FOSTER_BASIC_SHARE, attackFromPwr, basicCard, basicCardFor, basicMight, duelStatsOf } from '../src/sf/loadout.ts';
 import { HAND_CELLS, drawHand, view } from '../src/sf/hand.ts';
 import { CARDS_ALL } from '../src/cards.ts';
+import { previewDamage } from '../src/sf/session.ts';
+import { attackScale } from '../src/sf/stats.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
@@ -24,7 +26,7 @@ import { tmpdir } from 'node:os';
 
 const metaDir = join(process.cwd(), '..', '.data', 'metadata');
 
-/** The 493 real tokens, read the way `server/src/meta.ts` reads them: by `name`, not filename. */
+/** The 1969 real tokens, read the way `server/src/meta.ts` reads them: by `name`, not filename. */
 function realTokens(): { id: number; attrs: Record<string, string> }[] {
   let files: string[];
   try {
@@ -108,7 +110,7 @@ describe('the basic attack — the number is the token', () => {
 
   it('is monotonic in both attributes, up to what rounding allows', () => {
     // Non-decreasing, not increasing: `basicMight({PWR:2, SPD:9})` and `{PWR:2, SPD:10}` are
-    // both 10, because `6 + 1.8 + 2.25` and `6 + 1.8 + 2.5` round to the same integer. A strict
+    // both 10, because `7 + 1.4 + 1.8` and `7 + 1.4 + 2` round to the same integer. A strict
     // assertion would be asserting that rounding does not exist.
     expect(basicMight({ PWR: 10, SPD: 2 })).toBeGreaterThanOrEqual(basicMight({ PWR: 9, SPD: 2 }));
     expect(basicMight({ PWR: 2, SPD: 10 })).toBeGreaterThanOrEqual(basicMight({ PWR: 2, SPD: 9 }));
@@ -223,5 +225,36 @@ describe('the client is told the substituted number', () => {
     const state = { cells: hand, queue: [], lock: null, transformed: false, gigaSpent: false };
     const shown = view(state, { slots: 6, mega: 1, giga: 1 })[0]!.card.might;
     expect(shown).toBe(basicMight({ PWR: 10, SPD: 10 }));
+  });
+});
+
+describe('PWR feeds Attack, so the token hits harder on every card', () => {
+  it('maps PWR 2..10 onto +0..+2 Attack, one step per four past the floor', () => {
+    expect(attackFromPwr(2)).toBe(0);
+    expect(attackFromPwr(5)).toBe(0);
+    expect(attackFromPwr(6)).toBe(1);
+    expect(attackFromPwr(9)).toBe(1);
+    expect(attackFromPwr(10)).toBe(2);
+  });
+
+  it('lifts duelStatsOf Attack by 2 from the weakest to the strongest token', () => {
+    const b = deriveBuild({ tokenId: 7, transferCount: 0, daysHeld: 0 });
+    const atk = (pwr: number) => duelStatsOf({ loadout: b.loadout, level: 2, attrs: { ...b.attrs, PWR: pwr } }).attack;
+    expect(atk(10) - atk(2)).toBe(2);
+    // +2 Attack is x1.18 on every card, which is the whole slice PWR is allowed.
+    expect(attackScale(atk(10)) / attackScale(atk(2))).toBeCloseTo(1.18, 2);
+  });
+
+  it('prices the PWR slice into the card preview, so the screen cannot hide it', () => {
+    const b = deriveBuild({ tokenId: 7, transferCount: 0, daysHeld: 0 });
+    const attack = (pwr: number) =>
+      duelStatsOf({ loadout: b.loadout, level: 2, attrs: { ...b.attrs, PWR: pwr } }).attack;
+    const card = { might: 100, kind: 'shot' as const, element: 'burn' as const };
+    const base = { chain: 0, lastElement: null, bossElement: 'burn' as const, counter: false, linkMult: 1, guard: 0 };
+    const lo = previewDamage(card, { ...base, attack: attack(2) });
+    const hi = previewDamage(card, { ...base, attack: attack(10) });
+    expect(hi.damage).toBeGreaterThan(lo.damage);
+    // One decimal: the two sides round independently, so this pins the slice, not the rounding.
+    expect(hi.damage / lo.damage).toBeCloseTo(1.18, 1);
   });
 });

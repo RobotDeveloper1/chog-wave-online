@@ -92,6 +92,8 @@
   padding: 1.2em 1.4em 0;
 }
 .pk-brand { display: grid; gap: .55em; }
+.pk-lockup { display: flex; align-items: center; gap: .8em; }
+.pk-logo { width: 68px; height: 68px; border-radius: 16px; }
 .pk-mark { display: block; }
 .pk-tag { font: 400 .74em var(--mono); letter-spacing: .42em; color: var(--mint); text-transform: uppercase; }
 .pk-supply { font: 400 .72em var(--mono); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
@@ -182,6 +184,15 @@
 .pk-foster:hover:not(:disabled) { color: var(--ink); }
 .pk-fine { margin: 0; font: 400 .72em/1.6 var(--mono); color: var(--faint); }
 .pk-fine > b { color: var(--dim); font-weight: 400; }
+.chog-pick .pk-connect small img { height: 1.7em; width: auto; vertical-align: -0.5em; }
+.pk-meme { margin: .2em 0 1.1em; font: 700 .95em var(--mono); letter-spacing: .05em; color: #ff8fb8; transform: rotate(-1deg); }
+.pk-faces { display: flex; align-items: center; gap: .55em; margin-top: 1.1em; }
+.pk-faces > img { width: 46px; height: 46px; object-fit: cover; border-radius: 10px; border: 2px solid var(--edge); background: #0a0614; }
+.pk-faces > img:nth-child(1) { border-color: var(--mint); }
+.pk-faces > img:nth-child(2) { border-color: var(--gold); }
+.pk-faces > img:nth-child(3) { border-color: #ff8fb8; }
+.pk-faces > img:nth-child(4) { border-color: var(--rose); }
+.pk-faces > span { font: 400 .68em/1.5 var(--mono); color: var(--faint); }
 
 /* ---------------------------------------------------------------- the shelf (pick) */
 
@@ -237,6 +248,10 @@
 }
 
 .pk-plate { font: 400 1.25em var(--mono); color: var(--el, var(--dim)); }
+.pk-model { width: 100%; height: 100%; background-size: contain; background-position: center bottom; background-repeat: no-repeat; }
+/* the chosen Chog's live stage: square, capped, the canvas fills it exactly */
+.pk-stage { position: relative; width: min(100%, 22em); aspect-ratio: 1; margin: .1em auto .5em; background: repeating-linear-gradient(45deg, #100b1e 0 6px, #0b0718 6px 12px); border: 1px solid var(--el, var(--edge)); border-radius: var(--r); overflow: hidden; }
+.pk-stage > canvas, .pk-stage > .pk-model { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .pk-meta { display: grid; gap: .08em; min-width: 0; }
 .pk-id { font: 400 .72em var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--faint); }
 .pk-name { font-size: .98em; font-weight: 700; line-height: 1.15; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

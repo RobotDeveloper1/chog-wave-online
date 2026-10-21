@@ -1,0 +1,58 @@
+{
+ "Beige": {
+  "M_form_bone_x": "efe9dc",
+  "M_form_hi_x": "fbf5e9"
+ },
+ "Black": {
+  "M_form_bone_x": "211c29",
+  "M_form_hi_x": "5f5e62"
+ },
+ "Blue": {
+  "M_form_bone_x": "476bcc",
+  "M_form_hi_x": "7188da"
+ },
+ "Green": {
+  "M_form_bone_x": "59ad6b",
+  "M_form_hi_x": "7cbf88"
+ },
+ "Grey": {
+  "M_form_bone_x": "85858f",
+  "M_form_hi_x": "9c9ca5"
+ },
+ "Jade": {
+  "M_form_bone_x": "86d9ac",
+  "M_form_hi_x": "9de6be"
+ },
+ "Metal": {
+  "M_form_bone_x": "4c566b",
+  "M_form_hi_x": "737a88"
+ },
+ "Multi Colored": {
+  "M_form_bone_x": "f472b6",
+  "M_form_hi_x": "ff8dc6"
+ },
+ "Origin": {
+  "M_form_bone_x": "f0eddb",
+  "M_form_hi_x": "fbf9e8"
+ },
+ "Pink": {
+  "M_form_bone_x": "ed6b9e",
+  "M_form_hi_x": "f988b1"
+ },
+ "Purple": {
+  "M_form_bone_x": "7347ad",
+  "M_form_hi_x": "8e71bf"
+ },
+ "Red": {
+  "M_form_bone_x": "de212b",
+  "M_form_hi_x": "eb5f63"
+ },
+ "White": {
+  "M_form_bone_x": "f5f2ed",
+  "M_form_hi_x": "fffef9"
+ },
+ "Yellow": {
+  "M_form_bone_x": "f5d429",
+  "M_form_hi_x": "ffe162"
+ }
+}

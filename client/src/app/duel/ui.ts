@@ -1,5 +1,5 @@
 import './duel.css';
-import { SF, findRecipe, type ChogLoadout, type DuelEndMsg, type DuelStartMsg } from '@chog/shared';
+import { BUILD_VERSION, SF, findRecipe, type ChogLoadout, type DuelEndMsg, type DuelStartMsg } from '@chog/shared';
 import { net } from '../../net.ts';
 import { ELEMENT_COLOUR, ELEMENT_ICON } from '../hud/icons.ts';
 import { cardImg } from '../cardArt.ts';
@@ -116,7 +116,7 @@ export class DuelUi {
     this.moves = moves;
     this.caps = caps;
     this.paint('manualText', `<p>The Charge opens your Hand automatically. Pick with 1–6 or tap cards, in firing order. Enter fires; Backspace undoes; C clears.</p>
-      <p>Cards aim from your current file. Movement freezes only while a program fires — walking out of an open Hand drops its shield. Read both player lanes before dodging.</p>
+      <p>Cards aim from your current file. Movement freezes only while a program fires — walking out of an open Hand drops its shield. Read your lanes before dodging.</p>
       <p>Dodging a marked panel banks Charge, so the next Hand comes sooner. Hold R or COVER beside a downed partner on a neighbouring file.</p>
       <p>Counter cards fired during a telegraph deal double damage and bank bonus cards. Chaining one element raises every later card in the program. NULL fits any element lock; VOID pushes the district wave up.</p>
       <ol>${moves.map((m) => `<li><b>${esc(m.name)}</b><span>${esc(m.read)}</span></li>`).join('')}</ol>`, this.el.manual!.querySelector('div')!);
@@ -142,7 +142,7 @@ export class DuelUi {
       ${hp(b.hp, b.maxHp, 'boss-hp')}
       <div class="sub"><span>${b.training ? 'TRAINING' : b.node ? 'DUNGEON' : esc(b.tier.toUpperCase())} · PHASE ${b.phase}</span><span>${panelName(b)}</span></div>
       <div class="sub"><span>${element(b.element)} · GUARD ${pct(b.guard * 100)}</span><span>${weak ? `WEAK: ${element(weak)}` : b.element === 'prism' ? 'WEAK: VOID' : 'NO CYCLE WEAKNESS'}</span></div>
-      ${(b.burn || b.freezeMs > 0) ? `<div class="sub status">${[b.burn ? `BURN ${b.burn.ticks}x${b.burn.damage}` : '', b.freezeMs > 0 ? `FROZEN ${(b.freezeMs / 1000).toFixed(1)}s` : ''].filter(Boolean).join(' · ')}</div>` : ''}
+      ${(b.burn || b.freezeMs > 0 || b.stunMs > 0) ? `<div class="sub status">${[b.burn ? `BURN ${b.burn.ticks}x${b.burn.damage}` : '', b.freezeMs > 0 ? `FROZEN ${(b.freezeMs / 1000).toFixed(1)}s` : '', b.stunMs > 0 ? `STUN ${(b.stunMs / 1000).toFixed(1)}s` : ''].filter(Boolean).join(' · ')}</div>` : ''}
       ${b.blocked !== null ? `<div class="wall">WALL · FILE ${b.blocked + 1} · SWORD PIERCES</div>` : ''}`);
     this.el.you!.style.setProperty('--c', colour(you?.tribe ?? id.element));
     const tokenId = (you as PlayerIdentity | null)?.tokenId ?? id.tokenId;
@@ -153,7 +153,9 @@ export class DuelUi {
       : '';
     this.paint('you', `<div class="who">${this.portrait(tokenId, id.element)}<div><b>${esc(you?.name ?? id.name)}</b><small>CHOG #${String(tokenId).padStart(4, '0')} · LV ${net.profile?.level ?? id.level} · ${element(you?.tribe ?? id.element)}</small></div></div>
       ${you ? hp(you.hp, you.maxHp, you.hp / you.maxHp < 0.3 ? 'low' : '') : '<div class="sub">Waiting for your field body</div>'}
-      <div class="d-chain">CHAIN <b>${you?.chain ?? 0}</b><span>×${SF.chainMultiplier(you?.chain ?? 0).toFixed(2)}</span><small>${you?.hand ? 'HAND · SHIELDED' : you?.frozen ? 'PROGRAM · FROZEN' : you?.down ? 'DOWN' : 'FIELD ACTIVE'}</small>${you && you.barrier > 0 ? `<span class="barrier">BARRIER x${you.barrier}</span>` : ''}</div>${grace}`);
+      <div class="d-chain">CHAIN <b>${you?.chain ?? 0}</b><span>×${SF.chainMultiplier(you?.chain ?? 0).toFixed(2)}</span><small>${you?.hand ? 'HAND · SHIELDED' : you?.frozen ? 'PROGRAM · FROZEN' : you?.down ? 'DOWN' : 'FIELD ACTIVE'}</small>${you && you.barrier > 0 ? `<span class="barrier">BARRIER x${you.barrier}</span>` : ''}${you && you.stunMs > 0 ? `<span class="status">STUN ${(you.stunMs / 1000).toFixed(1)}s</span>` : ''}
+      ${you && you.chillMs > 0 ? `<span class="status">FROZEN ${(you.chillMs / 1000).toFixed(1)}s</span>` : ''}
+      ${you && you.burn ? `<span class="status">BURN ${you.burn.ticks}x${you.burn.damage}</span>` : ''}</div>${grace}`);
     this.el.low!.classList.toggle('on', !!you && you.hp / Math.max(1, you.maxHp) < 0.3);
     this.el.ward!.classList.toggle('on', v.warded);
     this.paint('ward', v.warded ? 'LINK WARD · Two banded players must stand on neighbouring files for damage to land.' : '');
@@ -172,10 +174,11 @@ export class DuelUi {
   }
 
   private portrait(tokenId: number | undefined, tribe: keyof typeof SF.SF_NAMES): string {
+    // ?v= busts the browser cache, same as the HUD: the face behind a token id outlived its URL once already.
     // The plate shows the collection's illustration, not the model's turntable sheet: a face you
     // recognise from the market, in the corner you look at when you want to know who is fighting.
     return tokenId !== undefined && Number.isInteger(tokenId) && tokenId >= 1 && tokenId <= 1969
-      ? `<span class="portrait art" style="background-image:url(/art/${tokenId}.png)" role="img" aria-label="Chog #${tokenId}"></span>`
+      ? `<span class="portrait art" style="background-image:url(/art/${tokenId}.webp?v=${BUILD_VERSION})" role="img" aria-label="Chog #${tokenId}"></span>`
       : `<span class="portrait glyph">${ELEMENT_ICON[tribe] ?? ''}</span>`;
   }
 
@@ -203,7 +206,7 @@ export class DuelUi {
       const near = !!you && !you.down && !you.frozen && !you.hand && Math.abs(a.file - you.file) === 1;
       return `<div class="party-row ${a.down ? 'down' : ''}" style="--c:${colour(a.tribe)}">
         ${this.portrait(token, a.tribe)}<div class="party-info"><b>${esc(a.name)}</b><small>${token === undefined ? 'NFT identity pending' : `CHOG #${token}`} · ${panelName(a)} · ${element(a.tribe)}</small>
-        ${hp(a.hp, a.maxHp)}<small>${a.down ? `DOWN · ${(a.downLeft / 1000).toFixed(1)}s` : a.shielded ? 'HAND · SHIELDED' : a.reviving ? `COVER ${pct(a.reviving.fraction * 100)}` : a.frozen ? 'PROGRAM · FROZEN' : `CHAIN ${a.chain}`}</small></div>
+        ${hp(a.hp, a.maxHp)}<small>${a.down ? `DOWN · ${(a.downLeft / 1000).toFixed(1)}s` : a.shielded ? 'HAND · SHIELDED' : a.reviving ? `COVER ${pct(a.reviving.fraction * 100)}` : a.frozen ? 'PROGRAM · FROZEN' : `CHAIN ${a.chain}`}</small>${a.stunMs > 0 || a.chillMs > 0 || a.burn ? `<small class="status">${[a.stunMs > 0 ? `STUN ${(a.stunMs / 1000).toFixed(1)}s` : '', a.chillMs > 0 ? `FROZEN ${(a.chillMs / 1000).toFixed(1)}s` : '', a.burn ? `BURN ${a.burn.ticks}x${a.burn.damage}` : ''].filter(Boolean).join(' · ')}</small>` : ''}</div>
         ${a.down ? `<button data-cover="${esc(a.id)}" ${near ? '' : 'disabled'} title="${near ? 'Hold to cover; release to cancel' : 'Move to a neighbouring file'}">COVER<small>HOLD</small></button>` : ''}</div>`;
     }).join('');
     // A party of one is not a fact the fight needs on screen: the panel exists for the bodies beside
@@ -234,7 +237,9 @@ export class DuelUi {
   private panelGrid(warnings: readonly SF.Panel[], allLanes = true): string {
     const v = this.view;
     const files = v?.boss.cols ?? SF.MIN_COLS;
-    const lanes = Array.from({ length: allLanes ? SF.LANES : SF.PLAYER_LANES }, (_, i) => i + (allLanes ? 0 : SF.FIRST_PLAYER_LANE));
+    const depth = v?.boss.lanes ?? SF.LANES;
+    const home = v?.pvp ? depth - SF.PVP_HALF : SF.FIRST_PLAYER_LANE;
+    const lanes = Array.from({ length: allLanes ? depth : depth - home }, (_, i) => i + (allLanes ? 0 : home));
     const cells = lanes.flatMap((lane) => Array.from({ length: files }, (_, file) => {
       const danger = warnings.some((p) => p.file === file && p.lane === lane);
       const mine = v?.you?.file === file && v.you.lane === lane;
@@ -293,7 +298,7 @@ export class DuelUi {
     const preview = Math.round(hand ? hand.might * SF.chainMultiplier(chainNow + links) : 0);
     const program = hand ? `<div class="cs-queue">${qcards || '<p>Pick your first card to choose this turn’s element.</p>'}</div>
       ${recipe ? `<div class="cs-fusion">FUSION READY · ${esc(recipe.result)}</div>` : ''}
-      <div class="cs-sum"><b>${num(hand.might)}</b> RAW MIGHT <small>Might before the multipliers the preview prices.</small><span>${hand.left} PICKS LEFT · ${SF.CLASS_LABEL[hand.top]} · ${hand.gigaSpent ? 'GIGA SPENT' : 'GIGA NOT SPENT'}</span><span class="cs-preview">PREVIEW ≈ ${num(canPrice && bossEl && selected.length ? total : preview)} DAMAGE${counter && selected.length ? ' · COUNTER ×2' : ''}${guard > 0 && selected.length ? ` · GUARD -${Math.round(guard * 100)}%` : ''}${linkMult > 1 && selected.length ? ` · LINK ×${linkMult.toFixed(2)}` : ''}${crit > 0 && selected.length ? ` · CRIT ${pct(crit)}` : ''}${links ? ` · ${links} RESONANCE LINK${links > 1 ? 'S' : ''}` : ''}</span></div>
+      <div class="cs-sum"><b>${num(hand.might)}</b> RAW MIGHT <small>Might before the multipliers the preview prices.</small><span>${hand.left} PICKS LEFT · ${SF.CLASS_LABEL[hand.top]} · ${hand.gigaSpent ? 'GIGA SPENT' : 'GIGA NOT SPENT'}</span><span class="cs-preview">PREVIEW ≈ ${num(canPrice && bossEl && selected.length ? total : preview)} DAMAGE${counter && selected.length ? ' · COUNTER ×2' : ''}${guard > 0 && selected.length ? ` · GUARD -${Math.round(guard * 100)}%` : ''}${linkMult > 1 && selected.length ? ` · LINK ×${linkMult.toFixed(2)}` : ''}${crit > 0 && selected.length ? ` · CRIT ${pct(crit)}` : ''}${atk > 1 && selected.length ? ` · ATK ×${SF.attackScale(atk).toFixed(2)}` : ''}${links ? ` · ${links} RESONANCE LINK${links > 1 ? 'S' : ''}` : ''}</span></div>
       <div class="cs-btns"><button data-act="undo" ${selected.length && open ? '' : 'disabled'}>UNDO <small>BACKSPACE</small></button><button data-act="clear" ${selected.length && open ? '' : 'disabled'}>CLEAR <small>C</small></button><button class="exe" data-act="execute" ${open ? '' : 'disabled'}>${selected.length ? 'EXECUTE' : 'RETURN TO FIELD'} <small>ENTER</small></button></div>` :
       `<div class="cs-wait"><b>${this.over ? 'Take your result receipt on the field.' : 'Dodge while the Charge fills.'}</b><p>Every clean dodge banks Charge. The server deals your next Hand automatically.</p></div>`;
     const lock = hand?.lock ? element(hand.lock) : 'UNLOCKED / NULL';
@@ -356,8 +361,10 @@ export class DuelUi {
     const blocked = this.over || !you || you.down || (you.frozen && !you.hand?.open);
     this.root.querySelectorAll<HTMLButtonElement>('[data-dir]').forEach((b) => {
       const dir = b.dataset.dir;
+      const lanes = this.view?.boss.lanes ?? SF.LANES;
+      const lo = this.view?.pvp ? lanes - SF.PVP_HALF : SF.FIRST_PLAYER_LANE;
       b.disabled = blocked || dir === 'left' && you!.file === 0 || dir === 'right' && you!.file === this.view!.boss.cols - 1
-        || dir === 'back' && you!.lane === SF.FIRST_PLAYER_LANE || dir === 'forward' && you!.lane === SF.LANES - 1;
+        || dir === 'back' && you!.lane === lo || dir === 'forward' && you!.lane === lanes - 1;
     });
     // One owner of the pad's dead state. Two sources of truth means the pad greyed while the field
     // is live, or lit while every step is refused — both read as "travado".
@@ -396,6 +403,8 @@ export class DuelUi {
 
   event(e: SF.FieldEvent): void {
     const owner = 'owner' in e ? this.view?.players.find((p) => p.id === e.owner)?.name ?? 'CHOG' : '';
+    const targetId: string | undefined = 'target' in e ? e.target : undefined;
+    const target = targetId ? this.view?.players.find((p) => p.id === targetId)?.name ?? null : null;
     let text = '';
     switch (e.type) {
       case 'shot-fired': text = `${owner} · ${SF.battleCard(e.cardId)?.name ?? e.cardId} · ${e.damage} shot might${e.counter ? ' · COUNTER' : ''}`; break;
@@ -412,11 +421,11 @@ export class DuelUi {
       case 'lost': text = `${owner} · LOST`; break;
       case 'bonus-card': text = `${owner} · BONUS CARD BANKED`; break;
       case 'drain': text = `${owner} · +${e.amount} INTEGRITY`; break;
-      case 'stun': text = `RIFT STUNNED · ${e.ms}ms`; break;
+      case 'stun': text = `${target ?? 'RIFT'} STUNNED · ${e.ms}ms`; break;
       case 'knock': text = `RIFT BREAK · FILE ${e.file + 1}`; break;
-      case 'burn': text = `RIFT BURNING · ${e.ticks}x${e.damage}`; break;
-      case 'burn-tick': text = `BURN · -${e.damage} (${e.left} left)`; break;
-      case 'freeze': text = `RIFT FROZEN · ${(e.ms / 1000).toFixed(1)}s SLOW`; break;
+      case 'burn': text = `${target ?? 'RIFT'} BURNING · ${e.ticks}x${e.damage}`; break;
+      case 'burn-tick': text = `${target ?? 'RIFT'} BURN · -${e.damage} (${e.left} left)`; break;
+      case 'freeze': text = `${target ?? 'RIFT'} FROZEN · ${(e.ms / 1000).toFixed(1)}s SLOW`; break;
       case 'barrier': text = `${owner} · BARRIER x${e.charges}`; break;
       case 'ward': text = `${owner} · WARD ABSORBED (${e.left} left)`; break;
       case 'guard-break': text = 'RIFT GUARD BROKEN'; break;

@@ -96,7 +96,9 @@ export function buildCity(layout: CityLayout, art: DistrictArt): CityScene {
 
   WU.uGlow.value = NIGHT_GLOW[sector] ?? 1;
 
-  const B = new ChunkBatcher({ chunk: 40 });
+    // 80-unit chunks: a district is 312 wide and the camera sees most of it anyway,
+  // so four fat meshes beat sixteen thin ones. Halves the draw calls twice over.
+  const B = new ChunkBatcher({ chunk: 160 });
   const env: BuildEnv = { B, art, sector, sign: (l) => signs.uv.get(l) ?? null };
 
   buildGround(B, layout, art);

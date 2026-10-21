@@ -11,6 +11,7 @@ import type {
 } from './sf/index.ts';
 import type { QuestReward } from './quest.ts';
 import type { SectorId, SectorState } from './wave.ts';
+import type { HouseLayout } from './housing.ts';
 
 export interface RemotePlayer {
   id: string;
@@ -152,6 +153,26 @@ export interface TradeMsg {
   tradeId?: string;
 }
 
+/**
+ * The housing envelope: the room to draw, the stock to place, and the
+ * invitation to come over. Layout pushes go to everyone inside the room,
+ * so a guest watches the owner redecorate live.
+ */
+export interface HouseMsg {
+  t: 'house';
+  /** The room to draw: on enter, on visit, and live as the owner edits. */
+  layout?: HouseLayout;
+  /** Whose room it is, by save key. */
+  of?: string;
+  /** Stock to place, for the owner's eyes only. */
+  owned?: Record<string, number>;
+  /** Someone asked this player to come over. */
+  invite?: { from: string; name: string };
+  /** A line for the player: it was sent, declined, expired, refused. */
+  notice?: string;
+  refused?: string;
+}
+
 export interface TradeNotice {
   t: 'trade';
   action: 'incoming' | 'accepted' | 'cancelled' | 'refused';
@@ -227,6 +248,17 @@ export interface DuelStartMsg {
   moves: { id: string; name: string; read: string }[];
   /** PvP: the other Chog, so the client can build its model once, at build. */
   rival?: { tokenId: number; name: string; element: Element; traits: Record<string, string> };
+}
+
+/**
+ * PvP: the other Chog, arriving late. The first boot on the field starts faceless —
+ * its start went out before the rival stepped on — so the join pushes this to
+ * everyone already standing. Same payload as the start rival.
+ */
+export interface DuelRivalMsg {
+  t: 'duel';
+  kind: 'rival';
+  rival: NonNullable<DuelStartMsg['rival']>;
 }
 
 export interface DuelTickMsg {
@@ -370,8 +402,9 @@ export interface ProfileStats {
 
 /** One name on one board of the RANKS tab. Every figure is server-computed. */
 export interface RankRow {
-  tokenId: number;
-  /** The callsign while they are online, `#id` once they leave. */
+  /** The save key: a wallet address, or `token:<id>` for a visitor without one. */
+  key: string;
+  /** The callsign while they are online, a short wallet or `#id` once they leave. */
   name: string;
   level: number;
   xp: number;
@@ -383,13 +416,13 @@ export interface RankRow {
   lineRegion: string;
 }
 
-/** The RANKS tab: four boards plus the reader's own token, for the highlight. */
+/** The RANKS tab: four boards plus the reader's own save key, for the highlight. */
 export interface RanksView {
   level: RankRow[];
   pvp: RankRow[];
   chog: RankRow[];
   line: RankRow[];
-  you: number;
+  you: string;
 }
 
 /** One entry in the Library: what the player is allowed to know about a fusion. */
@@ -496,6 +529,8 @@ export interface ShopView {
   factor: number;
   cards: ShopLine[];
   supply: ShopLine[];
+  /** The furniture counter: fixed catalogue, fixed price, never rotates. */
+  furniture: ShopLine[];
   refreshesIn: string;
   wav: number;
 }

@@ -4,7 +4,8 @@ import {
   HITSTUN_MS,
   LANES,
   MIN_COLS,
-  ENEMY_LANES,
+  PVP_HALF,
+  PVP_LANES,
   SHOT_FLIGHT_MS,
   bossPhase,
   clampFile,
@@ -44,6 +45,7 @@ import {
   STUN_CAP_MS,
   STUN_MS,
   HAND_HOLD_MS,
+  REOPEN_MS,
   DEFEAT_LOCKOUT_MS,
   enemyVolleyDamage,
   chargeMsFor,
@@ -198,6 +200,14 @@ export interface DuelBody {
   invuln: number;
   /** BARRIER charges: each eats one landed hit, then it is gone. */
   barrier: number;
+  /**
+   * Status from a rival's program, PvP only. Stun locks the hand shut, freeze slows the
+   * charge to a crawl, burn ticks away on its own clock. The body can always still step:
+   * being locked out of firing is the punishment, being unable to move would be the burial.
+   */
+  stun: number;
+  freeze: number;
+  burn: { ticks: number; damage: number; acc: number } | null;
 
   rank: RankStats;
   /** Wave drained (or, on a void card, pushed up) by the cards this body fired. */
@@ -303,7 +313,7 @@ export function openSession(args: OpenArgs): DuelSession {
     file,
     cols,
   });
-  const field = makeField(boss, cols);
+  const field = makeField(boss, cols, args.boss.pvp ? PVP_LANES : LANES);
 
   // A FRONT walls a file off for the whole fight. Never its own file — that would make it
   // unhittable by anything but a Sword, which is not a wall, it is a wall with teeth.
@@ -403,7 +413,7 @@ export function addBody(s: DuelSession, a: JoinArgs): DuelBody {
     hp: a.stats.hp,
     maxHp: a.stats.hp,
     file: clampFile(Math.floor(s.field.cols / 2), s.field.cols),
-    lane: side === 1 ? 0 : LANES - 1,
+    lane: side === 1 ? 0 : s.field.lanes - 1,
     side,
     deck: [...(a.deck ?? [])],
     basic: a.basic ?? basicCardFor(a.tribe, { PWR: 4, SPD: 4 }),
@@ -427,6 +437,9 @@ export function addBody(s: DuelSession, a: JoinArgs): DuelBody {
     hold: null,
     invuln: 0,
     barrier: 0,
+    stun: 0,
+    freeze: 0,
+    burn: null,
     rank: emptyRank(),
     waveDrained: 0,
     link: null,
@@ -501,25 +514,35 @@ export function drainEvents(s: DuelSession): FieldEvent[] {
  * Two axes, because the field is a grid and some attacks are answered by stepping *back* rather
  * than sideways: a BEAM owns the whole row under your feet, and the only answer is the far lane.
  */
+/**
+ * The lanes a side owns. PvE keeps the old 3/2 split (the boss patterns are tuned
+ * against it); PvP splits the six lanes 3/3, so both bodies dodge in the same room.
+ */
+const halfLo = (s: DuelSession, side: 0 | 1): number =>
+  s.pvp ? (side === 1 ? 0 : PVP_HALF) : FIRST_PLAYER_LANE;
+const halfHi = (s: DuelSession, side: 0 | 1): number =>
+  s.pvp ? (side === 1 ? PVP_HALF - 1 : s.field.lanes - 1) : LANES - 1;
 export function step(s: DuelSession, id: string, dir: StepDir): boolean {
   const b = byId(s, id);
   // A program in flight still locks the boots; an open screen does not. Stepping out of
-  // the safe room closes it — the dealt hand stays on the table, the charge restarts from
-  // zero so the screen cannot snap straight back open, and the shield does not follow.
+  // the safe room closes it — the dealt hand stays on the table, the shield does not
+  // follow, and the charge drops to a short beat short of full (`REOPEN_MS`) instead of
+  // zero. Zero punished the dodge itself: the screen still cannot snap straight back open,
+  // but stepping off a telegraph no longer forfeits the whole calm you just earned.
   // Firing stays locked by `canAct` wherever pulling a trigger is concerned; this only
   // ever opens the body, never the trigger.
   if (!b || b.down || b.program !== null) return false;
   if (b.handOpen) {
     b.handOpen = false;
     b.handMs = 0;
-    b.charge = 0;
+    b.charge = Math.max(0, b.chargeMs - REOPEN_MS);
   }
   const wasFile = b.file;
   const wasLane = b.lane;
   if (dir === 'left') b.file = clampFile(b.file - 1, s.field.cols);
   else if (dir === 'right') b.file = clampFile(b.file + 1, s.field.cols);
-  else if (dir === 'back') b.lane = Math.max(b.side === 1 ? 0 : FIRST_PLAYER_LANE, b.lane - 1);
-  else b.lane = Math.min(b.side === 1 ? ENEMY_LANES - 1 : LANES - 1, b.lane + 1);
+  else if (dir === 'back') b.lane = Math.max(halfLo(s, b.side), b.lane - 1);
+  else b.lane = Math.min(halfHi(s, b.side), b.lane + 1);
   if (b.file === wasFile && b.lane === wasLane) return false;
   // A dodge out of live danger earns a beat of grace: stepping off a panel that is marked right
   // now starts a short invulnerability window, so the read forgives the animation instead of
@@ -867,6 +890,10 @@ function raiseHazard(s: DuelSession, move: BossMove, panels: ReturnType<typeof m
     on,
     owner,
     drain,
+    stunMs: 0,
+    freezeMs: 0,
+    burn: null,
+    barrier: false,
   };
   s.field.hazards = [...s.field.hazards.filter((h) => h.owner !== owner), hazard];
   s.boss.next = ms;
@@ -896,9 +923,10 @@ export const PVP_DOWN_MS = 1500;
  * the rival is standing on. Dodge the file or the lane; standing in it is consent.
  *
  * Firing into a live warning is still a counter — double damage and a bonus card — and a
- * DRAIN card still pays its share when the warning lands. Everything else a card says
- * (STUN, BURN, FREEZE, BREAK, SWORD) is damage-only here: there is no boss clock to slow
- * and no guard to strip, only the other Chog.
+ * DRAIN card still pays its share when the warning lands. Status rides along too, and lands
+ * with the hit: STUN locks the rival's hand shut, FREEZE slows their charge to a crawl,
+ * BURN ticks away, and a BARRIER card arms the shooter when the warning connects. No card
+ * in the collection says BREAK or SWORD, so those stay damage-only by absence, not by rule.
  */
 function pvpProgram(s: DuelSession, b: DuelBody, cards: BattleCard[]): void {
   const rival = s.players.find((p) => p.id !== b.id && !p.down) ?? s.players.find((p) => p.id !== b.id);
@@ -906,6 +934,10 @@ function pvpProgram(s: DuelSession, b: DuelBody, cards: BattleCard[]): void {
   const counter = s.field.hazards.some((h) => h.owner !== b.id);
   let damage = 0;
   let drain = 0;
+  let stunMs = 0;
+  let freezeMs = 0;
+  let burn = false;
+  let barrier = false;
   const files = new Set<number>();
   for (const c of cards) {
     const pre = previewDamage(c, {
@@ -922,6 +954,10 @@ function pvpProgram(s: DuelSession, b: DuelBody, cards: BattleCard[]): void {
     b.lastElement = pre.element;
     b.rank.maxChain = Math.max(b.rank.maxChain, pre.run);
     if (c.kind === 'drain') drain = Math.max(drain, b.stats.drain);
+    if (c.kind === 'stun') stunMs = Math.max(stunMs, STUN_MS);
+    if (c.kind === 'freeze') freezeMs = Math.max(freezeMs, FREEZE_MS);
+    if (c.kind === 'burn') burn = true;
+    if (c.kind === 'barrier') barrier = true;
     for (const f of coverFiles(c.shape, b.file, s.field.cols)) files.add(f);
     b.waveDrained += c.waveDrain;
     s.wave += c.waveDrain;
@@ -943,6 +979,9 @@ function pvpProgram(s: DuelSession, b: DuelBody, cards: BattleCard[]): void {
   s.field.hazards = [...s.field.hazards.filter((h) => h.owner !== b.id), {
     panels, files: list, left: ms, total: ms, move: 'pvp-program', label: lead.name,
     damage: Math.max(1, damage), on, owner: b.id, drain,
+    stunMs, freezeMs,
+    burn: burn ? { ticks: BURN_TICKS, damage: Math.max(1, Math.round(damage * BURN_SHARE)) } : null,
+    barrier,
   }];
   emit(s, {
     type: 'telegraph',
@@ -1049,6 +1088,32 @@ function resolveStrike(s: DuelSession, h: Hazard): void {
     p.rank.abacks += 1;
     p.hold = null;
     emit(s, { type: 'took-hit', owner: p.id, damage, file: p.file });
+    // Status lands with the hit — on whoever is still standing in it, never on a dodge
+    // and never on a body that just went down. Boss volleys carry none of this.
+    if (p.hp > 0) {
+      if (h.stunMs > 0) {
+        const add = Math.min(h.stunMs, STUN_CAP_MS - p.stun);
+        if (add > 0) {
+          p.stun += add;
+          emit(s, { type: 'stun', owner: h.owner ?? p.id, ms: add, target: p.id });
+        }
+      }
+      if (h.freezeMs > 0) {
+        p.freeze = Math.max(p.freeze, h.freezeMs);
+        emit(s, { type: 'freeze', owner: h.owner ?? p.id, ms: h.freezeMs, target: p.id });
+      }
+      if (h.burn) {
+        p.burn = { ticks: h.burn.ticks, damage: h.burn.damage, acc: 0 };
+        emit(s, { type: 'burn', owner: h.owner ?? p.id, ticks: h.burn.ticks, damage: h.burn.damage, target: p.id });
+      }
+      if (h.barrier && h.owner) {
+        const attacker = byId(s, h.owner);
+        if (attacker && !attacker.down && attacker.barrier < BARRIER_CAP) {
+          attacker.barrier += 1;
+          emit(s, { type: 'barrier', owner: attacker.id, charges: attacker.barrier });
+        }
+      }
+    }
     if (p.hp <= 0) down(s, p);
   }
   s.field.hazards = s.field.hazards.filter((x) => x !== h);
@@ -1086,6 +1151,10 @@ function down(s: DuelSession, p: DuelBody): void {
   p.handOpen = false;
   p.program = null;
   p.hold = null;
+  // Going down ends every ailment too: the stand-up is a clean slate, not a burning one.
+  p.stun = 0;
+  p.freeze = 0;
+  p.burn = null;
   // Going down costs the run its element chain: you do not get to keep a run you did not finish.
   p.chain = 0;
   p.lastElement = null;
@@ -1176,6 +1245,21 @@ export function tick(s: DuelSession, dt: number): void {
 
   for (const p of s.players) {
     if (p.invuln > 0) p.invuln = Math.max(0, p.invuln - ms);
+    // Status clocks run on server time like everything else. Burn can finish a body.
+    if (p.stun > 0) p.stun = Math.max(0, p.stun - ms);
+    if (p.freeze > 0) p.freeze = Math.max(0, p.freeze - ms);
+    const bodyBurn = p.burn;
+    if (bodyBurn && !p.down) {
+      bodyBurn.acc += ms;
+      while (bodyBurn.acc >= BURN_EVERY_MS && bodyBurn.ticks > 0 && !s.over) {
+        bodyBurn.acc -= BURN_EVERY_MS;
+        bodyBurn.ticks -= 1;
+        p.hp = Math.max(0, p.hp - bodyBurn.damage);
+        emit(s, { type: 'burn-tick', damage: bodyBurn.damage, left: bodyBurn.ticks, target: p.id });
+        if (p.hp <= 0) down(s, p);
+      }
+      if (bodyBurn.ticks <= 0) p.burn = null;
+    }
 
     if (p.down) {
       p.downLeft -= ms;
@@ -1235,8 +1319,9 @@ export function tick(s: DuelSession, dt: number): void {
     // would turn every wind-up into a free miss, which is the whole reason the safe room has a
     // time limit instead of a trigger. Holding cover for a downed partner costs the same time:
     // the rescuer has stopped shooting, and the charge is what says so.
-    if (!s.field.hazards.some((h) => h.owner !== p.id) && !p.hold) {
-      p.charge += ms;
+    if (!s.field.hazards.some((h) => h.owner !== p.id) && !p.hold && p.stun <= 0) {
+      // Freeze does not stop the charge, it just makes it crawl.
+      p.charge += ms * (p.freeze > 0 ? FREEZE_SLOW : 1);
       if (p.charge >= p.chargeMs) openHand(s, p);
     }
   }
@@ -1301,7 +1386,7 @@ function handDice(s: DuelSession, id: string): () => number {
  * room and starts the clock that pushes you back out of it.
  */
 export function openHand(s: DuelSession, p: DuelBody): void {
-  if (p.handOpen || p.down || p.program) return;
+  if (p.handOpen || p.down || p.program || p.stun > 0) return;
   if (!p.hand) dealHand(s, p);
   p.handOpen = true;
   p.handMs = 0;
@@ -1387,7 +1472,9 @@ function bossView(s: DuelSession): BossView {
     guard: guardOf(s),
     burn: s.boss.burn ? { ticks: s.boss.burn.ticks, damage: s.boss.burn.damage } : null,
     freezeMs: Math.max(0, Math.round(s.boss.freeze)),
+    stunMs: Math.max(0, Math.round(s.boss.stun)),
     blocked: s.field.blocked,
+    lanes: s.field.lanes,
     cols: s.field.cols,
     node: s.boss.node,
     training: s.boss.training,
@@ -1415,9 +1502,11 @@ function rivalView(s: DuelSession, rival: DuelBody | null, mirror: (lane: number
     lane: mirror(rival.lane),
     phase: phaseOf(rival.hp, rival.maxHp),
     guard: 0,
-    burn: null,
-    freezeMs: 0,
+    burn: rival.burn ? { ticks: rival.burn.ticks, damage: rival.burn.damage } : null,
+    freezeMs: Math.max(0, Math.round(rival.freeze)),
+    stunMs: Math.max(0, Math.round(rival.stun)),
     blocked: null,
+    lanes: s.field.lanes,
     cols: s.field.cols,
     node: false,
     training: false,
@@ -1442,6 +1531,9 @@ function playerView(s: DuelSession, p: DuelBody): PlayerView {
     downLeft: Math.max(0, Math.round(p.downLeft)),
     reviving: p.hold ? { target: p.hold.target, fraction: p.hold.ms / REVIVE_HOLD_MS } : null,
     frozen: isFrozen(p),
+    stunMs: Math.max(0, Math.round(p.stun)),
+    chillMs: Math.max(0, Math.round(p.freeze)),
+    burn: p.burn ? { ticks: p.burn.ticks, damage: p.burn.damage } : null,
     barrier: p.barrier,
     side: p.side,
   };
@@ -1513,7 +1605,7 @@ function youView(s: DuelSession, p: DuelBody): YouView {
 export function viewOf(s: DuelSession, youId?: string): DuelView {
   const you = youId ? byId(s, youId) : null;
   // Both screens read self-near, rival-far: side 1 sees every lane mirrored.
-  const mirror = you && s.pvp && you.side === 1 ? (lane: number): number => LANES - 1 - lane : (lane: number): number => lane;
+  const mirror = you && s.pvp && you.side === 1 ? (lane: number): number => s.field.lanes - 1 - lane : (lane: number): number => lane;
   const rival = s.pvp && you ? (s.players.find((p) => p.id !== you.id) ?? null) : null;
   const owners = new Set(s.players.map((p) => p.owner));
   // Each screen shows its own incoming warning; the floor may hold two.

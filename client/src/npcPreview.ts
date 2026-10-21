@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { loadChogNFT, type PartsModel } from './app/chogLoader.ts';
+import { npcLookFor } from './app/npcLooks.ts';
 
 // Temporary NPC lineup: every city NPC with its exact deterministic traits.
 // ?page=0&per=8 — deleted after the NPC audit.
@@ -8,6 +9,8 @@ const MODEL: PartsModel = {
   partsUrl: '/models/trait-parts.json',
   colorsUrl: '/models/trait-colors.json',
   skinsUrl: '/models/skins.json',
+  skullBaseUrl: '/models/chog-skull.glb',
+  skullSkinsUrl: '/models/skull-skins.json',
 };
 
 const IDS = ['a-dealer','a-nurse','a-operator','a-scribe','a-archivist','a-watchman','a-baker','a-noodle','a-clock','a-elder','a-gardener','a-fisher','a-engineer','a-scrapper','a-hertz','a-courier','v-dealer','v-nurse','v-operator','v-scribe','v-archivist','v-watchman','v-noodle','v-hacker','v-spire','v-vendor','v-driver','v-roof','v-hertz','h-dealer','h-nurse','h-operator','h-scribe','h-archivist','h-watchman','h-tea','h-gardener','h-ferryman','h-foreman','h-vendor','h-wanderer','h-hertz'];
@@ -21,6 +24,7 @@ const hashOf = (s: string): number => {
 const q = new URLSearchParams(location.search);
 const page = Number(q.get('page') ?? 0);
 const per = Number(q.get('per') ?? 8);
+const yaw = Number(q.get('yaw') ?? 0);
 const batch = IDS.slice(page * per, page * per + per);
 
 const index = (await fetch(MODEL.partsUrl).then((r) => r.json())) as { parts: Record<string, Record<string, string>> };
@@ -54,7 +58,7 @@ await Promise.all(
       const keys = Object.keys(obj);
       return keys[Math.floor(rnd() * keys.length)]!;
     };
-    const traits = {
+    const traits = npcLookFor(id) ?? {
       Skin: pick(skins),
       Body: pick(index.parts.Body ?? {}),
       Head: pick(index.parts.Head ?? {}),
@@ -66,6 +70,7 @@ await Promise.all(
     const cz = (Math.floor(i / COLS) - 1) * DZ;
     chog.root.position.x += cx;
     chog.root.position.z += cz;
+    chog.root.rotation.y = yaw;
     scene.add(chog.root);
     const tag = document.createElement('div');
     tag.className = 'tag';

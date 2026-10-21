@@ -121,7 +121,7 @@ export function itemPrice(def: ItemDef, factor: number): number {
 // ---------------------------------------------------------------------------
 
 export interface ShopLine {
-  kind: 'card' | 'item';
+  kind: 'card' | 'item' | 'furniture';
   /** Card id or ItemId. */
   stockId: string;
   name: string;

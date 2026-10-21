@@ -2,12 +2,14 @@ import * as THREE from 'three';
 import { hullMaterial, loadChogNFT, type PartsModel } from './app/chogLoader.ts';
 
 // Temporary trait-part lineup: base chog wearing one trait value per cell.
-// ?cat=Head|Body|Eyes|Mouth&page=0&per=12 — deleted after the audit.
+// ?cat=Head|Body|Eyes|Mouth&page=0&per=12&form=Skull&skin=White — deleted after the audit.
 const MODEL: PartsModel = {
   baseUrl: '/models/chog-base.glb',
   partsUrl: '/models/trait-parts.json',
   colorsUrl: '/models/trait-colors.json',
   skinsUrl: '/models/skins.json',
+  skullBaseUrl: '/models/chog-skull.glb',
+  skullSkinsUrl: '/models/skull-skins.json',
 };
 
 const q = new URLSearchParams(location.search);
@@ -18,7 +20,28 @@ const per = Number(q.get('per') ?? 8);
 const index = (await fetch(MODEL.partsUrl).then((r) => r.json())) as {
   parts: Record<string, Record<string, string>>;
 };
-const values = Object.keys(index.parts[cat] ?? {});
+let values: string[] = Object.keys(index.parts[cat] ?? {});
+let tokenOf = (_v: string): number | undefined => undefined;
+let oneTraits: Record<string, string> | null = null;
+if (cat === 'Oneoff') {
+  const oo = (await fetch('/models/trait-oneoff.json').then((r) => r.json())) as {
+    byToken: Record<string, string>;
+    ones: Record<string, unknown>;
+  };
+  values = Object.keys(oo.ones);
+  const inv: Record<string, string> = {};
+  for (const [t, n] of Object.entries(oo.byToken)) inv[n] = t;
+  tokenOf = (v: string) => Number(inv[v]);
+  oneTraits = { Base: '1:1' };
+}
+let traitsOf = (_v: string): Record<string, string> | null => null;
+const tokensParam = q.get('tokens');
+if (tokensParam) {
+  const audit = (await fetch('/models/audit-tokens.json').then((r) => r.json())) as Record<string, Record<string, string>>;
+  values = tokensParam.split(',').map((s) => s.trim()).filter(Boolean);
+  traitsOf = (v: string) => audit[v] ?? {};
+  tokenOf = (v: string) => Number(v);
+}
 const batch = values.slice(page * per, page * per + per);
 
 const app = document.getElementById('app')!;
@@ -43,11 +66,20 @@ interface Cell { root: THREE.Group; tag: HTMLDivElement; label: string }
 const cells: Cell[] = [];
 await Promise.all(
   batch.map(async (value, i) => {
-    const chog = await loadChogNFT({ ...MODEL, traits: { [cat]: value } as Record<string, string> });
+    const extra: Record<string, string> = {};
+    if (q.get('form')) extra['Form'] = q.get('form')!;
+    if (q.get('skin')) extra['Skin'] = q.get('skin')!;
+    if (q.get('base')) extra['Base'] = q.get('base')!;
+    const chog = await loadChogNFT({
+      ...MODEL,
+      traits: (oneTraits ?? traitsOf(value) ?? { [cat]: value, ...extra }) as Record<string, string>,
+      tokenId: tokenOf(value),
+    });
     const cx = batch.length === 1 ? 0 : (i % COLS - (COLS - 1) / 2) * DX;
     const cz = (Math.floor(i / COLS) - 1) * DZ;
     chog.root.position.x += cx;
     chog.root.position.z += cz;
+    chog.root.rotation.y = Number(q.get('yaw') ?? 0);
     if (q.get('nohull')) chog.root.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (mesh.isMesh && mesh.material === hullMaterial) mesh.visible = false;
@@ -71,8 +103,8 @@ await Promise.all(
     scene.add(chog.root);
     const tag = document.createElement('div');
     tag.className = 'tag';
-    const file = index.parts[cat]![value] ?? '?';
-    tag.innerHTML = `${value}<small>${file}</small>`;
+    const file = cat === 'Oneoff' ? '1/1' : tokensParam ? `#${value}` : (index.parts[cat]![value] ?? '?');
+    tag.innerHTML = tokensParam ? `#${value}<small>token</small>` : `${value}<small>${file}</small>`;
     document.body.appendChild(tag);
     cells.push({ root: chog.root, tag, label: value });
   }),
@@ -84,7 +116,7 @@ const zoom = Number(q.get('zoom') ?? 1);
 const yaw = Number(q.get('yaw') ?? 0);
 {
   const r = (2 + rows * DZ * 0.85) / zoom;
-  camera.position.set(Math.sin(yaw) * r, 4.6 / zoom, Math.cos(yaw) * r);
+  camera.position.set(0, 4.6 / zoom, r);
 }
 camera.lookAt(0, 1.1, 0);
 

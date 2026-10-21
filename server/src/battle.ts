@@ -51,7 +51,7 @@ export interface DuelBossSpec {
   /** Capture the actual anomaly, not whichever boss occupies this sector next. */
   source?: Boss;
   /** A brawl: whose shadow this is, who asked for it, and what both sides locked. */
-  brawl?: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number };
+  brawl?: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerKey: string; rivalKey: string; wager: number };
 }
 
 export interface JoinSpec {
@@ -108,7 +108,7 @@ export class BattleSession {
   readonly archetype: SF.Archetype;
   readonly difficulty: number;
   readonly bossIdentity: string | null;
-  readonly brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number; told?: boolean } | null;
+  readonly brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerKey: string; rivalKey: string; wager: number; told?: boolean } | null;
   readonly cause: NonNullable<Boss['cause']>;
   /** When the field opened, so a bout the second pair never joins can dissolve. */
   readonly createdAt = Date.now();

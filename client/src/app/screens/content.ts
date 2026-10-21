@@ -183,7 +183,7 @@ export class HouseAd {
     ctx.shadowColor = '#ffb45e';
     ctx.shadowBlur = 40;
     ctx.fillStyle = '#fff3e0';
-    ctx.fillText('CHOG WAVES', W / 2, H * 0.4);
+    ctx.fillText('CHOG WAVE', W / 2, H * 0.4);
     ctx.shadowBlur = 0;
     ctx.font = '600 30px system-ui, "Segoe UI", sans-serif';
     ctx.fillStyle = '#ffd9b0';

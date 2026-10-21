@@ -52,9 +52,9 @@ const VOL_KEY = 'chog:music-vol';
 const XFADE_MS = 2000;
 const TICK_MS = 100;
 
-const clamp01 = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.55);
+const clamp01 = (v: number): number => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.35);
 
-let vol = 0.55;
+let vol = 0.35;
 try {
   const raw = localStorage.getItem(VOL_KEY);
   if (raw !== null) vol = clamp01(parseFloat(raw));

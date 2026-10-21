@@ -29,7 +29,6 @@ export interface Stats {
   wav: number;
   hp: number;
   hpMax: number;
-  laser: number;
 }
 
 export interface ToastSpec {
@@ -192,6 +191,7 @@ export class Hud {
     const col = ELEMENT_COLOUR[id?.element ?? 'void'] ?? 'var(--violet)';
     // The flat collection art first: it is the token's own face. The entered model's
     // snapshot covers tokens with no art file, and the glyph covers having neither.
+    // ?v= busts the browser cache: the face behind a token id outlived its URL once already.
     const artToken = id ? (id.foster ? 1 : id.tokenId) : null;
     const hasArt = artToken !== null && artToken >= 1 && artToken <= 1969;
     const pct = (a: number, b: number): number => Math.max(0, Math.min(100, (a / Math.max(1, b)) * 100));
@@ -199,7 +199,7 @@ export class Hud {
     el.innerHTML = `
       <div class="portrait">
         <div class="ring">
-          ${hasArt ? `<div class="img" style="background-image:url(/art/${artToken}.png)"></div>` : id?.face ? `<div class="img" style="background-image:url(${id.face})"></div>` : `<div class="glyph">${ELEMENT_ICON[id?.element ?? 'void'] ?? ''}</div>`}
+          ${hasArt ? `<div class="img" style="background-image:url(/art/${artToken}.webp?v=${BUILD_VERSION})"></div>` : id?.face ? `<div class="img" style="background-image:url(${id.face})"></div>` : `<div class="glyph">${ELEMENT_ICON[id?.element ?? 'void'] ?? ''}</div>`}
         </div>
         <div class="lv num">${s ? s.level : '–'}</div>
       </div>
@@ -208,8 +208,7 @@ export class Hud {
         <div class="psub num">${id ? (id.foster ? 'FOSTER SIGNAL' : `CHOG #${String(id.tokenId).padStart(4, '0')}`) : ''} · ${esc((id?.tribe ?? '').toUpperCase())}</div>
         <div class="meter hp"><i style="width:${s ? pct(s.hp, s.hpMax) : 100}%"></i><div class="tick"></div><span class="num">${s ? `${Math.round(s.hp)}/${Math.round(s.hpMax)}` : '—/—'}</span></div>
         <div class="meter xp" title="experience"><i style="width:${s ? pct(s.into, s.need) : 0}%"></i></div>
-        <div class="prow"><span class="wav num">${ICON.wav}${s ? s.wav.toLocaleString() : '0'}</span>
-          <div class="meter laser" style="flex:1" title="laser eyes"><i style="width:${s ? Math.round(s.laser * 100) : 0}%"></i></div></div>
+        <div class="prow"><span class="wav num">${ICON.wav}${s ? s.wav.toLocaleString() : '0'}</span></div>
       </div>`;
   }
 

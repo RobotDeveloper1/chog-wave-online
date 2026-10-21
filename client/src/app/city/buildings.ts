@@ -84,7 +84,7 @@ function wallFace(env: BuildEnv, lot: Lot, side: Side, rand: () => number): void
   const bw = f.len / nb;
   const variant = lot.seed % 3;
   const shopFront = front && !!lot.shop;
-  const gh = shopFront ? 3.9 : 3.4;
+  const gh = Math.min(shopFront ? 3.9 : 3.4, lot.h);
   const upper = Math.max(0, Math.round((lot.h - gh) / FLOOR));
   const fh = upper > 0 ? (lot.h - gh) / upper : 0;
   const door = doorBayOf(nb, lot);
@@ -472,8 +472,8 @@ function signBoard(env: BuildEnv, lot: Lot, nb: number): void {
   const bw = f.len / nb;
   const door = doorBayOf(nb, lot);
   const cx = door * bw + bw / 2;
-  const w = Math.min(f.len - 0.6, Math.max(4.2, bw * 2.2));
-  const y0 = lot.shop ? 4.15 : 3.7;
+  const w = Math.min(f.len * 0.62, Math.max(3.2, bw * 2.2));
+  const y0 = Math.min(lot.shop ? 4.15 : 3.7, lot.h - 1.5);
   const out = 0.82;
   env.B.quad('signs', at(f, cx - w / 2, y0, out), at(f, cx + w / 2, y0, out), at(f, cx + w / 2, y0 + 1.15, out), at(f, cx - w / 2, y0 + 1.15, out), uv, 0xffffff, 0, 0);
   // Two arms back to the wall, so the board is hung and not floating.
@@ -694,9 +694,10 @@ function warehouse(env: BuildEnv, lot: Lot, rand: () => number): void {
   const f = faceOf(lot, FRONT[lot.face]);
   const dw = Math.min(5, f.len * 0.4);
   const mid = f.len * (0.3 + rand() * 0.4);
-  const dp = at(f, mid, 2.2, 0.06);
-  B.box('solid', dp[0], dp[1], dp[2], f.nx ? 0.14 : dw, 4.4, f.nz ? 0.14 : dw, art.dark);
-  const lp = at(f, mid - dw / 2 - 0.9, 3.8, 0.3);
+  const dh = Math.min(4.4, h - 0.6);
+  const dp = at(f, mid, dh / 2, 0.06);
+  B.box('solid', dp[0], dp[1], dp[2], f.nx ? 0.14 : dw, dh, f.nz ? 0.14 : dw, art.dark);
+  const lp = at(f, mid - dw / 2 - 0.9, Math.min(3.8, h - 0.4), 0.3);
   B.box('solid', lp[0], lp[1], lp[2], 0.4, 0.25, 0.4, art.window, 1.4);
   if (lot.sign) signBoard(env, lot, Math.max(1, Math.round(f.len / BAY)));
   if (lot.roof === 'sawtooth') sawtoothRoof(env, lot, rand);

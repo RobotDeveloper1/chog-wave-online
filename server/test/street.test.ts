@@ -239,8 +239,8 @@ describe('talking and quests', () => {
 describe('the dungeons', () => {
   const xpFor = (lv: number): number => Math.round(28 * Math.pow(lv - 1, 1.6));
   /** Bring a token to a level, whatever XP its own traits arrived with. */
-  const toLevel = (world: InstanceType<typeof World>, tokenId: number, lv: number): void => {
-    world.profiles.grant(tokenId, { xp: Math.max(0, xpFor(lv) - world.profiles.doc(tokenId).xp) });
+  const toLevel = (world: InstanceType<typeof World>, key: string, lv: number): void => {
+    world.profiles.grant(key, { xp: Math.max(0, xpFor(lv) - world.profiles.doc(key).xp) });
   };
 
   it('stay shut to a newcomer, and say why', () => {
@@ -256,7 +256,7 @@ describe('the dungeons', () => {
 
   it('opens from wherever you are standing: a fold is data, not a door', () => {
     const { world, p, id } = fresh(4031);
-    toLevel(world, p.tokenId, 2);
+    toLevel(world, p.saveKey, 2);
     stand(p, anchor('a-operator'), 40);
     // The gate is how you find the folds the first time; it is not a toll collected every run.
     const res = world.loop(id, { action: 'area.open', dungeonId: 'd-ember' });
@@ -268,7 +268,7 @@ describe('the dungeons', () => {
 
   it('open in order: the level is not enough without the dungeon before it', () => {
     const { world, p, id } = fresh(4032);
-    toLevel(world, p.tokenId, 30);
+    toLevel(world, p.saveKey, 30);
     stand(p, anchor('a-fold'));
     const res = world.loop(id, { action: 'area.open', dungeonId: 'd-frost' });
     expect(res.ok).toBe(false);
@@ -311,8 +311,8 @@ describe('the dungeons', () => {
     const other = world.join(`p${otherToken}`, { tokenId: otherToken, transferCount: 0, daysHeld: 0 }, 'ashflat', wallets[1]);
     stand(host, anchor('a-fold'));
     stand(other, anchor('a-fold'), -1);
-    toLevel(world, host.tokenId, 5);
-    toLevel(world, other.tokenId, 5);
+    toLevel(world, host.saveKey, 5);
+    toLevel(world, other.saveKey, 5);
     const inbox: Record<string, unknown>[] = [];
     world.onPush(other.id, (m) => inbox.push(m));
     world.partyAction(host.id, { action: 'invite', with: other.id });
@@ -327,11 +327,11 @@ describe('the dungeons', () => {
    */
   const routeTo = (
     world: InstanceType<typeof World>,
-    tokenId: number,
+    key: string,
     matches: (n: AreaNode) => boolean,
     why: string,
   ): string[] => {
-    const area = world.profiles.doc(tokenId).area!;
+    const area = world.profiles.doc(key).area!;
     const by = new Map(area.nodes.map((n) => [n.id, n]));
     const parent = new Map<string, string>();
     const seen = new Set([area.entryId]);
@@ -356,8 +356,8 @@ describe('the dungeons', () => {
     throw new Error(why);
   };
 
-  const routeToEnemy = (world: InstanceType<typeof World>, tokenId: number): string[] =>
-    routeTo(world, tokenId, (n) => !!n.enemy && n.kind !== 'boss', 'nothing stands in this fold');
+  const routeToEnemy = (world: InstanceType<typeof World>, key: string): string[] =>
+    routeTo(world, key, (n) => !!n.enemy && n.kind !== 'boss', 'nothing stands in this fold');
 
   /** Walk a route through the handler, so the fields opened on the way are the server's own. */
   const walk = (world: InstanceType<typeof World>, id: string, route: string[]): void => {
@@ -376,7 +376,7 @@ describe('the dungeons', () => {
 
   it('pay the first clear once, mark the dungeon cleared and open the next', () => {
     const { world, p, id } = fresh(4033);
-    toLevel(world, p.tokenId, 5);
+    toLevel(world, p.saveKey, 5);
     stand(p, anchor('a-fold'));
     expect(world.loop(id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
     const before = world.profiles.doc(p.tokenId).xp;
@@ -397,7 +397,7 @@ describe('the dungeons', () => {
 
   it('earns the signature itself on the first clear, and never twice', () => {
     const { world, p, id } = fresh(40335);
-    toLevel(world, p.tokenId, 5);
+    toLevel(world, p.saveKey, 5);
     stand(p, anchor('a-fold'));
     expect(world.loop(id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
     const sig = p.build.signature;
@@ -416,7 +416,7 @@ describe('the dungeons', () => {
 
   it('count toward the quest that names them, and no other', () => {
     const { world, p, id } = fresh(4034);
-    toLevel(world, p.tokenId, 2);
+    toLevel(world, p.saveKey, 2);
     const doc = world.profiles.doc(p.tokenId);
     doc.quests['m-06'] = { progress: [0], done: false, turnedIn: false };
     doc.quests['m-10'] = { progress: [0], done: false, turnedIn: false };
@@ -429,10 +429,10 @@ describe('the dungeons', () => {
 
   it('pay a room only once a field says something died in it', () => {
     const { world, p, id } = fresh(4040);
-    toLevel(world, p.tokenId, 5);
+    toLevel(world, p.saveKey, 5);
     stand(p, anchor('a-fold'));
     expect(world.loop(id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
-    const route = routeToEnemy(world, p.tokenId);
+    const route = routeToEnemy(world, p.saveKey);
     const nodeId = route[route.length - 1]!;
     walk(world, id, route);
 
@@ -502,7 +502,7 @@ describe('the dungeons', () => {
   it('make the monster bigger and the purse heavier for every body on the tile', () => {
     const { world, host, other } = partyAtGate(4047, 4048);
     expect(world.loop(host.id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
-    const route = routeToEnemy(world, host.tokenId);
+    const route = routeToEnemy(world, host.saveKey);
     const nodeId = route[route.length - 1]!;
     walk(world, host.id, route);
     walk(world, other.id, route);
@@ -538,7 +538,7 @@ describe('the dungeons', () => {
   it('shrink back to a solo fight when the party splits, and pay nobody who walked off', () => {
     const { world, host, other } = partyAtGate(4049, 4050);
     expect(world.loop(host.id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
-    const route = routeToEnemy(world, host.tokenId);
+    const route = routeToEnemy(world, host.saveKey);
     const nodeId = route[route.length - 1]!;
     walk(world, host.id, route);
     walk(world, other.id, route);
@@ -707,11 +707,13 @@ describe('the dungeons', () => {
   it('count the humans behind the bodies on a tile, and say it out loud', () => {
     // Two Chogs off one wallet. The fight is still two bodies wide, but a party bonus one account
     // can farm by opening four tabs is not a party bonus — so the alt tax has to reach the plate.
+    // One wallet also means one expedition: the second body reinforces the pending fight instead
+    // of walking a run it already shares.
     const { world, host, other } = partyAtGate(4068, 4069, ['0xMINE', '0xMINE']);
     expect(world.loop(host.id, { action: 'area.open', dungeonId: 'd-ember' }).ok).toBe(true);
-    const route = routeToEnemy(world, host.tokenId);
+    const route = routeToEnemy(world, host.saveKey);
     walk(world, host.id, route);
-    walk(world, other.id, route);
+    expect(world.loop(other.id, { action: 'area.engage' }).ok).toBe(true);
 
     const field = world.sessionOf(host.id)!;
     expect(field.partyScale).toEqual({

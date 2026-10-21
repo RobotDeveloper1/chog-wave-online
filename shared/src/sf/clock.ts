@@ -33,6 +33,13 @@ import { clampStat } from './stats.ts';
  * nearly twice as fast as one that stands in it.
  */
 export const CHARGE_MS = 2400;
+/**
+ * What stepping out of the Hand costs: the screen closes and the charge drops to a short
+ * beat short of full, instead of zero. Zeroing it punished the dodge — the better you
+ * played, the less you cast — while this keeps the original point (the screen cannot snap
+ * straight back open) without forfeiting the whole 2.4s calm you just earned.
+ */
+export const REOPEN_MS = 600;
 /** How full the charge already is when you step onto the field. */
 export const FIRST_READY = 0.5;
 

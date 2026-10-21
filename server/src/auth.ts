@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { verifyMessage } from 'viem';
 import { Ownership } from './owners.ts';
+import type { SaveStore } from './save.ts';
 
 /**
  * Wallet sign-in.
@@ -12,9 +13,10 @@ import { Ownership } from './owners.ts';
  * they may play one — hangs off that, so a bypass here is a bypass of the whole
  * premise.
  *
- * Sessions are short and in-memory on purpose. A two-week hackathon build should
- * not be inventing a token format; when the address needs to be proven again, the
- * wallet signs again, which costs the user one click.
+ * Sessions are short (6h) and random-hex — no invented token format — but they
+ * survive a restart: with a store attached, every session is written through to
+ * sqlite and reloaded on boot, so a deploy stops logging the whole street out.
+ * Without one (tests), the map is the whole store and behaviour is unchanged.
  */
 
 const SESSION_MS = 6 * 60 * 60 * 1000;
@@ -35,9 +37,28 @@ export class Auth {
   private sessions = new Map<string, Session>();
 
   private readonly ownership: Ownership;
+  private readonly saves: SaveStore | null;
 
-  constructor(ownership: Ownership) {
+  constructor(ownership: Ownership, saves?: SaveStore) {
     this.ownership = ownership;
+    this.saves = saves ?? null;
+    // Stale rows die here, not on first use: a boot that replays dead sessions
+    // would hand out hours of ghost access before anything pruned them.
+    if (this.saves) {
+      const now = Date.now();
+      this.saves.sessionPrune(now - SESSION_MS);
+      for (const s of this.saves.sessionsAll()) this.sessions.set(s.token, { address: s.address, made: s.made });
+    }
+  }
+
+  private keep(token: string, address: string, made: number): void {
+    this.sessions.set(token, { address, made });
+    this.saves?.sessionPut(token, address, made);
+  }
+
+  private drop(token: string): void {
+    this.sessions.delete(token);
+    this.saves?.sessionDel(token);
   }
 
   /**
@@ -85,7 +106,7 @@ export class Auth {
     this.nonces.delete(key);
     if (!recovered) return { ok: false, reason: 'signature does not match that address' };
     const token = randomBytes(24).toString('hex');
-    this.sessions.set(token, { address: key, made: Date.now() });
+    this.keep(token, key, Date.now());
     return { ok: true, token, address: key };
   }
 
@@ -95,7 +116,7 @@ export class Auth {
     const s = this.sessions.get(token);
     if (!s) return null;
     if (Date.now() - s.made > SESSION_MS) {
-      this.sessions.delete(token);
+      this.drop(token);
       return null;
     }
     return s.address;
@@ -108,12 +129,12 @@ export class Auth {
    */
   adoptPrivy(address: string): string {
     const token = randomBytes(24).toString('hex');
-    this.sessions.set(token, { address: address.toLowerCase(), made: Date.now() });
+    this.keep(token, address.toLowerCase(), Date.now());
     return token;
   }
 
   signOut(token: string): void {
-    this.sessions.delete(token);
+    this.drop(token);
   }
 
   /**
@@ -139,7 +160,8 @@ export class Auth {
   }
 
   prune(now = Date.now()): void {
-    for (const [token, s] of this.sessions) if (now - s.made > SESSION_MS) this.sessions.delete(token);
+    for (const [token, s] of this.sessions) if (now - s.made > SESSION_MS) this.drop(token);
+    this.saves?.sessionPrune(now - SESSION_MS);
     for (const [addr, p] of this.nonces) if (now - p.made > NONCE_MS) this.nonces.delete(addr);
   }
 }

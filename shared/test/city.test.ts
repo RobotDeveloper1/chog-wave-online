@@ -146,6 +146,40 @@ describe.each(SECTORS)('city plan · %s', (sector) => {
     }
   });
 
+  it('never stands a person, a point of interest or the spawn in the street', () => {
+    // Asphalt has no solids, so "clear" is not enough: an anchor counts as placed
+    // only on a block — a sidewalk, a square, a lawn. Gates are the exception, and
+    // they stand on the ring road on purpose, as exits.
+    const onBlock = (x: number, z: number): boolean =>
+      city.blocks.some((b) => x >= b.rect.x0 && x <= b.rect.x1 && z >= b.rect.z0 && z <= b.rect.z1);
+    for (const a of city.anchors) {
+      if (a.kind === 'gate') continue;
+      expect(onBlock(a.x, a.z), `${a.id} at ${a.x.toFixed(1)},${a.z.toFixed(1)}`).toBe(true);
+    }
+  });
+
+  it('keeps each door keeper by their door, along the shopfront', () => {
+    // dx walks along the front, dz steps out from it — an east door's keeper stands
+    // up the sidewalk, not out in the avenue.
+    for (const n of plan.npcs) {
+      if (!('door' in n.at)) continue;
+      const keeper = city.anchors.find((a) => a.id === n.id)!;
+      const door = city.anchors.find((a) => a.id === (n.at as { door: string }).door)!;
+      expect(Math.hypot(keeper.x - door.x, keeper.z - door.z), n.id).toBeLessThan(8.5);
+    }
+  });
+
+  it('hangs every sign on a building tall and wide enough to carry it', () => {
+    // A 5-metre board floating over a 3-metre hut is how "bigger than the house"
+    // happens: signs only hang on two floors or more, with 6+ of frontage.
+    for (const l of city.lots) {
+      if (!l.sign) continue;
+      expect(l.h, `${l.id} height`).toBeGreaterThanOrEqual(6.5);
+      const frontage = l.face === 1 || l.face === 3 ? l.d : l.w;
+      expect(frontage, `${l.id} frontage`).toBeGreaterThanOrEqual(6);
+    }
+  });
+
   it('lets a player walk from the spawn to every door, NPC, point of interest and gate', () => {
     const walk = reachable(city);
     const stuck = city.anchors.filter((a) => !walk.has(a.x, a.z)).map((a) => `${a.kind}:${a.id}`);

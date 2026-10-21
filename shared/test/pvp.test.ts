@@ -15,7 +15,8 @@ import {
   type DuelSession,
 } from '../src/sf/session.ts';
 import { DEFAULT_STATS } from '../src/sf/stats.ts';
-import { LANES } from '../src/sf/field.ts';
+import { PVP_LANES } from '../src/sf/field.ts';
+import { BURN_EVERY_MS, BURN_TICKS, FREEZE_MS, FREEZE_SLOW, STUN_CAP_MS, STUN_MS } from '../src/sf/clock.ts';
 
 /**
  * PvP: both bodies are players, on opposite halves, KO decides.
@@ -51,16 +52,23 @@ function fire(s: DuelSession, body: DuelBody, cardId: string): void {
   expect(execute(s, body.id)).toBe(true);
 }
 
+/** Swap the deck after the join deal: the hand on the table is voided, so the next open deals fresh. */
+function sdeck(body: DuelBody, deck: string[]): void {
+  body.deck = deck;
+  body.hand = null;
+}
+
 describe('two sides of one field', () => {
   it('seats the challenger near and the rival far', () => {
     const { a, b } = duel();
     expect([a.side, b.side]).toEqual([0, 1]);
-    expect([a.file, a.lane]).toEqual([1, LANES - 1]);
+    expect([a.file, a.lane]).toEqual([1, PVP_LANES - 1]);
     expect([b.file, b.lane]).toEqual([1, 0]);
   });
 
-  it('keeps each body on its own half', () => {
+  it('keeps each body on its own half, three lanes each', () => {
     const { s } = duel();
+    expect(step(s, 'a', 'back')).toBe(true);
     expect(step(s, 'a', 'back')).toBe(true);
     expect(step(s, 'a', 'back')).toBe(false);
     expect(step(s, 'b', 'forward')).toBe(true);
@@ -112,6 +120,19 @@ describe('programs become warnings', () => {
     expect(b.rank.dodges).toBe(dodges + 1);
   });
 
+  it('dodges by leaving the lane, with the file held', () => {
+    // Three lanes a side means two ways out of a warning: b walks forward inside
+    // its file, and the strike finds the file but not the body.
+    const { s, b } = duel();
+    fire(s, s.players[0]!, 'hot_heart');
+    expect(s.field.hazards[0]!.panels).toEqual([{ file: 1, lane: 0 }]);
+    expect(step(s, 'b', 'forward')).toBe(true);
+    const dodges = b.rank.dodges;
+    advance(s, 1000);
+    expect(b.hp).toBe(b.maxHp);
+    expect(b.rank.dodges).toBe(dodges + 1);
+  });
+
   it('holds one warning per side, and each screen sees its own incoming', () => {
     const { s } = duel();
     fire(s, s.players[0]!, 'hot_heart');
@@ -156,6 +177,7 @@ describe('both screens read self-near', () => {
     expect(va.boss.archetype).toBe('rival');
     expect(va.boss.element).toBe('wave');
     expect(va.boss.tier).toBe('pvp');
+    expect(va.boss.lanes).toBe(PVP_LANES);
     expect(va.boss.file).toBe(1);
     expect(va.players.map((p) => p.side)).toEqual([0, 1]);
   });
@@ -165,14 +187,14 @@ describe('both screens read self-near', () => {
     fire(s, s.players[0]!, 'hot_heart');
     const va = viewOf(s, 'a');
     const vb = viewOf(s, 'b');
-    // Side 0 sees the floor as it is: self on 4, rival plate on 0.
-    expect(va.you?.lane).toBe(LANES - 1);
+    // Side 0 sees the floor as it is: self on 5, rival plate on 0.
+    expect(va.you?.lane).toBe(PVP_LANES - 1);
     expect(va.boss.lane).toBe(0);
     expect(va.hazard).toBeNull();
-    // Side 1 sees it flipped: self on 4, the warning on its own row.
-    expect(vb.you?.lane).toBe(LANES - 1);
+    // Side 1 sees it flipped: self on 5, the warning on its own row.
+    expect(vb.you?.lane).toBe(PVP_LANES - 1);
     expect(vb.boss.lane).toBe(0);
-    expect(vb.hazard?.panels).toEqual([{ file: 1, lane: LANES - 1 }]);
+    expect(vb.hazard?.panels).toEqual([{ file: 1, lane: PVP_LANES - 1 }]);
     expect(vb.players.find((p) => p.id === 'a')?.lane).toBe(0);
   });
 });
@@ -202,5 +224,143 @@ describe('one KO decides it', () => {
     expect(s.result).toBe('loss');
     expect(s.winnerId).toBeNull();
     expect(outcome(s).winnerId).toBeNull();
+  });
+});
+describe('status lands with the hit', () => {
+  it('stuns the rival shut: no hand, no charge, but the boots still work', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['rimeclaw']);
+    fire(s, a, 'rimeclaw');
+    expect(s.field.hazards[0]!.stunMs).toBe(STUN_MS);
+    advance(s, 1000);
+    expect(b.stun).toBeGreaterThan(0);
+    openHand(s, b);
+    expect(b.handOpen).toBe(false);
+    const charge = b.charge;
+    advance(s, 300);
+    expect(b.charge).toBe(charge);
+    expect(step(s, 'b', 'right')).toBe(true);
+  });
+
+  it('never stacks a stun past the cap', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['rimeclaw']);
+    b.stun = STUN_CAP_MS;
+    fire(s, a, 'rimeclaw');
+    advance(s, 1000);
+    expect(b.stun).toBeGreaterThan(0);
+    expect(b.stun).toBeLessThanOrEqual(STUN_CAP_MS);
+  });
+
+  it('slows the charge to a crawl while frozen', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['deepchill']);
+    b.chargeMs = 100_000;
+    fire(s, a, 'deepchill');
+    expect(s.field.hazards[0]!.freezeMs).toBe(FREEZE_MS);
+    advance(s, 1000);
+    expect(b.freeze).toBeGreaterThan(0);
+    b.charge = 0;
+    advance(s, 1000);
+    expect(b.charge).toBe(1000 * FREEZE_SLOW);
+    expect(b.freeze).toBeGreaterThan(0);
+  });
+
+  it('burns over time, then goes out', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['cindercoat']);
+    b.maxHp = 10_000;
+    b.hp = 10_000;
+    fire(s, a, 'cindercoat');
+    const carried = s.field.hazards[0]!.burn;
+    expect(carried).not.toBeNull();
+    expect(carried!.ticks).toBe(BURN_TICKS);
+    advance(s, 1000);
+    expect(b.burn).not.toBeNull();
+    const hp = b.hp;
+    const { ticks, damage } = b.burn!;
+    advance(s, BURN_EVERY_MS * ticks + 200);
+    expect(b.hp).toBe(hp - ticks * damage);
+    expect(b.burn).toBeNull();
+    expect(s.events.some((e) => e.type === 'burn-tick' && e.target === 'b')).toBe(true);
+  });
+
+  it('lets burn finish a body, and going down clears every ailment', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['cindercoat']);
+    b.maxHp = 10_000;
+    b.hp = 10_000;
+    fire(s, a, 'cindercoat');
+    advance(s, 1000);
+    expect(b.burn).not.toBeNull();
+    expect(b.hp).toBeGreaterThan(0);
+    b.hp = 1;
+    b.stun = 500;
+    b.freeze = 500;
+    advance(s, BURN_EVERY_MS + 200);
+    expect(b.down).toBe(true);
+    expect(b.burn).toBeNull();
+    expect(b.stun).toBe(0);
+    expect(b.freeze).toBe(0);
+  });
+
+  it('arms the shooter when a barrier program connects, and spends it on the next hit', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['aegisnap']);
+    sdeck(b, ['hot_heart']);
+    fire(s, a, 'aegisnap');
+    expect(s.field.hazards[0]!.barrier).toBe(true);
+    advance(s, 1000);
+    expect(a.barrier).toBe(1);
+    const hp = a.hp;
+    fire(s, b, 'hot_heart');
+    advance(s, 1000);
+    expect(a.hp).toBe(hp);
+    expect(a.barrier).toBe(0);
+    expect(s.events.some((e) => e.type === 'ward' && e.owner === 'a')).toBe(true);
+  });
+
+  it('carries nothing through a dodge', () => {
+    const { s, a, b } = duel();
+    sdeck(a, ['rimeclaw']);
+    fire(s, a, 'rimeclaw');
+    expect(step(s, 'b', 'right')).toBe(true);
+    advance(s, 1000);
+    expect(b.hp).toBe(b.maxHp);
+    expect(b.stun).toBe(0);
+    expect(b.rank.dodges).toBe(1);
+  });
+
+  it('names the sufferer on status events', () => {
+    const { s, a } = duel();
+    sdeck(a, ['rimeclaw']);
+    fire(s, a, 'rimeclaw');
+    advance(s, 1000);
+    expect(s.events.find((e) => e.type === 'stun')).toMatchObject({ owner: 'a', target: 'b' });
+  });
+
+  it('shows stun on both plates', () => {
+    const { s, a } = duel();
+    sdeck(a, ['rimeclaw']);
+    fire(s, a, 'rimeclaw');
+    advance(s, 1000);
+    expect(viewOf(s, 'a').boss.stunMs).toBeGreaterThan(0);
+    expect(viewOf(s, 'b').you!.stunMs).toBeGreaterThan(0);
+    expect(viewOf(s, 'a').players.find((p) => p.id === 'b')!.stunMs).toBeGreaterThan(0);
+  });
+
+  it('shows burn and freeze on the rival plate', () => {
+    const burn = duel();
+    sdeck(burn.a, ['cindercoat']);
+    burn.b.maxHp = 10_000;
+    burn.b.hp = 10_000;
+    fire(burn.s, burn.a, 'cindercoat');
+    advance(burn.s, 1000);
+    expect(viewOf(burn.s, 'a').boss.burn).not.toBeNull();
+    const chill = duel();
+    sdeck(chill.a, ['deepchill']);
+    fire(chill.s, chill.a, 'deepchill');
+    advance(chill.s, 1000);
+    expect(viewOf(chill.s, 'a').boss.freezeMs).toBeGreaterThan(0);
   });
 });

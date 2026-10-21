@@ -51,7 +51,7 @@ function splitKey(key: string): [string, string] {
   return i < 0 ? [key, ''] : [key.slice(0, i), key.slice(i + 1)];
 }
 
-/** 1 for a value half the collection wears, 8 for a one-of-493. */
+/** 1 for a value half the collection wears, 8 for a one-of-1969. */
 export function rarityWeight(count: number): number {
   if (count <= 0) return 1;
   const w = Math.log2(Math.max(1, ALBUM_SAMPLE / count));

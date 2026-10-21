@@ -187,11 +187,11 @@ const ASHFLAT: ZonePlan = {
     npc('a-noodle', 'NOODLE COOK', 'wave', 'two bowls, one rumour', { door: 'a-noodle', dx: 4.5 }, 'lore'),
     npc('a-clock', 'CLOCKKEEPER', 'prism', 'it has not been right since the Index started', { block: [6, 0], dx: 0, dz: 8 }, 'quest'),
     npc('a-elder', 'ELDER SPARK', 'prism', 'I remember when the wave was quiet', { block: [0, 0], dx: 5, dz: sw(ASH_ROWS, 0) }, 'quest', 2),
-    npc('a-gardener', 'GARDENER', 'wave', 'nothing grows in a storm — ask me why', { block: [3, 4], dx: -8, dz: 6 }, 'quest'),
+    npc('a-gardener', 'GARDENER', 'wave', 'nothing grows in a storm — ask me why', { block: [3, 4], dx: -13, dz: -4 }, 'quest'),
     npc('a-fisher', 'OLD FISHER', 'wave', 'the moat keeps what the street loses', { block: [3, 1], dx: 6, dz: 0 }, 'quest', 1),
-    npc('a-engineer', 'RAIL ENGINEER', 'volt', 'last train left before the Index', { block: [1, 0], dx: -8, dz: -1.5 }, 'quest'),
+    npc('a-engineer', 'RAIL ENGINEER', 'volt', 'last train left before the Index', { block: [1, 0], dx: -8, dz: -3.75 }, 'quest'),
     npc('a-scrapper', 'SCRAPPER', 'void', 'one man’s static, another man’s cards', { block: [6, 6], dx: 3, dz: -sw(ASH_ROWS, 6) }, 'quest'),
-    npc('a-hertz', 'MR. HERTZ', 'prism', '…you can see me. good. do not tell the others.', { block: [0, 3], dx: -3, dz: -sw(ASH_ROWS, 3) }, 'hertz', 2, true),
+    npc('a-hertz', 'MR. HERTZ', 'prism', '…you can see me. good. do not tell the others.', { block: [0, 3], dx: -3, dz: -5.5 }, 'hertz', 2, true),
     npc('a-courier', 'COURIER', 'frost', 'the Index delivers everything, eventually', { block: [6, 3], dx: se(ASH_COLS, 6), dz: 0 }, 'quest'),
   ],
   pois: [
@@ -199,7 +199,7 @@ const ASHFLAT: ZonePlan = {
     { id: 'a-bridge', name: 'GATE BRIDGE', kind: 'landmark', at: { block: [3, 1], dx: 0, dz: 0 }, radius: 6, text: 'Every card that ever entered Genesis crossed this bridge in somebody’s bag.' },
     { id: 'a-oldclock', name: 'THE OLD CLOCK', kind: 'landmark', at: { block: [6, 0], dx: 0, dz: 9 }, radius: 7, text: 'The hands stopped at the first Anomaly. Nobody has dared set them.' },
     { id: 'a-spring', name: 'HIDDEN SPRING', kind: 'secret', at: { block: [3, 4], dx: 10, dz: -9 }, radius: 4.5, text: 'A spring under the bandstand; the water tastes faintly of static.' },
-    { id: 'a-last', name: 'THE LAST TRAIN', kind: 'hangout', at: { block: [1, 0], dx: 6, dz: -1.5 }, radius: 6, text: 'Kids sit on the platform and bet on which train will not come.' },
+    { id: 'a-last', name: 'THE LAST TRAIN', kind: 'hangout', at: { block: [1, 0], dx: 6, dz: -3.75 }, radius: 6, text: 'Kids sit on the platform and bet on which train will not come.' },
     { id: 'a-shrine', name: 'SCRAP SHRINE', kind: 'secret', at: { block: [6, 6], dx: 3, dz: 6 }, radius: 4.5, text: 'Cards pinned to a wall, offered to nobody. Some are still warm.' },
   ],
 };

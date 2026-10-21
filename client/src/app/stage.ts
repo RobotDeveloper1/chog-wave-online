@@ -172,6 +172,25 @@ export class Stage {
   }
 
   /**
+   * Throw the stage away: free the GL context, the post chain's targets, and the floor and sky
+   * this stage built for itself. Scene content belongs to whoever added it — the gate's backdrop
+   * disposes its explorer first, then the stage — so this only releases what the stage owns.
+   */
+  dispose(): void {
+    if (this.skyMesh) {
+      this.scene.remove(this.skyMesh);
+      (this.skyMesh.material as THREE.Material).dispose();
+      this.skyMesh.geometry.dispose();
+      this.skyMesh = null;
+    }
+    this.scene.remove(this.floor);
+    this.floor.geometry.dispose();
+    (this.floor.material as THREE.Material).dispose();
+    this.pipeline.dispose();
+    this.renderer.dispose();
+  }
+
+  /**
    * Adopt a district's atmosphere: sky, haze, the two lights, the shadow and the grade.
    * Every concept painting is defined as much by its light as by its buildings.
    */
@@ -460,10 +479,16 @@ export class Stage {
    * the render task is unreliable, so this is how you tell "nothing is in the
    * scene" apart from "the readback was blank".
    */
+  /** A mesh draws only when every ancestor up to the scene draws. */
+  shown(o: THREE.Object3D): boolean {
+    for (let p: THREE.Object3D | null = o; p; p = p.parent) if (!p.visible) return false;
+    return true;
+  }
+
   debug(): { calls: number; triangles: number; objects: number; camFar: number; fogFar: number } {
     let objects = 0;
     this.scene.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh && o.visible) objects++;
+      if ((o as THREE.Mesh).isMesh && this.shown(o)) objects++;
     });
     const info = this.renderer.info.render;
     return {
@@ -475,6 +500,42 @@ export class Stage {
     };
   }
 
+  /**
+   * Visible meshes by geometry type: how you tell the city is heavy apart
+   * from one system spamming tiny meshes. Read once, not per frame.
+   */
+  debugRoots(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const root of this.scene.children) {
+      let n = 0;
+      root.traverse((o) => { if ((o as THREE.Mesh).isMesh && this.shown(o)) n++; });
+      const k = (root.name || root.type) + '#' + root.id;
+      out[k] = n;
+    }
+    return out;
+  }
+
+  debugParents(): [string, number][] {
+    const out = new Map<string, number>();
+    this.scene.traverse((o) => {
+      if (!(o as THREE.Mesh).isMesh || !this.shown(o)) return;
+      const p = o.parent;
+      const k = (p?.name || p?.type || '?') + (p?.parent?.name ? '<' + p.parent.name : '');
+      out.set(k, (out.get(k) ?? 0) + 1);
+    });
+    return [...out.entries()].sort((a, b) => b[1] - a[1]).slice(0, 45);
+  }
+
+  debugDetail(): Record<string, number> {
+    const out: Record<string, number> = {};
+    this.scene.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || !o.visible) return;
+      const key = mesh.geometry?.type ?? '?';
+      out[key] = (out[key] ?? 0) + 1;
+    });
+    return out;
+  }
   snapshot(): string {
     return this.renderer.domElement.toDataURL('image/png');
   }

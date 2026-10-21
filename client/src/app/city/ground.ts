@@ -101,7 +101,7 @@ export function buildGround(B: ChunkBatcher, layout: CityLayout, art: DistrictAr
     const mat = courtMat(c.kind);
     const y = KERB + 0.02 + depth * 0.01;
     flat(B, mat, c.rect, y);
-    if (c.kind === 'plaza') inlay(B, c, art);
+    if (c.kind === 'plaza') inlay(B, c, art, layout.solids);
     if (c.kind === 'track') rails(B, c, art, y);
     if (c.kind === 'allotment') beds(B, c, art, rand);
     if (c.kind === 'lawn' || c.kind === 'garden') paths(B, c, art, rand);
@@ -119,7 +119,7 @@ export function buildGround(B: ChunkBatcher, layout: CityLayout, art: DistrictAr
  * proud catches light on its top edge and throws a shadow on its inner face, which is the
  * difference between a painted circle and a kerb you could sit on.
  */
-function inlay(B: ChunkBatcher, c: Court, art: DistrictArt): void {
+function inlay(B: ChunkBatcher, c: Court, art: DistrictArt, solids: CityLayout['solids']): void {
   const { x0, z0, x1, z1 } = c.rect;
   const cx = (x0 + x1) / 2;
   const cz = (z0 + z1) / 2;
@@ -131,12 +131,25 @@ function inlay(B: ChunkBatcher, c: Court, art: DistrictArt): void {
   const t = 0.4;
   const m = 1.1;
   // The border is a low wall, not a painted line: it has a top you could set a cup on.
-  for (const [bx, bz, bw, bd] of [
-    [cx, z0 + m, x1 - x0 - m * 2, t],
-    [cx, z1 - m, x1 - x0 - m * 2, t],
-    [x0 + m, cz, t, z1 - z0 - m * 2],
-    [x1 - m, cz, t, z1 - z0 - m * 2],
+  // A side walled by a building gets no border: the station's steps cross the apron's
+  // north edge, and a wall across a doorway is a trip rail, not a frame.
+  const blocked = (side: 'N' | 'S' | 'E' | 'W'): boolean =>
+    solids.some((s) =>
+      side === 'N'
+        ? s.z + s.halfD > z0 - 1.5 && s.z + s.halfD < z0 + 3 && Math.abs(s.x - cx) < (x1 - x0) / 2
+        : side === 'S'
+          ? s.z - s.halfD < z1 + 1.5 && s.z - s.halfD > z1 - 3 && Math.abs(s.x - cx) < (x1 - x0) / 2
+          : side === 'W'
+            ? s.x + s.halfW > x0 - 1.5 && s.x + s.halfW < x0 + 3 && Math.abs(s.z - cz) < (z1 - z0) / 2
+            : s.x - s.halfW < x1 + 1.5 && s.x - s.halfW > x1 - 3 && Math.abs(s.z - cz) < (z1 - z0) / 2,
+    );
+  for (const [side, bx, bz, bw, bd] of [
+    ['N', cx, z0 + m, x1 - x0 - m * 2, t],
+    ['S', cx, z1 - m, x1 - x0 - m * 2, t],
+    ['W', x0 + m, cz, t, z1 - z0 - m * 2],
+    ['E', x1 - m, cz, t, z1 - z0 - m * 2],
   ] as const) {
+    if (blocked(side)) continue;
     B.box('solid', bx, KERB + 0.16, bz, bw, 0.34, bd, trim, 0, { skipBottom: true });
   }
   const r = Math.min(x1 - x0, z1 - z0) / 2 - 3;
@@ -149,13 +162,25 @@ function inlay(B: ChunkBatcher, c: Court, art: DistrictArt): void {
     B.geo('solid', new THREE.CylinderGeometry(ro, ro, top - KERB, 56, 1, true), new THREE.Matrix4().makeTranslation(cx, (top + KERB) / 2, cz), skirt);
     B.geo('solid', new THREE.CylinderGeometry(ri, ri, top - KERB, 56, 1, true), new THREE.Matrix4().makeTranslation(cx, (top + KERB) / 2, cz), skirt);
   };
-  ring(r * 0.5, r * 0.5 + 0.5);
-  ring(r * 0.8, r * 0.8 + 0.5);
+  // The middle belongs to whatever stands on it: a fountain ten wide would swallow a
+  // ring drawn for a five-wide monument, so the rings start outside the centrepiece.
+  let keepOut = 0;
+  for (const s of solids) {
+    if (Math.abs(s.x - cx) < r * 0.5 && Math.abs(s.z - cz) < r * 0.5) {
+      keepOut = Math.max(keepOut, Math.max(s.halfW, s.halfD));
+    }
+  }
+  const r1 = Math.max(r * 0.5, keepOut + 0.6);
+  const r2 = Math.max(r * 0.8, r1 + 1.5);
+  if (r1 + 0.5 > r) return;
+  ring(r1, r1 + 0.5);
+  if (r2 + 0.5 > r) return;
+  ring(r2, r2 + 0.5);
   // Spokes between the rings, eight of them: low ribs, a compass rose laid into the ground.
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
-    const mid = r * 0.65;
-    B.box('solid', cx + Math.cos(a) * mid, KERB + 0.06, cz + Math.sin(a) * mid, 0.34, 0.14, r * 0.24, trim, 0, { rot: -a + Math.PI / 2, skipBottom: true });
+    const mid = (r1 + r2) / 2;
+    B.box('solid', cx + Math.cos(a) * mid, KERB + 0.06, cz + Math.sin(a) * mid, 0.34, 0.14, Math.max(r * 0.24, r2 - r1), trim, 0, { rot: -a + Math.PI / 2, skipBottom: true });
   }
 }
 
@@ -168,7 +193,11 @@ function mixStone(hex: string, t: number): string {
 function water(B: ChunkBatcher, c: Court, art: DistrictArt): void {
   const { x0, z0, x1, z1 } = c.rect;
   const y = KERB + 0.1;
-  flat(B, 'water', c.rect, y);
+  // No two ponds the same blue: a hash of the court tints each one, so a district
+  // of water blocks reads as water, not one puddle copy-pasted fifteen times.
+  const hash = Math.abs(Math.sin(x0 * 12.9898 + z0 * 78.233) * 43758.5453) % 1;
+  const tint = '#' + new THREE.Color('#ffffff').offsetHSL((hash - 0.5) * 0.05, 0, (hash - 0.5) * 0.1).getHexString();
+  flat(B, 'water', c.rect, y, tint);
   // Coping: a stone lip all round, standing proud of the water and the pavement.
   const t = 0.34;
   const h = 0.34;

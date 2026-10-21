@@ -15,11 +15,16 @@
     "@babylonjs/materials": "^9.30.0",
     "@chog/shared": "*",
     "@privy-io/js-sdk-core": "^0.79.0",
+    "@privy-io/react-auth": "^3.50.0",
     "error": "^10.4.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "three": "^0.186.1",
     "viem": "^2.57.4"
   },
   "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/three": "^0.186.0",
     "typescript": "^5.7.3",
     "vite": "^6.0.7"

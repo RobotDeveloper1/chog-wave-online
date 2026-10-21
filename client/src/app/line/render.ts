@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { ChunkBatcher, type Chunk, type MatKey } from '../city/batch.ts';
-import { BIOMES, REGION_SIZE, campOf, lineLayout, mobAt, mobFacing, roadHalfAt, roadXAt, type LineLayout, type MobSpawn, type RegionId } from '@chog/shared';
+import { BIOMES, REGION_SIZE, campOf, lineLayout, chaseStep, chaseSpeedFor, type ChaseAnchor, roadHalfAt, roadXAt, type LineLayout, type MobSpawn, type RegionId } from '@chog/shared';
 import type { BossAvatar } from '../duel/boss.ts';
 import { buildCritter } from './critters.ts';
 import { nameplate } from '../tribes.ts';
@@ -29,6 +29,8 @@ const SCOUT_MODEL = {
   partsUrl: '/models/trait-parts.json',
   colorsUrl: '/models/trait-colors.json',
   skinsUrl: '/models/skins.json',
+  skullBaseUrl: '/models/chog-skull.glb',
+  skullSkinsUrl: '/models/skull-skins.json',
 };
 const SCOUT_TOKEN = 4242;
 
@@ -197,7 +199,7 @@ export interface LineScene {
   group: THREE.Group;
   chunks: Chunk[];
   groundY(x: number, z: number): number;
-  update(t: number, focus: THREE.Vector3, mobs: readonly MobView[]): void;
+  update(t: number, focus: THREE.Vector3, mobs: readonly MobView[], foe?: { x: number; z: number }): void;
   dispose(): void;
 }
 
@@ -428,24 +430,26 @@ export function buildLineScene(region: RegionId): LineScene {
   // each figure exactly where the last message said. A figure that drifted would be a figure you
   // swing at and miss, and the ambush would fire somewhere the player is not standing.
   //
-  // Each figure is the region's own fauna (`critters.ts buildCritter`), not the duel avatar:
-  // a mite on the farm track, a wader in the marsh. The archetype still decides the fight the
+  // Each figure is its ladder species (`critters.ts buildCritter`), not the duel avatar:
+  // mites near the trailhead, imps at the far end. The archetype still decides the fight the
   // body opens — the server reads it when the ambush fires — but the map shows the animal, and
   // the duel is where the signal puts its mask on. The figure owns its idle motion; the outer
   // group owns the map position and yaw.
   const mobFigures = new Map<string, MobFigure>();
+  /** Each figure's chase anchor: same step as the server, kept per figure. */
+  const figChase = new Map<string, ChaseAnchor | null>();
   let lastT = 0;
 
   const makeFigure = (m: MobView): MobFigure => {
     const g = new THREE.Group();
     g.name = `mob:${m.id}`;
-    const avatar = buildCritter(m.region, m.kind, m.element || 'void', m.id);
+    const avatar = buildCritter(m.region, m.kind, m.element || 'void', m.id, 'map', m.archetype || '');
     g.add(avatar.root);
     // Grounded like the city's people: a blob shadow that walks with the body.
     const shade = blob(0, 0.07, 0, 1.4);
     g.add(shade);
     group.add(g);
-    return { group: g, avatar, key: `${m.region}|${m.kind}|${m.element}`, dying: false };
+    return { group: g, avatar, key: `${m.region}|${m.kind}|${m.element}|${m.archetype || ''}`, dying: false };
   };
 
   return {
@@ -458,7 +462,7 @@ export function buildLineScene(region: RegionId): LineScene {
         ? Math.max(h, WATER_LEVEL[region] + 0.05)
         : h;
     },
-    update(t: number, focus: THREE.Vector3, mobs: readonly MobView[]): void {
+    update(t: number, focus: THREE.Vector3, mobs: readonly MobView[], foeArg?: { x: number; z: number }): void {
       // The water breathes. One sine on one plane is the cheapest sign of life a map has.
       if (waterMesh) waterMesh.position.y = WATER_LEVEL[region] + Math.sin(t * 0.8) * 0.05;
       const dt = Math.min(0.05, Math.max(0.0001, t - lastT));
@@ -478,16 +482,19 @@ export function buildLineScene(region: RegionId): LineScene {
       // a mob that dies or despawns leaves the road instead of standing there as a statue.
       //
       // Positions are LIVE: the server's snapshot only says where a body was when the message was
-      // built, so each figure runs the same pure `mobAt` on the wall clock every frame — the same
+      // built, so each figure runs the same pure chase on the wall clock every frame — the same
       // function the server's ambush check runs, so the walk you see is the walk you bump into.
+      // The foe is your boots, not the camera: the lens leads and lags, and a chase drawn
+      // around it would disagree with the server's, which runs on reported position.
       const nowMs = Date.now();
-      const walkOf = (home: { x: number; z: number }, roam: number, region: RegionId): { x: number; z: number } =>
-        mobAt({ home, roam, region } as MobSpawn, nowMs);
+      const foe = { x: (foeArg ?? focus).x, z: (foeArg ?? focus).z };
+
+
       const seen = new Set<string>();
       for (const m of mobs) {
         seen.add(m.id);
         let f = mobFigures.get(m.id);
-        const wantKey = `${m.region}|${m.kind}|${m.element}`;
+        const wantKey = `${m.region}|${m.kind}|${m.element}|${m.archetype || ''}`;
         if (f && f.key !== wantKey) {
           group.remove(f.group);
           f.avatar.dispose();
@@ -505,11 +512,12 @@ export function buildLineScene(region: RegionId): LineScene {
           }
           continue;
         }
-        if (!f) { f = makeFigure(m); mobFigures.set(m.id, f); }
+        if (!f) { figChase.delete(m.id); f = makeFigure(m); mobFigures.set(m.id, f); }
         if (f.dying) {
           // A respawned body is a new standing, not a corpse that stood back up mid-death.
           group.remove(f.group);
           f.avatar.dispose();
+          figChase.delete(m.id);
           f = makeFigure(m);
           mobFigures.set(m.id, f);
         }
@@ -522,12 +530,14 @@ export function buildLineScene(region: RegionId): LineScene {
         const hh = m.home;
         const rr = m.roam;
         if (hh && rr !== undefined && Number.isFinite(hh.x) && Number.isFinite(hh.z) && Number.isFinite(rr)) {
-          const at = walkOf(hh, rr, m.region);
-          if (Number.isFinite(at.x) && Number.isFinite(at.z)) {
-            px = at.x;
-            pz = at.z;
-            const live = mobFacing({ home: hh, roam: rr, region: m.region } as MobSpawn, nowMs);
-            if (live) yaw = live;
+          const partial = { home: hh, roam: rr, region: m.region, chaseSpeed: chaseSpeedFor(m.archetype) } as MobSpawn;
+          const r = chaseStep(figChase.get(m.id) ?? null, partial, nowMs, foe);
+          figChase.set(m.id, r.anchor);
+          if (Number.isFinite(r.x) && Number.isFinite(r.z)) {
+            px = r.x;
+            pz = r.z;
+
+            yaw = r.facing;
           }
         }
         if (!Number.isFinite(px) || !Number.isFinite(pz)) continue;
@@ -541,8 +551,8 @@ export function buildLineScene(region: RegionId): LineScene {
         group.remove(f.group);
         f.avatar.dispose();
         mobFigures.delete(id);
+        figChase.delete(id);
       }
-      void focus;
     },
     dispose(): void {
       scoutAlive = false;

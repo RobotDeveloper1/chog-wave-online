@@ -5,7 +5,7 @@
  * It is a *build* number, bumped by hand when a build is cut for someone to play; it is not
  * the npm package version.
  */
-export const GAME_NAME = 'CHOG WAVES';
-export const BUILD_VERSION = '0.0.3';
+export const GAME_NAME = 'CHOG WAVE';
+export const BUILD_VERSION = '0.0.5';
 /** The name this build carries on screen: shown beside the version in the top-right stamp. */
-export const BUILD_TAG = 'pre-chogathon build';
+export const BUILD_TAG = 'Chogathon build';

@@ -9,13 +9,15 @@ import type { Element } from '../types.ts';
  * nothing to decide: the deck was full before you took a step. So the deck was moved out
  * of the token and into the world. You start with **one** card — your signature — and your
  * element's basic attack. Everything else is somewhere on the Line, and every encounter
- * unlocks exactly one thing, permanently, on first clear.
+ * unlocks its named cards, permanently, on first clear: drifts pay one, the first clear
+ * pays two, deep posts pay two, and wardens pay a spike for the next region plus a keepsake.
  *
  * The NFT did not get weaker, it got a different job. `derive.ts` still decides the six
  * attributes, and the basic attack is priced off them (`basicMight` in sf/loadout.ts), so
  * on bare attributes a rare clean-provenance token out-damages a flipped common by ~36%.
- * That is the first hour. After you have a hand the gap narrows to nothing, which is the
- * honest shape for "owning one helps you, it does not play for you".
+ * That is the first hour. After you have a hand the gap narrows to the PWR slice of
+ * Attack (`attackFromPwr` in sf/loadout.ts, at most +18%), which is the honest shape
+ * for "owning one helps you, it does not play for you".
  *
  * **Fixed tables, no RNG.** Every unlock is named here. A reward a player can aim at is a
  * reward; a reward rolled from a bag is a slot machine, and the `dungeonData.ts` comment
@@ -102,13 +104,13 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'TOLLKEEPER', archetype: 'tollkeeper' },
     { xp: 70, wav: 140, title: 'Toll Runner' },
     [
-      ['Rust mites', 'burn', ['emberpaw', 'splashback']],
-      ['Chaff walkers', 'burn', ['hot_heart']],
-      ['Signal crows', 'volt', ['cigar_steady']],
-      ['Hedge dogs', 'burn', ['green_candle']],
-      ['The reaper\'s fence', 'volt', ['switchblade']],
-      ['The weighbridge', 'frost', ['magmachog']],
-      ['Tollkeeper', 'burn', ['cinderfang']],
+      ['Soot imps', 'burn', ['staticnip']],
+      ['Chaff walkers', 'burn', ['v_bubblegum']],
+      ['Cinder mites', 'burn', ['lucky_coin']],
+      ['Rust mites', 'burn', ['undertow', 'rimeclaw']],
+      ['The reaper\'s fence', 'volt', ['refract']],
+      ['The weighbridge', 'frost', ['nullfur']],
+      ['Tollkeeper', 'burn', ['magmachog']],
     ],
   ),
   region(
@@ -118,12 +120,12 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'FIRST FLAME', archetype: 'baron' },
     { xp: 120, wav: 260, title: 'Ash Walker' },
     [
-      ['Ash bats', 'volt', ['staticnip']],
-      ['Needle crawlers', 'burn', ['b_origin']],
+      ['Ash bats', 'volt', ['cigar_steady']],
+      ['Needle crawlers', 'burn', ['v_lipbite']],
       ['Sap ghosts', 'wave', ['fwog_buddy']],
-      ['Char hounds', 'volt', ['sb_signal']],
-      ['The burnt stand', 'burn', ['red_candle']],
-      ['The signal tree', 'volt', ['v_puke']],
+      ['Char hounds', 'volt', ['v_normsmile']],
+      ['The burnt stand', 'burn', ['emberpaw']],
+      ['The signal tree', 'volt', ['v_flatline']],
       ['First Flame', 'burn', ['ga_cinderfall']],
     ],
   ),
@@ -134,12 +136,12 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'RIME LIBRARIAN', archetype: 'front' },
     { xp: 180, wav: 380, title: 'Glass Reader' },
     [
-      ['Mirror minnows', 'wave', ['v_bubblegum']],
-      ['Reed husks', 'frost', ['v_worried']],
-      ['Flatline waders', 'frost', ['v_flatline']],
-      ['Glasswing drift', 'prism', ['v_smile']],
-      ['The reading room', 'frost', ['v_normsmile']],
-      ['The drowned stacks', 'frost', ['glacierhowl']],
+      ['Mirror minnows', 'wave', ['v_puke']],
+      ['Reed husks', 'frost', ['v_clownlaugh']],
+      ['Flatline waders', 'frost', ['splashback']],
+      ['Glasswing drift', 'prism', ['b_origin']],
+      ['The reading room', 'frost', ['v_goldtooth']],
+      ['The drowned stacks', 'frost', ['switchblade', 'ga_moltenmirror']],
       ['Rime Librarian', 'frost', ['hoarbar', 'ga_hollowwinter']],
     ],
   ),
@@ -150,13 +152,13 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'PACKET KING', archetype: 'surge' },
     { xp: 240, wav: 500, title: 'Relay Runner' },
     [
-      ['Arc fleas', 'volt', ['v_btccoin']],
-      ['Repeater crows', 'wave', ['v_drool']],
-      ['Packet wolves', 'volt', ['lucky_coin']],
-      ['Out-of-band crawlers', 'void', ['v_clownlaugh']],
-      ['The quiet mast', 'volt', ['v_grit']],
-      ['The dead repeater', 'volt', ['arcsnap']],
-      ['Packet King', 'volt', ['stormchomp', 'ga_arccathedral']],
+      ['Arc fleas', 'volt', ['stormchomp']],
+      ['Repeater crows', 'wave', ['v_worried']],
+      ['Packet wolves', 'volt', ['cinderfang']],
+      ['Out-of-band crawlers', 'void', ['v_smile']],
+      ['The quiet mast', 'volt', ['v_rainfall']],
+      ['The dead repeater', 'volt', ['v_drool', 'ga_staticbloom']],
+      ['Packet King', 'volt', ['sb_signal', 'ga_arccathedral']],
     ],
   ),
   region(
@@ -166,12 +168,12 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'UNDERTOW MOTHER', archetype: 'mirror' },
     { xp: 320, wav: 680, title: 'Tide Walker' },
     [
-      ['Drift minnows', 'wave', ['v_rainfall']],
-      ['Toll divers', 'frost', ['pepe_curse']],
-      ['Current riders', 'wave', ['ripplebite']],
-      ['Median weeds', 'wave', ['undertow']],
-      ['The median strip', 'wave', ['v_goldtooth']],
-      ['The drowned interchange', 'prism', ['refract']],
+      ['Drift minnows', 'wave', ['pepe_curse']],
+      ['Toll divers', 'frost', ['v_btccoin']],
+      ['Current riders', 'wave', ['hot_heart']],
+      ['Median weeds', 'wave', ['green_candle']],
+      ['The median strip', 'wave', ['v_grit']],
+      ['The drowned interchange', 'prism', ['v_wo', 'ga_quietdeath']],
       ['Undertow Mother', 'wave', ['tsunamichog', 'ga_drownedbell']],
     ],
   ),
@@ -182,13 +184,13 @@ export const REGIONS: readonly RegionDef[] = [
     { name: 'THE INDEX', archetype: 'baron' },
     { xp: 480, wav: 1100, title: 'Core Keeper' },
     [
-      ['Noise husks', 'void', ['nullfur']],
-      ['Null hounds', 'void', ['signaldeath']],
-      ['Dead channels', 'void', ['v_wo']],
-      ['Blind relays', 'void', ['v_lipbite']],
-      ['The last mile marker', 'void', ['rimeclaw']],
-      ['The out-of-band', 'prism', ['chognova']],
-      ['The Index', 'void', ['eclipse', 'ga_lasttrain', 'ga_staticbloom', 'ga_prismchoir', 'ga_quietdeath', 'ga_moltenmirror']],
+      ['Noise husks', 'void', ['chognova']],
+      ['Null hounds', 'void', ['red_candle']],
+      ['Dead channels', 'void', ['ripplebite']],
+      ['Blind relays', 'void', ['arcsnap']],
+      ['The last mile marker', 'void', ['eclipse']],
+      ['The out-of-band', 'prism', ['glacierhowl', 'ga_prismchoir']],
+      ['The Index', 'void', ['signaldeath', 'ga_lasttrain']],
     ],
   ),
 ];
@@ -273,9 +275,12 @@ export function encounterGate(prog: LineProgress, id: string): LineGate {
   if (!e) return shut('no such encounter');
   const rg = regionGate(prog, e.region);
   if (!rg.open) return rg;
-  const enc = ENCOUNTERS.filter((x) => x.region === e.region);
-  const i = enc.findIndex((x) => x.id === e.id);
-  if (i > 0 && !new Set(prog.cleared).has(enc[i - 1]!.id)) return shut('walk the road in order');
+
+
+  // Encounters are independent inside an open region: no predecessor chain. The road is
+  // walked for levels and drops, not in a fixed order — difficulty runs by distance from
+  // the trailhead instead (see budget.ts), so wandering further is the risk dial.
+
   return ok;
 }
 

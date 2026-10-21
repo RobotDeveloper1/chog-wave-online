@@ -4,8 +4,9 @@ import { SF, type Element, type SectorId } from '@chog/shared';
 /**
  * Where things stand in the duel, and what colour they are.
  *
- * The SF field is three to six files wide and five lanes deep. The player's
- * Chog stands on the two near lanes, the boss looms over the three far ones, and the camera
+ * The SF field is three to six files wide and five lanes deep — six across a PvP
+ * field, three a side. The player's Chog stands on the near lanes, the boss looms
+ * over the three far ones, and the camera
  * looks down the files from behind and above the player — the Star Force shot, turned
  * ninety degrees so the lanes recede instead of running across the screen.
  */
@@ -14,23 +15,26 @@ export const FILES = SF.MIN_COLS;
 /** Buffers cover the widest authoritative SF floor. */
 export const MAX_FILES = SF.MAX_COLS;
 export const LANES = SF.LANES;
+/** Buffers cover the deepest authoritative floor: six lanes in PvP. */
+export const MAX_LANES = SF.PVP_LANES;
 /** A panel's edge and the gap between panels, in world units. */
 export const PANEL = 2.05;
 export const GAP = 0.18;
 export const PITCH = PANEL + GAP;
 
 /**
- * x of a file, z of a lane. Lane 0 is the far wall; lane 4 is under the player's feet.
+ * x of a file, z of a lane. Lane 0 is the far wall; the last lane is under the
+ * player's feet — lane 4 in PvE, lane 5 across a PvP field.
  *
- * `files` is the width from the server snapshot rather than a constant. Centring on it keeps
- * three files in the middle of the board and six
- * filling it, instead of a wide arena that slides off to the right as the Chog grows.
+ * `files` and `lanes` are the depth from the server snapshot rather than constants.
+ * Centring on them keeps three files in the middle of the board and six filling it,
+ * instead of a wide arena that slides off to the right as the Chog grows.
  */
 export const fileX = (file: number, files = FILES): number => (file - (files - 1) / 2) * PITCH;
-export const laneZ = (lane: number): number => (lane - (LANES - 1) / 2) * PITCH;
+export const laneZ = (lane: number, lanes = LANES): number => (lane - (lanes - 1) / 2) * PITCH;
 
-/** The two sides of the board: lanes 0-2 are the anomaly's, 3-4 are yours. */
-export const isEnemyLane = (lane: number): boolean => lane < SF.FIRST_PLAYER_LANE;
+/** The two sides of the board: lanes 0-2 are the anomaly's, the rest are yours. */
+export const isEnemyLane = (lane: number, firstMine = SF.FIRST_PLAYER_LANE): boolean => lane < firstMine;
 
 export const ELEMENT_HEX: Record<string, number> = {
   burn: 0xff7a45,

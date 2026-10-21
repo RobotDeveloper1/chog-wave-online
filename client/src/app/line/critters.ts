@@ -8,10 +8,12 @@ import type { RegionId } from '@chog/shared';
  * The Line's fauna: what a mob looks like standing on the road.
  *
  * These are deliberately **not** the duel avatars. The duel keeps its signals-and-chrome
- * look (`duel/boss.ts`); the map fields normal creatures — a mite, a bat, a wader, a bug,
- * a crab, a wisp — one family per region, sized by kind (drift < post < warden, and the
- * warden carries the family's crown). All primitives, no models, no textures: the same
- * recipe as the street's stand-ins, which is why a region's mobs read as belonging to it.
+ * look (`duel/boss.ts`); the map fields the ladder's own fauna — a mite near the trailhead,
+ * a walker further on, an imp at the far end — ten species across the six regions, sized by
+ * kind (drift < post < warden, and the warden carries the brass). All primitives, no models,
+ * no textures: the same recipe as the street's stand-ins. A species nobody has drawn falls
+ * back to its region's family, so the roster fills in one creature at a time and a missing
+ * animal never leaves the road empty.
  *
  * Two languages survive the translation, because the map still has to say what the fight
  * is: **eyes are the encounter's element** (white ball, glowing element pupil — the thing
@@ -43,6 +45,8 @@ interface Ctx {
   warden: boolean;
   eyeY: number;
   baseY: number;
+  /** Floaters bob high and slow; walkers stay on their feet. */
+  hover: boolean;
 }
 
 const ball = (r: number, mat: THREE.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1): THREE.Mesh => {
@@ -129,6 +133,7 @@ function cinderbat(c: Ctx): void {
   eyes(c, 0.18, 1.05, 0.42, 0.1);
   if (c.warden) c.body.add(cone(0.12, 0.7, char, 0, 0.45, -0.5, 2.2, 0, 0));
   c.baseY = 0.15;
+  c.hover = true;
 }
 
 function wader(c: Ctx): void {
@@ -234,7 +239,148 @@ function nullwisp(c: Ctx): void {
   });
   eyes(c, 0.16, 1.0, 0.42, 0.08);
   c.baseY = 0.35;
+  c.hover = true;
 }
+
+/** The walker's build: a tall tripod strider grazing by its own marsh-light. */
+function strider(c: Ctx): void {
+  const bark = c.paint(0x6b5a3e);
+  const moss = c.paint(0x5a7a4e);
+  for (const s of [-1, 1]) {
+    c.body.add(stick(0.07, 1.7, bark, s * 0.28, 0.85, 0));
+    c.body.add(ball(0.12, bark, s * 0.28, 0.08, 0.1));
+  }
+  c.body.add(ball(0.34, moss, 0, 1.75, 0, 1.2, 0.8, 1));
+  c.body.add(stick(0.06, 0.6, bark, 0, 2.1, 0.15, 0.25, 0));
+  c.body.add(ball(0.2, moss, 0, 2.42, 0.24));
+  // The lamp: a marsh-light the walker grazes by, in the encounter's element.
+  c.body.add(ball(0.09, c.glow, 0, 2.42, 0.46));
+  eyes(c, 0.12, 2.46, 0.36, 0.07);
+  if (c.warden) {
+    const collar = new THREE.Mesh(new THREE.TorusGeometry(0.4, 0.07, 8, 20), c.paint(0xd8a03c));
+    collar.position.set(0, 1.72, 0);
+    collar.rotation.set(Math.PI / 2, 0, 0);
+    c.body.add(collar);
+  }
+  c.baseY = 0;
+}
+
+/** The glitch's build: three stacked shards that never sit still. */
+function glitchcube(c: Ctx): void {
+  const steel = c.paint(0x3a3f4a);
+  const dark = c.paint(0x2a2e36);
+  const a = box(0.7, 0.7, 0.7, steel, -0.12, 0.75, 0.05, 0.2);
+  const b = box(0.5, 0.5, 0.5, dark, 0.25, 1.25, -0.1, -0.3);
+  const d = box(0.34, 0.34, 0.34, steel, -0.05, 1.65, 0.12, 0.5);
+  c.body.add(a, b, d);
+  // Absolute offsets, never accumulated: adding the shiver would random-walk the shards
+  // across the region over a minute.
+  const shards = [a, b, d];
+  const bases = shards.map((s) => s.position.clone());
+  const seeds = [0, 2.1, 4.4];
+  c.extras.push((t) => {
+    shards.forEach((s, i) => {
+      const base = bases[i]!;
+      s.position.set(
+        base.x + Math.sin(t * 17 + c.phase + seeds[i]!) * 0.05,
+        base.y + Math.cos(t * 13 + c.phase * 2 + seeds[i]!) * 0.05,
+        base.z,
+      );
+    });
+  });
+  eyes(c, 0.16, 1.25, 0.18, 0.08);
+  if (c.warden) c.body.add(box(0.9, 0.12, 0.9, c.paint(0xd8a03c), 0, 0.32, 0, 0.2));
+  c.baseY = 0.3;
+  c.hover = true;
+}
+
+/** The husk's build: a bulky hollow shell that breathes through its mouth. */
+function husk(c: Ctx): void {
+  const bone = c.paint(0xb8a888);
+  const hollow = c.paint(0x3a3226);
+  c.body.add(ball(0.7, bone, 0, 0.5, 0, 1.25, 0.7, 1.35));
+  // The hollow: a dark mouth the husk breathes through, ringed in bone.
+  c.body.add(ball(0.3, hollow, 0, 0.42, 0.72, 1, 0.7, 0.5));
+  for (const sx of [-1, 1]) {
+    for (const z of [-0.45, 0.45]) c.body.add(ball(0.18, bone, sx * 0.7, 0.18, z));
+  }
+  c.body.add(cone(0.3, 0.5, bone, 0, 1.0, -0.3));
+  eyes(c, 0.28, 0.72, 0.78, 0.1);
+  if (c.warden) {
+    for (let k = -2; k <= 2; k++) {
+      c.body.add(cone(0.09, 0.45, bone, k * 0.3, 1.0, -0.55, -0.5, 0, 0));
+    }
+  }
+  c.baseY = 0;
+}
+
+/** The surge's build: a breathing coil stack crowned with a live spark. */
+function surge(c: Ctx): void {
+  const coil = c.paint(0x4a5568);
+  const rings: THREE.Mesh[] = [];
+  for (let i = 0; i < 4; i++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55 - i * 0.09, 0.06, 8, 24), coil);
+    ring.position.y = 0.45 + i * 0.34;
+    ring.rotation.x = Math.PI / 2;
+    c.body.add(ring);
+    rings.push(ring);
+  }
+  c.body.add(ball(0.2, c.glow, 0, 1.65, 0));
+  c.body.add(cone(0.1, 0.4, c.glow, 0, 1.95, 0));
+  // Breathe, not spin: a torus is radially symmetric, so rotating one is invisible.
+  c.extras.push((t) => {
+    rings.forEach((r, i) => {
+      r.position.y = 0.45 + i * 0.34 + Math.sin(t * 3 + c.phase + i * 1.1) * 0.05;
+    });
+  });
+  eyes(c, 0.15, 1.15, 0.4, 0.08);
+  if (c.warden) {
+    const halo = new THREE.Mesh(new THREE.TorusGeometry(0.8, 0.05, 8, 28), c.paint(0xd8a03c));
+    halo.position.y = 1.1;
+    halo.rotation.x = Math.PI / 2;
+    c.body.add(halo);
+  }
+  c.baseY = 0.25;
+  c.hover = true;
+}
+
+/** The mirror's build: a standing glass the thing inside looks back out of. */
+function mirror(c: Ctx): void {
+  const frame = c.paint(0x2e2a3a);
+  const glass = new THREE.MeshLambertMaterial({ color: 0xcfd8ea });
+  c.body.add(box(0.9, 1.7, 0.12, glass, 0, 1.05, 0));
+  for (const s of [-1, 1]) {
+    c.body.add(box(0.1, 1.9, 0.16, frame, s * 0.5, 1.05, 0));
+    c.body.add(box(0.16, 0.5, 0.16, frame, s * 0.35, 0.25, 0));
+  }
+  c.body.add(box(1.1, 0.1, 0.16, frame, 0, 2.0, 0));
+  c.body.add(box(1.1, 0.1, 0.16, frame, 0, 0.12, 0));
+  // The eyes float ON the glass: the thing in the mirror is looking back out.
+  eyes(c, 0.2, 1.2, 0.1, 0.09);
+  c.extras.push((t) => {
+    c.body.rotation.y = Math.sin(t * 0.9 + c.phase) * 0.25;
+  });
+  if (c.warden) c.body.add(box(0.7, 1.3, 0.1, glass, 0.75, 1.0, -0.2, 0.5));
+  c.baseY = 0;
+}
+
+/**
+ * The ten things the ladder fields. Tolls opens on mites because the farm track is where
+ * the game starts; every ladder climbs from there to something faster, tougher, or stranger
+ * at the far end. Wardens are not here: the gate wears its region's family at warden scale.
+ */
+const SPECIES: Record<string, (c: Ctx) => void> = {
+  mite,
+  walker: strider,
+  spark: staticbug,
+  glitch: glitchcube,
+  wisp: nullwisp,
+  husk,
+  imp: cinderbat,
+  surge,
+  front: tidecrab,
+  mirror,
+};
 
 const FAMILIES: Record<RegionId, (c: Ctx) => void> = {
   tolls: mite,
@@ -254,19 +400,20 @@ const hashSalt = (salt: string): number => {
 };
 
 /**
- * One standing mob: the region's own fauna, sized by kind, eyes in its element.
+ * One standing mob: its ladder species, sized by kind, eyes in its element.
  *
  * `salt` (the mob id) desyncs the idle cycle, so two bodies of one drift breathe out of
- * step instead of like one animal with two shadows.
+ * step instead of like one animal with two shadows. An empty or unknown `species` falls
+ * back to the region's family, which is what wardens wear on purpose.
  */
 export function buildCritter(
-  region: RegionId, kind: string, element: string, salt: string, stage: 'map' | 'duel' = 'map',
+  region: RegionId, kind: string, element: string, salt: string, stage: 'map' | 'duel' = 'map', species = '',
 ): BossAvatar {
   const k = kindOf(kind);
   const size = SCALE[k];
   const phase = hashSalt(salt);
   const root = new THREE.Group();
-  root.name = `critter:${region}:${kind}`;
+  root.name = `critter:${region}:${kind}:${species || 'wild'}`;
   const body = new THREE.Group();
   root.add(body);
 
@@ -283,8 +430,10 @@ export function buildCritter(
     warden: k === 'warden',
     eyeY: 1,
     baseY: 0,
+    hover: false,
   };
-  FAMILIES[region](ctx);
+  const build = (species ? SPECIES[species] : undefined) ?? FAMILIES[region];
+  build(ctx);
   body.scale.setScalar(size);
 
   let squash = 0;
@@ -340,7 +489,7 @@ export function buildCritter(
         size * breathe * charge * (1 - 0.25 * squash),
         size * breathe * charge * (1 + squash * 0.06),
       );
-      const hover = region === 'ashpine' || region === 'static';
+      const hover = ctx.hover;
       body.position.y = ctx.baseY + Math.sin(t * (hover ? 1.6 : 2.4) + phase) * (hover ? 0.14 : 0.05);
       const blink = ((t + phase) % 3.2 < 0.12 ? 0.15 : 1) * (1 + warn * 0.4);
       for (const e of ctx.eyes) e.scale.y = blink;

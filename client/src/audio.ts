@@ -101,12 +101,6 @@ export const sfx = {
     noise(0.12, 0.3, 300);
     tone(200, 0.2, 'sawtooth', 0.3, 70);
   },
-  /** Laser eyes: long, bright, and deliberately over the top. */
-  laser: () => {
-    tone(1200, 0.5, 'sawtooth', 0.34, 180);
-    tone(1800, 0.5, 'square', 0.16, 260);
-    noise(0.42, 0.16, 1800);
-  },
   spawn: () => {
     tone(90, 0.7, 'sawtooth', 0.34, 320);
     setTimeout(() => tone(120, 0.5, 'square', 0.2, 420), 120);

@@ -203,7 +203,7 @@ export function makeMaterials(a: DistrictArt, tex: Textures): Built {
   for (const k of ['asphalt', 'walk', 'plaza', 'grass', 'dirt', 'gravel', 'cobble', 'floor'] as const) {
     lam(k, { map: tex.ground[k] }, {}, { cast: false, receive: true });
   }
-  lam('water', { color: new THREE.Color(a.wet ? '#14344a' : a.skyTop === '#7e8489' ? '#5b7f78' : '#5a86a6') }, { water: true }, { cast: false, receive: true });
+  lam('water', { color: new THREE.Color(a.wet ? '#14344a' : a.skyTop === '#7e8489' ? '#5b7f78' : '#5a86a6'), vertexColors: true }, { water: true }, { cast: false, receive: true });
   // Flat-shaded: a smooth-shaded icosahedron lobe turns its unlit side into one pale lavender
   // balloon under the dusk ambient, which is exactly the placeholder look. Facets catch the
   // key light individually and read as leaves instead.

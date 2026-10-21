@@ -45,7 +45,7 @@ function hazard(s: BattleSession, ids: string[], damage = 1, left = 50): void {
     return { file: b.file, lane: b.lane };
   });
   s.field.hazards = [{ panels, files: [...new Set(panels.map((p) => p.file))],
-    left, total: left, move: 'jab', label: 'TEST JAB', damage, on: ids, owner: null, drain: 0 }];
+    left, total: left, move: 'jab', label: 'TEST JAB', damage, on: ids, owner: null, drain: 0, stunMs: 0, freezeMs: 0, burn: null, barrier: false }];
 }
 // Keep long lifecycle fixtures out of unrelated boss attacks and automatic menus.
 function pauseAttacks(s: BattleSession): void {
@@ -158,7 +158,7 @@ function finish(a: ReturnType<typeof seat>): Receipt {
   return end!;
 }
 function dungeon(a: ReturnType<typeof seat>, hp = 73) {
-  const stats = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level });
+  const stats = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level, attrs: a.p.build.attrs });
   const area: DataArea = {
     id: `area-${a.id}`, dungeonId: 'd-ember', name: 'TEST FOLD', tier: 1, seed: 1,
     sector: 'ashflat', rows: 2, entryId: 'gate', bossId: 'enemy',
@@ -323,7 +323,7 @@ describe('authoritative duel routing', () => {
     expect(a.b.file).toBe(1);
     expect(a.b.handOpen).toBe(false);
     expect(a.b.hand).not.toBeNull();
-    expect(a.b.charge).toBe(0);
+    expect(a.b.charge).toBe(a.b.chargeMs - SF.REOPEN_MS);
     expect(a.s.view(a.id).you).toMatchObject({ frozen: false, shielded: false });
     expect(a.last('refused').reason).toBe('unsupported duel action');
   });
@@ -725,7 +725,7 @@ describe('real social-party traits', () => {
     a.world.simulateSale(12_000, 3);
     for (const who of [a, b, c]) who.world.duel(who.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     const s = a.world.sessionOf(a.id)!; const body = s.bodyOf(a.id)!;
-    const base = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level });
+    const base = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level, attrs: a.p.build.attrs });
     expect(a.world.sessionOf(b.id)).toBe(s); expect(body.stats).toEqual(base);
     body.hp = 61;
     a.world.partyAction(a.id, { action: 'invite', with: b.id });
@@ -752,7 +752,7 @@ describe('real social-party traits', () => {
     a.world.simulateSale(12_000, 3);
     a.world.duel(a.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     const body = a.world.sessionOf(a.id)!.bodyOf(a.id)!;
-    const base = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level });
+    const base = SF.duelStatsOf({ loadout: a.p.build.loadout, level: a.p.level, attrs: a.p.build.attrs });
     expect(body.maxHp).toBe(base.hp);
     for (const who of [b, c]) a.world.duel(who.id, { t: 'duel', action: 'enter', mode: 'anomaly' });
     expect(body.maxHp).toBe(Math.round(base.hp * 1.15));
@@ -777,7 +777,7 @@ describe('graded loot and training rewards', () => {
     const outcome = s.outcomeOf(a.id)!; const end = a.end()!;
     expect(end).toMatchObject({ won: true, reason: 'cleared', rank: { level: outcome.level, letter: outcome.letter }, drop: outcome.drop });
     expect(outcome.letter).toBe(high ? 'S' : 'D');
-    const cards = grant.mock.calls.filter(([token, reward]) => token === a.p.tokenId && reward.cards?.length).flatMap(([, reward]) => reward.cards!);
+    const cards = grant.mock.calls.filter(([key, reward]) => key === a.p.saveKey && reward.cards?.length).flatMap(([, reward]) => reward.cards!);
     expect(cards).toHaveLength(outcome.drop.rolls);
     expect(cards.every((id) => (SF.battleCard(id)!.cls !== 'standard') === high)).toBe(true);
     expect(a.world.saves.get(a.p.tokenId).kills).toBe(1);

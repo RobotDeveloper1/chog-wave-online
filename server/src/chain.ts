@@ -20,6 +20,29 @@ const asLogs = (v: unknown): RpcLog[] | null => (Array.isArray(v) ? (v as RpcLog
 const asBlock = (v: unknown): BlockShape | null =>
   v && typeof v === 'object' && !Array.isArray(v) && 'timestamp' in v ? (v as BlockShape) : null;
 
+/** A $CHOG transfer into the game vault: real money arriving. `amount` is whole $CHOG, floored. */
+export interface DepositFact {
+  txHash: string;
+  from: string;
+  amount: number;
+  block: number;
+}
+
+/**
+ * Pull a vault deposit out of a $CHOG Transfer log, or null when the log is not
+ * one. Pure, so the money path is unit-testable without an RPC in the room.
+ */
+export function depositOf(log: RpcLog, vault: string): DepositFact | null {
+  if (!vault) return null;
+  const addr = (topic: string | undefined) =>
+    topic && topic.length >= 64 ? '0x' + topic.slice(-40).toLowerCase() : null;
+  const to = addr(log.topics[2]);
+  if (!to || to !== vault.toLowerCase()) return null;
+  const from = addr(log.topics[1]);
+  if (!from || from === to) return null;
+  return { txHash: log.transactionHash, from, amount: fromHex(log.data || '0x0') / 1e18, block: fromHex(log.blockNumber) };
+}
+
 /**
  * Follows Genesis transfers into their receipts to find the Seaport fill that
  * carried the money. A Transfer alone is not a sale — of 2,074 historical transfer
@@ -71,6 +94,7 @@ export interface ChainFeed {
 export function createChainFeed(
   onEvents: (evs: WaveEvent[]) => void,
   onFills: (fills: SaleFact[]) => void = () => {},
+  onDeposit: (facts: DepositFact[]) => void = () => {},
 ): ChainFeed {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let lastBlock = 0;
@@ -87,7 +111,7 @@ export function createChainFeed(
    * left the ownership index and the provenance ledger starved while the market
    * screen happily printed the same moves as traffic.
    */
-  const decode = (nft: RpcLog[], token: RpcLog[], tsFor: (block: number) => number): WaveEvent[] => {
+  const decode = (nft: RpcLog[], token: RpcLog[], tsFor: (block: number) => number, deposits: DepositFact[]): WaveEvent[] => {
     const out: WaveEvent[] = [];
     for (const log of nft) {
       const block = fromHex(log.blockNumber);
@@ -101,6 +125,8 @@ export function createChainFeed(
     for (const log of token) {
       const block = fromHex(log.blockNumber);
       out.push({ kind: 'token-swap', amount: fromHex(log.data || '0x0') / 1e18, block, ts: tsFor(block) });
+      const dep = depositOf(log, CFG.vault);
+      if (dep) deposits.push(dep);
     }
     return out;
   };
@@ -150,7 +176,9 @@ export function createChainFeed(
         ledger.headHint = head;
         ledger.headTs = headTs;
 
-        const evs = decode(nftLogs, tokenLogs, tsFor);
+        const deposits: DepositFact[] = [];
+        const evs = decode(nftLogs, tokenLogs, tsFor, deposits);
+        if (deposits.length) onDeposit(deposits);
 
         const fills = await priceTransfers(nftLogs);
         if (fills.length) {

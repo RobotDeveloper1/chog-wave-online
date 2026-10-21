@@ -7,19 +7,9 @@ const srcDir = join(root, '.data', 'metadata');
 const outDir = join(root, '.data', 'metadata-testnet');
 
 /**
- * Give the testnet replica real faces.
- *
- * Usage: node scripts/replica-meta.mjs <mainnetId> [<mainnetId> ...]
- *
- * The first mainnet id becomes testnet #1, the second #2, and so on — the
- * same order `deploy.mjs` mints in, so testnet #N wears mainnet <id>'s
- * traits. Only the `name` is rewritten (`CHOG #<mainnetId>` → `CHOG #<N>`);
- * the attributes travel untouched, because the trait index keys by the real
- * id in `name` and the filename is only where the file lives.
- *
- * Nothing on mainnet is touched. Files land in `.data/metadata-testnet`,
- * which the server reads instead of `.data/metadata` whenever
- * CHOG_GENESIS_CONTRACT points at the replica.
+ * SUPERSEDED: the server reads replica ids as mainnet ids now (same map, same
+ * metadata), so testnet #N is mainnet token #N with no copying step. Kept for
+ * reference; running it only writes files nothing reads.
  */
 
 const wanted = process.argv.slice(2).map(Number);

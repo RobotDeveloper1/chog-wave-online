@@ -17,6 +17,7 @@ import {
   openSession,
   partyDepth,
   partySteps,
+  pick,
   pickCard,
   previewDamage,
   execute,
@@ -35,6 +36,7 @@ import {
   BURN_EVERY_MS,
   BURN_TICKS,
   FREEZE_MS,
+  REOPEN_MS,
   cardKind,
   enemyVolleyDamage,
   volleyDamage,
@@ -123,6 +125,41 @@ describe('the Hand', () => {
     // Two copies of one card in one turn is never allowed.
     const withEmber = { ...s, queue: [2], lock: 'burn' as const };
     expect(canPick(withEmber, 3, CAPS).reason).toBe('duplicate');
+  });
+
+  it('lets the basic attack chain with itself, which is what the budgets price', () => {
+    // tolls.1 is priced as 1.2 screens of chained basics (12 + 13.8 + 15.6): three picks
+    // of the same button in one turn must be legal, or the first fight is 4 screens.
+    const s = {
+      ...emptyHand(),
+      cells: [
+        { cell: 0, row: 0, col: 0, cardId: 'basic_burn' },
+        { cell: 1, row: 0, col: 1, cardId: 'basic_burn' },
+        { cell: 2, row: 1, col: 0, cardId: 'basic_burn' },
+      ],
+    };
+    const a = pick(s, 0, CAPS);
+    expect(a.ok).toBe(true);
+    const b = pick(a.state, 1, CAPS);
+    expect(b.ok).toBe(true);
+    expect(pick(b.state, 2, CAPS).ok).toBe(true);
+  });
+
+  it('lets basics fill any lock without setting one', () => {
+    const s = {
+      ...emptyHand(),
+      cells: [
+        { cell: 0, row: 0, col: 0, cardId: 'basic_prism' },
+        { cell: 1, row: 0, col: 1, cardId: 'emberpaw' },
+      ],
+    };
+    // A prism basic under a burn lock still fits.
+    expect(canPick({ ...s, lock: 'burn' }, 0, CAPS).ok).toBe(true);
+    // And opening with a basic leaves the turn uncommitted for the real card.
+    const first = pick(s, 0, CAPS);
+    expect(first.ok).toBe(true);
+    expect(first.state.lock).toBeNull();
+    expect(pick(first.state, 1, CAPS).ok).toBe(true);
   });
 
   it('spends the battle\'s one Giga for good', () => {
@@ -309,7 +346,9 @@ describe('seamless movement with the Hand open', () => {
       expect(body.file).toBe(1);
       expect(body.handOpen).toBe(false);
       expect(body.hand).not.toBeNull();
-      expect(body.charge).toBe(0);
+      // The step out costs a short beat, not the whole charge: dodging must not
+      // punish the cast it was protecting.
+      expect(body.charge).toBe(body.chargeMs - REOPEN_MS);
       expect(viewOf(s, 'p1').you).toMatchObject({ frozen: false, shielded: false });
     },
   );
@@ -342,7 +381,8 @@ describe('the dodge', () => {
   /** A held strike standing on one panel, so a step can be judged against it. */
   const hold = (s: DuelSession, file: number, lane: number): void => {
     s.field.hazards = [{ panels: [{ file, lane }], files: [file], left: 150, total: 150,
-      move: 'JAB', label: 'TEST JAB', damage: 500, on: ['p1'], owner: null, drain: 0 }];
+      move: 'JAB', label: 'TEST JAB', damage: 500, on: ['p1'], owner: null, drain: 0,
+      stunMs: 0, freezeMs: 0, burn: null, barrier: false }];
   };
 
   it('earns a short invulnerability when the step escapes the panel under it', () => {

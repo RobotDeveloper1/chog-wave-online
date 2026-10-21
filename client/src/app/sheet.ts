@@ -6,6 +6,7 @@ import { renderCareer } from './careerPage.ts';
 import { renderDeck, renderLibrary } from './deckPages.ts';
 import { renderDungeons } from './dungeonPage.ts';
 import { renderParty } from './partyPage.ts';
+import { renderSocial } from './socialPage.ts';
 import { renderOptions } from './sheet/optionsPage.ts';
 import { cardImg } from './cardArt.ts';
 
@@ -19,7 +20,7 @@ import { cardImg } from './cardArt.ts';
  * the server computed, which is the only reason the screen can be trusted.
  */
 
-export type Tab = 'home' | 'map' | 'line' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'deck' | 'library' | 'party' | 'ranks' | 'options';
+export type Tab = 'home' | 'map' | 'line' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'deck' | 'library' | 'party' | 'social' | 'ranks' | 'options';
 
 export interface TabDef {
   id: Exclude<Tab, 'home'>;
@@ -38,6 +39,7 @@ export const TABS: TabDef[] = [
   { id: 'career', label: 'CAREER', icon: 'bolt', colour: 'var(--gold)', key: 'C' },
   { id: 'bag', label: 'BAG', icon: 'bag', colour: 'var(--frost)', key: 'B' },
   { id: 'party', label: 'PARTY', icon: 'heart', colour: 'var(--rose)', key: 'P' },
+  { id: 'social', label: 'SOCIAL', icon: 'star', colour: 'var(--mint)', key: 'H' },
   { id: 'deck', label: 'DECK', icon: 'pack', colour: 'var(--burn)', key: 'F' },
   { id: 'library', label: 'LIBRARY', icon: 'sparkle', colour: 'var(--cyan)' },
   { id: 'shop', label: 'SHOP', icon: 'wav', colour: 'var(--volt)' },
@@ -89,7 +91,7 @@ export interface AreaView {
 }
 
 export interface SheetApi {
-  buy(kind: 'card' | 'item', stockId: string): void;
+  buy(kind: 'card' | 'item' | 'furniture', stockId: string): void;
   sell(cardId: string): void;
   use(id: string): void;
   track(questId: string): void;
@@ -153,6 +155,7 @@ export function renderSheet(
 ): string {
   if (tab === 'home') return renderHome();
   if (tab === 'party') return renderParty();
+  if (tab === 'social') return renderSocial();
   if (tab === 'map') return worldMap(ctx);
   if (tab === 'options') return renderOptions();
   if (!p) return `<div class="sheet"><span class="idle">no profile yet — the link is still opening</span></div>`;
@@ -238,7 +241,7 @@ function bag(p: ProfileView): string {
 }
 
 function shop(p: ProfileView): string {
-  const line = (l: { stockId: string; name: string; price: number; desc?: string; klass?: string; element?: string }, kind: 'card' | 'item'): string =>
+  const line = (l: { stockId: string; name: string; price: number; desc?: string; klass?: string; element?: string }, kind: 'card' | 'item' | 'furniture'): string =>
     `<div class="line has-art">${kind === 'item' ? `<img class="item-art" src="/items/item-${l.stockId}.svg" alt="">` : cardImg(l.stockId, l.element, 'item-art')}<span class="line-main"><b>${esc(l.name)}</b><span class="x">${l.klass ?? ''}${l.element ? ` ${l.element}` : ''}</span></span>
       <span class="d">${esc(l.desc ?? '')}</span>
       <button data-a="buy" data-kind="${kind}" data-id="${l.stockId}">${l.price} WAV</button></div>`;
@@ -246,6 +249,7 @@ function shop(p: ProfileView): string {
     <div class="cols">
       <div><div class="lbl">CARD SHOP</div>${p.shops.cards.map((c) => line(c, 'card')).join('')}</div>
       <div><div class="lbl">SUPPLY COUNTER</div>${p.shops.supply.map((c) => line(c, 'item')).join('')}</div>
+      <div><div class="lbl">FURNITURE</div>${p.shops.furniture.map((c) => line(c, 'furniture')).join('')}</div>
     </div>
     <div class="hint">prices move with the collection's real volume — a hot floor is an expensive floor</div>
   </div>`;
@@ -315,7 +319,7 @@ export function bindSheet(el: HTMLElement, api: SheetApi): void {
       // instead of "travel to Tolls", and the click did nothing at all with nothing to show for
       // it. The last line of this function is the part that would have caught it.
       const id = btn.dataset.id ?? '';
-      if (a === 'buy') api.buy(btn.dataset.kind as 'card' | 'item', id);
+      if (a === 'buy') api.buy(btn.dataset.kind as 'card' | 'item' | 'furniture', id);
       else if (a === 'sell') api.sell(id);
       else if (a === 'use') api.use(id);
       else if (a === 'track') api.track(id);

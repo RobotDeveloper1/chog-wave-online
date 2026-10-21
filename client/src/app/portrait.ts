@@ -29,7 +29,7 @@ let r0: THREE.WebGLRenderer | null = null;
  * Everything that belongs to the head. Used to frame the portrait: a Chog is chibi, so half its
  * bounding box is legs — any framing derived from the body's height lands on the chest or worse.
  */
-const HEAD_PART = /head|mane|hair|tuft|ear|horn|hat|face|eye|nose|mouth|blush|glint/i;
+const HEAD_PART = /head|mane|hair|tuft|ear|horn|hat|face|eye|nose|mouth|blush|glint|form/i;
 
 function ensure(): THREE.WebGLRenderer {
   if (renderer) return renderer;
@@ -56,16 +56,26 @@ function ensure(): THREE.WebGLRenderer {
  * evidence, and the honest answer there is "measure it" rather than "assume a convention".
  */
 function faceDirection(clone: THREE.Object3D, centre: THREE.Vector3): { x: number; z: number } | null {
-  // Sum from ZERO, not from the centre. Starting from the centre and dividing by n afterwards
-  // yields `(centre + Σp)/n - centre`, which is the true offset only when the model happens to be
-  // centred on the origin — and for a single eye it is off by the whole centre.
+  // Measure GEOMETRY centroids, never object origins. An assembled Chog's face parts are either
+  // skinned (base eyes, whose object transform never leaves the bind pose) or attach()ed under
+  // the Head bone (trait parts, whose origins all collapse onto the bone) — averaging origins
+  // yields the bone's own position, which sits within pose-jitter of the bbox centre, and the
+  // yaw came out a coin flip: some dialogue portraits faced backwards on every load.
   let fx = 0;
   let fz = 0;
   let n = 0;
+  const c = new THREE.Vector3();
   clone.traverse((o) => {
-    if (!FACE_PART.test(o.name)) return;
-    const p = new THREE.Vector3().setFromMatrixPosition(o.matrixWorld);
-    fx += p.x; fz += p.z; n++;
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh || !FACE_PART.test(o.name)) return;
+    const g = mesh.geometry as THREE.BufferGeometry | undefined;
+    if (!g || !g.boundingBox) {
+      try { g?.computeBoundingBox?.(); } catch { return; }
+    }
+    const bb = g?.boundingBox;
+    if (!bb) return;
+    bb.getCenter(c).applyMatrix4(o.matrixWorld);
+    fx += c.x; fz += c.z; n++;
   });
   if (!n) return null;
   return { x: fx / n - centre.x, z: fz / n - centre.z };
@@ -77,7 +87,7 @@ function coverage(): number {
   if (!g) return 0;
   const { data } = g.getImageData(0, 0, W, H);
   let on = 0;
-  for (let i = 3; i < data.length; i += 4) if (data[i] > 24) on++;
+  for (let i = 3; i < data.length; i += 4) if ((data[i] ?? 0) > 24) on++;
   return on / (W * H);
 }
 
@@ -148,11 +158,22 @@ export function faceUrl(root: THREE.Group): string | null {
 
   // Frame the HEAD box, in the pivot's (centred) space. The model's own origin is wherever Blender
   // left it — on the Chog rigs it is the feet — so neither the pivot nor the body's midpoint can be
-  // trusted as "the face". The head parts can.
+  // trusted as "the face". The head parts can — except the hat, which framing must ignore: a
+  // Silver Thorn spans twice the head, and framing it put the thorns in the portrait instead of
+  // the face. Caps crop at the top edge, which is what a face close-up is for.
+  // NOTE: no bare "head" here — it used to lead this list and excluded the skull itself,
+  // so the frame was measured off the mouth and the lens sat on the lips. Headband stays:
+  // it is the only head-worn trait whose name does not contain "hat".
+  const HAT_PART = /hat|cap|helmet|hood|crown|beanie|wig|thorn|headband|horn|hair|tuft|mane|skull/i;
   const head = new THREE.Box3();
   clone.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh && HEAD_PART.test(o.name)) head.expandByObject(o);
+    if ((o as THREE.Mesh).isMesh && HEAD_PART.test(o.name) && !HAT_PART.test(o.name)) head.expandByObject(o);
   });
+  if (head.isEmpty()) {
+    clone.traverse((o) => {
+      if ((o as THREE.Mesh).isMesh && HEAD_PART.test(o.name)) head.expandByObject(o);
+    });
+  }
   const headSize = new THREE.Vector3();
   const headCentre = new THREE.Vector3();
   if (!head.isEmpty()) {
@@ -164,12 +185,58 @@ export function faceUrl(root: THREE.Group): string | null {
     headCentre.set(centre.x, box.max.y - height * 0.15, centre.z);
   }
   const aimY = headCentre.y - centre.y;
-  const spanY = Math.max(headSize.y * 1.45, height * 0.35);
+  // The dialogue box shows this PNG cover-fit in a SQUARE card, so the head must sit
+  // small in the frame with shoulders and air around it - a head filling the PNG reads
+  // as a nose pressed to the glass. ~30% of the frame height is a bust, not a mugshot.
+  const spanY = Math.max(headSize.y * 2.4, height * 0.62);
   const dist = Math.max(1.4, spanY / (2 * Math.tan((cam.fov * Math.PI) / 180 / 2)));
   cam.position.set(0, aimY, dist);
   cam.lookAt(0, aimY, 0);
   cam.updateProjectionMatrix();
 
+  r.render(scene, cam);
+  const url = r.domElement.toDataURL('image/png');
+  scene.remove(pivot);
+  pivot.remove(clone);
+  return url;
+}
+
+/**
+ * Render `root` as a full-body still in three-quarter view. Same off-screen
+ * renderer as `faceUrl`, so shelf snapshots cost no extra WebGL context: the
+ * picker mounts each detected Chog once, shoots it, and shows the PNG.
+ */
+export function bodyUrl(root: THREE.Group): string | null {
+  let r: THREE.WebGLRenderer;
+  try {
+    r = ensure();
+  } catch {
+    return null;
+  }
+  r0 = r;
+  const clone = cloneSkinned(root);
+  clone.rotation.set(0, 0, 0);
+  clone.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(clone);
+  const size = new THREE.Vector3();
+  box.getSize(size);
+  if (!(size.y > 0)) {
+    scene.remove(clone);
+    return null;
+  }
+  const centre = box.getCenter(new THREE.Vector3());
+  const facing = faceDirection(clone, centre);
+  const pivot = new THREE.Group();
+  pivot.add(clone);
+  clone.position.sub(centre);
+  // Face the camera, then turn: a 3/4 view reads as a model, not a mugshot.
+  pivot.rotation.y = (facing ? -Math.atan2(facing.x, facing.z) : 0) + 0.55;
+  scene.add(pivot);
+  const span = Math.max(size.y * 1.35, (size.x * 1.6) / cam.aspect);
+  const dist = Math.max(1.4, span / (2 * Math.tan((cam.fov * Math.PI) / 180 / 2)));
+  cam.position.set(0, 0, dist);
+  cam.lookAt(0, 0, 0);
+  cam.updateProjectionMatrix();
   r.render(scene, cam);
   const url = r.domElement.toDataURL('image/png');
   scene.remove(pivot);

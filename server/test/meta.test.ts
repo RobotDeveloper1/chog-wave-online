@@ -7,9 +7,7 @@ import { TraitIndex } from '../src/meta.ts';
 /**
  * The trait index keys by the real id in `name`, never the filename — mainnet
  * tokenURIs are shuffled, so the filename is where a file lives, not who it
- * is. The testnet replica leans on exactly this: its files are named 1.json,
- * 2.json, … but carry `CHOG #<N>`, and a shared map would otherwise hand
- * testnet #1 mainnet #1's face.
+ * is. Replica ids are mainnet ids, so the one map serves both chains.
  */
 
 function dirWith(docs: Record<string, unknown>): string {
@@ -46,6 +44,24 @@ describe('trait index', () => {
       const p = idx.for(5);
       expect(p.source).toBe('predicted');
       expect(Object.keys(p.attributes).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('translates shuffled token ids through the token map', () => {
+    const dir = dirWith({
+      '1635.json': { name: 'CHOG #1635', attributes: [{ trait_type: 'Skin', value: 'Pink' }] },
+    });
+    const mapPath = join(dir, 'map.json');
+    writeFileSync(mapPath, JSON.stringify({ '174': 1635 }));
+    try {
+      const idx = new TraitIndex(dir, mapPath);
+      // No 174.json exists: token 174 resolves only via the map.
+      expect(idx.for(174)).toMatchObject({ source: 'real', attributes: { Skin: 'Pink' } });
+      expect(idx.has(174)).toBe(true);
+      expect(idx.knownIds()).toEqual([174]);
+      expect(idx.for(999).source).toBe('predicted');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

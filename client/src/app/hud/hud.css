@@ -201,8 +201,6 @@ button { font: inherit; color: inherit; -webkit-tap-highlight-color: transparent
 .meter.hp > i { background: var(--rose); }
 .meter.xp { height: .55em; }
 .meter.xp > i { background: var(--violet); }
-.meter.laser { height: .55em; }
-.meter.laser > i { background: var(--gold); }
 .prow { display: flex; gap: 1em; align-items: center; font-size: .86em; }
 .wav { color: var(--gold); font: 400 .95em var(--mono); display: inline-flex; align-items: center; gap: .35em; }
 

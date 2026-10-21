@@ -22,7 +22,7 @@ export function renderRanks(ranks: RanksView | null, problem = ''): string {
       ? rows
           .map(
             (r, i) =>
-              `<div class="rrow ${r.tokenId === ranks.you ? 'you' : ''}"><span class="rk">${i + 1}</span><span class="rn">${esc(r.name)}</span><span class="rv">${figure(r)}</span></div>`,
+              `<div class="rrow ${r.key === ranks.you ? 'you' : ''}"><span class="rk">${i + 1}</span><span class="rn">${esc(r.name)}</span><span class="rv">${figure(r)}</span></div>`,
           )
           .join('')
       : `<div class="idle">${empty}</div>`;

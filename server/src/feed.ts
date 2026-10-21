@@ -1,4 +1,5 @@
 import type { SaleFact, WaveEvent } from '@chog/shared';
+import type { DepositFact } from './chain.ts';
 import { chainConfigured, feedMode } from './config.ts';
 import { createChainFeed } from './chain.ts';
 import { createSurge, createSyntheticFeed } from './synthetic.ts';
@@ -39,11 +40,12 @@ export interface Feed {
 export function createFeed(
   onEvents: (evs: WaveEvent[]) => void,
   onFills: (fills: SaleFact[]) => void = () => {},
+  onDeposit: (facts: DepositFact[]) => void = () => {},
 ): Feed {
   const mode = feedMode();
 
   if (mode === 'chain') {
-    const chain = createChainFeed(onEvents, onFills);
+    const chain = createChainFeed(onEvents, onFills, onDeposit);
     const surge = createSurge(onEvents);
     return {
       mode: 'chain',

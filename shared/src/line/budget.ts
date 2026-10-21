@@ -1,5 +1,6 @@
 import { anyCard } from '../cards.ts';
 import { ENCOUNTERS, ENCOUNTER_BY_ID, REGIONS, type EncounterKind, type RegionId } from './index.ts';
+import { distOrder } from './mobs.ts';
 import { quirkOf } from './quirks.ts';
 import { CHAIN_STEPS, CHAIN_MAX } from '../sf/element.ts';
 import { cardClass } from '../sf/card.ts';
@@ -39,7 +40,8 @@ import { cardClass } from '../sf/card.ts';
  * not a wall — every region keeps every starter at a neutral-or-better average.
  */
 
-/** How many screens a fight of each kind should last, at the deck the player arrives with. */
+/** How many screens a fight of each kind should last, at the deck the player arrives with.
+ * Regions 2 and up play this table straight; region 1 breathes (see `screensFor`). */
 export const SCREENS: Record<EncounterKind, number> = {
   /** The bread. Two screens of the basic attack is the tutorial's whole promise. */
   drift: 1.8,
@@ -48,6 +50,18 @@ export const SCREENS: Record<EncounterKind, number> = {
   /** The gate. Out of reach until the region has given up most of what it holds. */
   warden: 6.5,
 };
+
+/**
+ * The tutorial breathes: region 1 fights cost fewer screens while the player is
+ * still learning the verbs — one charge cycle for a drift instead of two, four
+ * basics instead of six. The reward is still the difficulty (HP still prices from
+ * the arrival deck); the first map just asks for fewer screens of it.
+ */
+const TUTORIAL_SCREENS: Record<EncounterKind, number> = { drift: 1.2, post: 2.6, warden: 5 };
+
+export function screensFor(kind: EncounterKind, regionN: number): number {
+  return regionN <= 1 ? TUTORIAL_SCREENS[kind] : SCREENS[kind];
+}
 
 /** The median fresh Chog's basic attack. Measured, not chosen: sf/loadout.ts basicMight across
  * the 493 tokens in .data/metadata gives 9..16 with a median of 12.
@@ -76,13 +90,16 @@ const mightOf = (id: string): number => {
 /**
  * Every card the road proves on arrival at index `i` of `region`: all unlocks from the regions
  * before it, then this region's encounters before `i`. Both halves are facts, not assumptions —
- * the warden key gates regions and `encounterGate` walks each region in order.
+ * the warden key gates regions; inside a region, `i` is the distance rank, so the road
+ * prices the natural grind — nearer sites cleared first — while wanderers arrive
+ * over- or under-held by their own route.
  */
 function heldOnArrival(region: RegionId, i: number): string[] {
   const n = REGIONS.find((r) => r.id === region)?.n ?? 1;
   const before = ENCOUNTERS.filter((e) => (REGIONS.find((r) => r.id === e.region)?.n ?? 7) < n);
-  const mine = ENCOUNTERS.filter((e) => e.region === region).slice(0, Math.max(0, i));
-  return [...new Set([...before, ...mine].flatMap((e) => [...e.unlocks]))];
+  const mine = distOrder(region).slice(0, Math.max(0, i)).flatMap((id) => ENCOUNTER_BY_ID.get(id)?.unlocks ?? []);
+  const heldBefore = before.flatMap((e) => [...e.unlocks]);
+  return [...new Set([...heldBefore, ...mine])];
 }
 
 /**
@@ -154,10 +171,11 @@ export interface EncounterBudget {
 export function encounterBudget(encounterId: string): EncounterBudget | null {
   const e = ENCOUNTER_BY_ID.get(encounterId);
   if (!e) return null;
-  const enc = ENCOUNTERS.filter((x) => x.region === e.region);
-  const index = enc.findIndex((x) => x.id === e.id);
+
+  const index = distOrder(e.region).indexOf(e.id);
   const sm = screenMight(e.region, Math.max(0, index));
-  const screens = SCREENS[e.kind];
+  const n = REGIONS.find((r) => r.id === e.region)?.n ?? 1;
+  const screens = screensFor(e.kind, n);
   const hpK = quirkOf(e.id).hpK ?? 1;
   return { screenMight: sm, screens, hp: Math.round(screens * sm * hpK), band: `${e.region}-${e.kind}` };
 }

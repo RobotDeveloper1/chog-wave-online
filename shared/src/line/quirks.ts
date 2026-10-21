@@ -40,15 +40,24 @@ export interface Quirk {
 }
 
 const QUIRKS: Record<string, Quirk> = {
-  // Young swarm: many soft bites. The tutorial fight, and the only one that hits
-  // *under* the line — everything after it is at the line or above.
-  'tolls.1': { hpK: 1.15, powerK: 0.9 },
+  // Soot imps, cornered past half: every other volley comes at you personally.
+
+
+
+  'tolls.1': { powerK: 1.2, cornered: true },
   // The first thing on the Line that hunts: cut, then run where you fled.
   'tolls.2': { powerK: 1.15, bloodscent: true },
-  // Fast birds. The warning is the tell — read the flash, not the bird.
-  'tolls.3': { powerK: 1.15, clock: { gapK: 0.9, tellK: 0.85 } },
-  // Hedge dogs, cornered past half: every other volley comes at you personally.
-  'tolls.4': { powerK: 1.2, cornered: true },
+  // Cinder mites, skittish but weak: a quicker clock on a softer bite.
+
+
+
+  'tolls.3': { powerK: 1, clock: { gapK: 0.95, tellK: 0.9 } },
+
+  // Young swarm: soft, slow, and honest HP. The tutorial fight, and the only one
+  // that hits *under* the line — everything after it is at the line or above.
+  // No hpK: the first fight lasts exactly its 1.2 promised screens, and a median
+  // starter who dodges nothing still walks out with ~20 HP.
+  'tolls.4': { powerK: 0.7, clock: { gapK: 1.2, tellK: 1.15 } },
   // The fence holds a file. What you anchored there is gone for the fight.
   'tolls.5': { powerK: 1.2, walls: true },
   // The weighbridge: slow, heavy, and it does not move for you.

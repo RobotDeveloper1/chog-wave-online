@@ -8,6 +8,7 @@ import type { DynamicState } from './city/landmarks.ts';
 import type { ICON } from './hud/icons.ts';
 import type { MapMarker } from './hud/minimap.ts';
 import { CityLife } from './life.ts';
+import { npcLookFor } from './npcLooks.ts';
 import type { WalkLayout } from './player.ts';
 import type { Stage } from './stage.ts';
 import { TRIBE_COLOUR, TRIBE_TINT, nameplate, questMark, type MarkKind } from './tribes.ts';
@@ -337,6 +338,10 @@ export class Explorer {
    *  a player's token draws from — so the city's people are individuals, and
    *  the DEALER you met yesterday is wearing the same hat today. */
   private async npcTraits(id: string): Promise<Record<string, string>> {
+    // Curated looks first: the city dresses from the table, and only strangers
+    // nobody curated fall through to the hash.
+    const fixed = npcLookFor(id);
+    if (fixed) return fixed;
     try {
       this.traitPools ??= Promise.all([
         fetch(this.model.partsUrl).then((r) => r.json()),

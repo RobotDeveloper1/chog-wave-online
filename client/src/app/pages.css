@@ -195,6 +195,26 @@
 .pvb button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); color: #fff; } .pvb button.on:hover:not(:disabled) { background: #5cf0ba; color: #04170f; } .pvb button:disabled { opacity: .35; cursor: not-allowed; }
 .pv p { margin: 0; color: var(--dim); font: 400 .68em/1.5 var(--mono); } .pv p.bad { color: var(--rose); }
 
+.social { display: flex; flex-direction: column; height: 100%; padding: .6em .8em .7em; gap: .5em; overflow-y: auto; }
+.social section { display: flex; flex-direction: column; gap: .35em; padding: .5em .6em; border: 1px solid var(--edge); background: var(--recess); }
+.social .lbl { font: 400 .72em var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--dim); }
+.social .x { font: 400 .72em var(--mono); color: var(--faint); }
+.social .row { display: flex; align-items: center; gap: .5em; flex-wrap: wrap; }
+.social button { padding: .3em .9em; border-radius: var(--r); border: 1px solid var(--edge); border-bottom: 2px solid #090613; background: var(--plate-up); color: var(--ink); font: 700 .76em var(--ui); cursor: pointer; }
+.social button:hover:not(:disabled) { border-color: var(--edge-hi); background: var(--plate); color: #fff; }
+.social button:disabled { opacity: .35; cursor: not-allowed; }
+.social button.on { border-color: var(--mint); border-bottom-color: #06301f; background: var(--mint); color: #04170f; }
+.social button small { margin-left: .4em; font: 400 .85em var(--mono); opacity: .75; }
+.social .ask { display: flex; align-items: center; gap: .6em; padding: .4em .8em; border: 1px solid var(--mint); background: color-mix(in srgb, var(--mint) 8%, var(--plate)); font: 700 .86em var(--ui); }
+.social .ask span { flex: 1; } .social .ask b { color: #fff; }
+.social .ask .row { margin-left: auto; }
+.social .stock { display: flex; flex-wrap: wrap; gap: .35em; }
+.social .frow { display: flex; align-items: center; gap: .5em; padding: .25em .4em; border: 1px solid var(--edge); background: var(--plate); }
+.social .frow b { font: 700 .8em var(--ui); }
+.social .frow .x { flex: 1; }
+.social .dot { width: .55em; height: .55em; border-radius: 50%; background: var(--faint); }
+.social .dot.on { background: var(--mint); }
+
 /* ================================================================ the pages on a phone */
 
 /*

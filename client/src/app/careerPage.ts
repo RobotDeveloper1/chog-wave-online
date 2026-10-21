@@ -48,7 +48,7 @@ export function renderCareer(p: ProfileView): string {
   // The ladder on the right says what levels give; this line says what you already took. Without it
   // the page answers "what is ahead" and leaves "how strong am I now" to a screenshot of a fight.
   const u = p.unlocks;
-  const now = `<p class="cr-now"><b>yours now</b><span>field ${u.fieldHp}</span><span>queue ${u.queueSlots}</span><span>laser ${u.laserCharges}</span><span>bag ${u.bagCap}</span><span title="charge cooldown — under 1 fires faster">charge ×${u.chargeScale.toFixed(2)}</span><span>mega +${u.megaSlots}</span><span>giga +${u.gigaSlots}</span><span>fused +${u.fusedSlots}</span></p>`;
+  const now = `<p class="cr-now"><b>yours now</b><span>field ${u.fieldHp}</span><span>queue ${u.queueSlots}</span><span>bag ${u.bagCap}</span><span title="charge cooldown — under 1 fires faster">charge ×${u.chargeScale.toFixed(2)}</span><span>mega +${u.megaSlots}</span><span>giga +${u.gigaSlots}</span><span>fused +${u.fusedSlots}</span></p>`;
 
   const st = p.stats;
   return `<div class="career">

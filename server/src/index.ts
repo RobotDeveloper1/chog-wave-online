@@ -3,8 +3,9 @@ import { performance } from 'node:perf_hooks';
 import { createReadStream, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { BUILD_TAG, BUILD_VERSION, CHOG_GENESIS_ADDRESS, GAME_NAME, GENESIS_SUPPLY, SECTORS, isAddress, warmDps, type ChogSource, type DuelMsg, type Placement, type SectorId } from '@chog/shared';
-import { CFG, chainConfigured } from './config.ts';
+import { BUILD_TAG, BUILD_VERSION, GAME_NAME, GENESIS_SUPPLY, SECTORS, isAddress, warmDps, type ChogSource, type DuelMsg, type Placement, type SectorId } from '@chog/shared';
+import { CFG, chainConfigured, dataFile } from './config.ts';
+import { metaNumberFor } from './meta.ts';
 import { Auth } from './auth.ts';
 import { ledger } from './ledger.ts';
 import { ownership } from './owners.ts';
@@ -13,7 +14,7 @@ import { holdingsView, sourceFor } from './wallet.ts';
 import { World, fosterSource, type Player } from './world.ts';
 
 const world = new World();
-const auth = new Auth(ownership);
+const auth = new Auth(ownership, world.saves);
 const sse = new Set<WebSocket>();
 
 /**
@@ -85,7 +86,7 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   }
 
   if (url.pathname === '/health') {
-    return json(res, 200, { ok: true, game: GAME_NAME, build: BUILD_VERSION, tag: BUILD_TAG, feed: world.feedMode, describe: world.snapshot().feed.describe });
+    return json(res, 200, { ok: true, game: GAME_NAME, build: BUILD_VERSION, tag: BUILD_TAG, feed: world.feedMode, describe: world.snapshot().feed.describe, chainId: CFG.chainId || null, vault: CFG.vault || null });
   }
   if (url.pathname === '/api/world') return json(res, 200, world.snapshot());
   if (url.pathname === '/api/leaderboard') return json(res, 200, world.saves.leaderboard());
@@ -128,12 +129,13 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   }
 
   // ── privy sign-in ───────────────────────────────────────────────────────────
-  // The only login. The client sends both Privy tokens; the address the session
-  // is issued for comes out of Privy's verified user object, never the body.
+  // The only login. The client sends the Privy session's access token (and the
+  // identity token when the SDK has one); the address the session is issued for
+  // comes out of Privy's verified user object, never the body.
   if (url.pathname === '/api/auth/privy' && req.method === 'POST') {
     const body = await bodyOf(req);
-    if (!body || typeof body.accessToken !== 'string' || typeof body.idToken !== 'string') {
-      return json(res, 400, { ok: false, reason: 'need privy access and identity tokens' });
+    if (!body || typeof body.accessToken !== 'string') {
+      return json(res, 400, { ok: false, reason: 'need a privy access token' });
     }
     const r = await verifyPrivyLogin(body.accessToken, body.idToken);
     if (!r.ok) return json(res, 401, { ok: false, reason: r.reason });
@@ -187,7 +189,7 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   // client. The id is matched against ^\d+$ before it touches the filesystem.
   const sprite = url.pathname.match(/^\/chogs\/(\d{1,4})\.png$/);
   if (sprite) {
-    const file = join(process.cwd(), CFG.spritesDir, `${sprite[1]}.png`);
+    const file = dataFile(CFG.spritesDir, `${sprite[1]}.png`);
     if (!existsSync(file)) return json(res, 404, { error: 'no atlas' });
     res.writeHead(200, {
       'content-type': 'image/png',
@@ -201,20 +203,27 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   // id is matched against ^\d+$ and the extension is whitelisted before it touches the filesystem.
   const art = url.pathname.match(/^\/art\/(\d{1,4})\.(png|webp)$/);
   if (art) {
-    // On the replica, /art/<N> is testnet #N's face (copied from the mainnet id
-    // it replicates by replica-meta.mjs), not mainnet #N's.
-    const artBase = CFG.chogGenesis.toLowerCase() !== CHOG_GENESIS_ADDRESS.toLowerCase() ? CFG.artTestnetDir : join('.data', 'art');
-    const file = join(process.cwd(), artBase, `${art[1]}.${art[2]}`);
+    // N is the token id and art is metadata-numbered, so the handler translates
+    // through the token map first. Replica ids are mainnet ids, so the one path
+    // serves both chains: testnet #1 is token #1's face, whoever mints it.
+    const stem = String(metaNumberFor(Number(art[1])));
+    // The plates ask for webp; serve whichever exists.
+    let ext = art[2]!;
+    let file = dataFile(join('.data', 'art'), `${stem}.${ext}`);
+    if (!existsSync(file)) {
+      ext = ext === 'webp' ? 'png' : 'webp';
+      file = dataFile(join('.data', 'art'), `${stem}.${ext}`);
+    }
     if (!existsSync(file)) return json(res, 404, { error: 'no art' });
     res.writeHead(200, {
-      'content-type': art[2] === 'webp' ? 'image/webp' : 'image/png',
-      'cache-control': 'public, max-age=86400',
+      'content-type': ext === 'webp' ? 'image/webp' : 'image/png',
+      // Short on purpose: the face behind a token id can change while the URL stays put.
       'access-control-allow-origin': '*',
     });
     return createReadStream(file).pipe(res);
   }
   if (url.pathname === '/chogs/index.json') {
-    const file = join(process.cwd(), CFG.spritesDir, 'index.json');
+    const file = dataFile(CFG.spritesDir, 'index.json');
     if (!existsSync(file)) return json(res, 200, { tokens: [] });
     res.writeHead(200, {
       'content-type': 'application/json',
@@ -226,7 +235,9 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
   json(res, 404, { error: 'not found' });
 }
 
-const wss = new WebSocketServer({ server, path: '/ws' });
+// 1MB per message: the biggest honest payload is a deck save (bytes), so anything
+// larger is a flood, not a player.
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 1024 * 1024 });
 
 /**
  * Keepalive. Without it a connection that dies without a close frame — wifi
@@ -237,6 +248,14 @@ const wss = new WebSocketServer({ server, path: '/ws' });
  */
 const HEARTBEAT_MS = 15_000;
 const alive = new WeakMap<WebSocket, boolean>();
+/**
+ * One bucket per socket: 60 messages a second sustained, 150 in a burst. Honest
+ * play sits near 12 (the 90ms movement cadence plus the odd click); a client past
+ * the burst is a flood, and its extra messages die silently instead of costing
+ * the loop sqlite writes.
+ */
+const RATE_PER_SEC = 60;
+const RATE_BURST = 150;
 
 const heartbeat = setInterval(() => {
   for (const sock of wss.clients) {
@@ -275,6 +294,8 @@ function sendTo(id: string, payload: unknown): void {
 
 wss.on('connection', (sock) => {
   let me: string | null = null;
+  let budget = RATE_BURST;
+  let refilled = Date.now();
   let offSnapshot: (() => void) | null = null;
   let offChat: (() => void) | null = null;
   let offPush: (() => void) | null = null;
@@ -293,6 +314,11 @@ wss.on('connection', (sock) => {
   });
 
   async function onMessage(raw: import('ws').RawData) {
+    const tickNow = Date.now();
+    budget = Math.min(RATE_BURST, budget + ((tickNow - refilled) * RATE_PER_SEC) / 1000);
+    refilled = tickNow;
+    if (budget < 1) return;
+    budget -= 1;
     let msg: {
       t: string;
       tokenId?: number;
@@ -452,9 +478,11 @@ wss.on('connection', (sock) => {
         }
       } else if (msg.action === 'move') {
         world.battleMove(me, Number(msg.col ?? 1));
-      } else {
+      } else if (msg.action === 'leave') {
         world.leaveBattle(me);
       }
+      // Anything else on this legacy channel is not a request to leave: the SF
+      // duel speaks `t: 'duel'`, and a stray or legacy action must not end a fight.
     } else if (msg.t === 'duel') {
       // The duel: the client says what it wants to do, the server answers with the field. The
       // reply is always a push on this socket, so there is nothing to await here.
@@ -554,6 +582,7 @@ server.listen(CFG.port, () => {
   if (chainConfigured()) {
     ownership
       .scan((done) => console.log(`[owners] ${done}/${GENESIS_SUPPLY}`))
+      .then(() => console.log(`[owners] index ready: ${ownership.coverage} tokens`))
       .catch((e) => console.warn('[owners] scan failed:', (e as Error).message));
   }
   ledger
@@ -566,7 +595,7 @@ server.listen(CFG.port, () => {
   prune.unref?.();
 });
 
-process.on('SIGINT', () => {
+const shutdown = (): void => {
   clearInterval(heartbeat);
   world.stop();
   // The provenance pass is minutes of chain reading; the debounced write may still
@@ -574,4 +603,19 @@ process.on('SIGINT', () => {
   ledger.flush();
   server.close();
   process.exit(0);
+};
+// SIGINT is the keyboard, SIGTERM is the container: both get the graceful stop,
+// because an unflushed ledger means re-running the whole chain scan on next boot.
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+// The last net, not a strategy: the loop guards its own sections, but if something
+// still escapes, a loud death beats a limping process serving corrupt state —
+// sessions and escrow survive in sqlite, so the reboot is clean by construction.
+process.on('uncaughtException', (err) => {
+  console.error('[fatal]', err);
+  process.exit(1);
+});
+process.on('unhandledRejection', (err) => {
+  console.error('[unhandled]', err);
+  process.exit(1);
 });

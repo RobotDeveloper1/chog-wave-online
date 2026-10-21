@@ -36,7 +36,7 @@ export const UI_ZOOM: Record<UiScale, number> = { compact: 0.92, normal: 1, larg
 
 export const DEFAULTS: Settings = {
   version: 1,
-  sound: { muted: false, music: 0.55, sfx: 1 },
+  sound: { muted: false, music: 0.35, sfx: 1 },
   graphics: { quality: 'balanced', post: true },
   a11y: { reduceMotion: false, uiScale: 'normal' },
 };
@@ -77,10 +77,25 @@ function sanitize(raw: unknown): Settings {
   return out;
 }
 
+function firstRunQuality(): Settings {
+  const s = sanitize(null);
+  // A phone earns performance on day one: small screen, weak GPU, no fan. A stored
+  // choice always wins — this only decides the very first boot.
+  try {
+    const coarse = matchMedia('(pointer: coarse)').matches;
+    const small = Math.min(screen.width, screen.height) < 500;
+    const thin = (navigator as { deviceMemory?: number }).deviceMemory !== undefined && (navigator as { deviceMemory?: number }).deviceMemory! < 4;
+    if (coarse && (small || thin)) s.graphics.quality = 'performance';
+  } catch {
+    /* headless: balanced */
+  }
+  return s;
+}
+
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (!raw) return sanitize(null);
+    if (!raw) return firstRunQuality();
     return sanitize(JSON.parse(raw) as unknown);
   } catch {
     return sanitize(null);

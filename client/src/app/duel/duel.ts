@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ENCOUNTER_BY_ID, SF, type DuelStartMsg, type DuelTickMsg, type DuelEndMsg, type DuelPickMsg, type DuelCoverMsg, type DuelProgramMsg, type DuelMsg, type SectorId } from '@chog/shared';
+import { ENCOUNTER_BY_ID, SF, type DuelStartMsg, type DuelTickMsg, type DuelEndMsg, type DuelPickMsg, type DuelCoverMsg, type DuelProgramMsg, type DuelRivalMsg, type DuelMsg, type SectorId } from '@chog/shared';
 import { sfx } from '../../audio.ts';
 import { net } from '../../net.ts';
 import type { DistrictArt } from '../art.ts';
@@ -10,7 +10,7 @@ import { Arena } from './arena.ts';
 import { buildBoss, type BossAvatar } from './boss.ts';
 import { buildCritter } from '../line/critters.ts';
 import { Floaters } from './fx.ts';
-import { ELEMENT_HEX, ELEMENT_PALETTES, FILES, PALETTES, clamp, easeOut, fileX, laneZ } from './theme.ts';
+import { ELEMENT_HEX, ELEMENT_PALETTES, FILES, LANES, PALETTES, clamp, easeOut, fileX, laneZ } from './theme.ts';
 import { DuelUi, escapeHtml } from './ui.ts';
 import { reduceMotion } from '../../settings.ts';
 
@@ -29,7 +29,7 @@ export interface DuelHost {
 
 type Mode = 'anomaly' | 'train' | 'node' | 'pvp';
 type Message = DuelStartMsg | DuelTickMsg | DuelEndMsg | DuelPickMsg | DuelCoverMsg
-  | DuelProgramMsg | { kind: 'refused'; reason?: string };
+  | DuelProgramMsg | DuelRivalMsg | { kind: 'refused'; reason?: string };
 
 function look(bloom = 0.4): DuelMood['look'] {
   return { bloom: { strength: bloom, radius: 0.5, threshold: 0.86 }, exposure: 0.95,
@@ -79,6 +79,8 @@ const RIVAL_MODEL = {
   partsUrl: '/models/trait-parts.json',
   colorsUrl: '/models/trait-colors.json',
   skinsUrl: '/models/skins.json',
+  skullBaseUrl: '/models/chog-skull.glb',
+  skullSkinsUrl: '/models/skull-skins.json',
 };
 
 /**
@@ -151,9 +153,11 @@ export class Duel {
   private coverTarget: string | null = null;
   private coverSource: string | null = null;
   private files = FILES;
+  private lanes = LANES;
   /** PvP side: side 1 sees every lane mirrored, self-near. Events arrive absolute. */
   private mySide: 0 | 1 = 0;
   private startMsg: DuelStartMsg | null = null;
+  private rivalBuilding = false;
   private t = 0;
   private myX = 0;
   private myZ = 0;
@@ -228,6 +232,14 @@ export class Duel {
         sfx.spawn();
         break;
       }
+      case 'rival': {
+        // PvP late arrival: these boots stepped on first, so the start came without a
+        // rival — the server pushes the other doc the moment it arrives. Stash it on the
+        // start (so plate and faceless fallback agree) and build the model now.
+        if (this.startMsg && !this.startMsg.rival) this.startMsg.rival = m.rival;
+        if (this.phase === 'field' && this.view?.boss.archetype === 'rival') void this.buildRival(this.view);
+        break;
+      }
       case 'tick':
         if (this.phase !== 'field' || m.view.session !== this.view?.session) return;
         this.applyView(m.view);
@@ -272,7 +284,8 @@ export class Duel {
     stage.setDuelMood((element && ELEMENT_MOODS[element]) || MOODS[this.host.sector]);
     this.arena = new Arena(element ? ELEMENT_PALETTES[element] : PALETTES[this.host.sector]);
     this.files = v.boss.cols;
-    this.arena.setFiles(this.files);
+    this.lanes = v.boss.lanes;
+    this.arena.setFiles(this.files, this.lanes);
     stage.scene.add(this.arena.group);
     // A Line fight shows the same animal that was standing on the road: the session id
     // carries the encounter (`line:tolls.1`), and the roster, the region and the kind all
@@ -280,15 +293,15 @@ export class Duel {
     // keeps its mask.
     const lineEnc = v.session.startsWith('line:') ? ENCOUNTER_BY_ID.get(v.session.slice(5)) : undefined;
     this.boss = v.boss.archetype === 'rival' ? null : lineEnc
-      ? buildCritter(lineEnc.region, lineEnc.kind, v.boss.element, v.session, 'duel')
+      ? buildCritter(lineEnc.region, lineEnc.kind, v.boss.element, v.session, 'duel', v.boss.archetype)
       : buildBoss(v.boss.archetype, v.boss.element, v.boss.tier);
     if (this.boss) this.arena.group.add(this.boss.root);
     if (this.boss) this.boss.root.position.x = fileX(v.boss.file, this.files);
     if (this.boss) this.boss.moveTo(this.boss.root.position.x);
-    if (this.boss) this.boss.root.position.z = laneZ(v.boss.lane);
-    if (v.boss.archetype === 'rival') void this.buildRival();
+    if (this.boss) this.boss.root.position.z = laneZ(v.boss.lane, this.lanes);
+    if (v.boss.archetype === 'rival') void this.buildRival(v);
     this.myX = fileX(v.you?.file ?? 1, this.files);
-    this.myZ = laneZ(v.you?.lane ?? SF.LANES - 1);
+    this.myZ = laneZ(v.you?.lane ?? this.lanes - 1, this.lanes);
     chog.root.visible = true;
     chog.root.scale.setScalar(DUEL_CAM.chog);
     chog.root.rotation.set(0, CHOG_FACING, 0);
@@ -362,10 +375,11 @@ export class Duel {
     this.previousPlayers = previous?.players ?? [];
     this.view = v;
     this.files = v.boss.cols;
-    this.arena?.setFiles(this.files);
+    this.lanes = v.boss.lanes;
+    this.arena?.setFiles(this.files, this.lanes);
     if (v.you) {
       this.myX = fileX(v.you.file, this.files);
-      this.myZ = laneZ(v.you.lane);
+      this.myZ = laneZ(v.you.lane, this.lanes);
     }
     this.boss?.moveTo(fileX(v.boss.file, this.files));
     this.arena?.setWall(v.boss.blocked);
@@ -395,12 +409,12 @@ export class Duel {
   private bodyPoint(owner: string, y = 2.2): THREE.Vector3 {
     if (owner === this.view?.you?.id) return new THREE.Vector3(this.myX, y, this.myZ);
     const body = this.view?.players.find((p) => p.id === owner) ?? this.previousPlayers.find((p) => p.id === owner);
-    return new THREE.Vector3(fileX(body?.file ?? 1, this.files), y, laneZ(body?.lane ?? SF.LANES - 1));
+    return new THREE.Vector3(fileX(body?.file ?? 1, this.files), y, laneZ(body?.lane ?? this.lanes - 1, this.lanes));
   }
 
   private bossPoint(dy = 0): THREE.Vector3 {
     return new THREE.Vector3(this.boss?.root.position.x ?? 0, (this.boss?.root.position.y ?? 2.4) + dy,
-      laneZ(this.view?.boss.lane ?? 2));
+      laneZ(this.view?.boss.lane ?? 2, this.lanes));
   }
 
   private floater(at: THREE.Vector3, text: string, cls = '', life = 1.2): void {
@@ -467,10 +481,10 @@ export class Duel {
           // Strikes read through the panel pulse plus a red ring per struck panel: the
           // beam quads retired here flashed the field black on this machine every time
           // they activated, and every bisect round without them stayed clean.
-          const ml = this.mySide === 1 ? (lane: number): number => SF.LANES - 1 - lane : (lane: number): number => lane;
+          const ml = this.mySide === 1 ? (lane: number): number => this.lanes - 1 - lane : (lane: number): number => lane;
           for (const p of e.panels) {
             this.arena?.flash(p.file, ml(p.lane), 1.0);
-            this.arena?.rings.spawn(new THREE.Vector3(fileX(p.file, this.files), 0.5, laneZ(ml(p.lane))), new THREE.Color(1.5, 0.3, 0.4), 3.5, 0.5, false);
+            this.arena?.rings.spawn(new THREE.Vector3(fileX(p.file, this.files), 0.5, laneZ(ml(p.lane), this.lanes)), new THREE.Color(1.5, 0.3, 0.4), 3.5, 0.5, false);
           }
           this.boss?.lunge();
           this.shake = Math.max(this.shake, 0.35);
@@ -500,11 +514,11 @@ export class Duel {
         case 'drain': this.floater(this.bodyPoint(e.owner), `+${e.amount} INTEGRITY`, 'heal'); break;
         case 'bonus-card': this.floater(this.bodyPoint(e.owner, 3.2), 'BONUS CARD', 'chain'); break;
         case 'guard-break': this.floater(this.bossPoint(1), 'GUARD BROKEN', 'big'); break;
-        case 'stun': this.floater(this.bossPoint(1), `STUN ${Math.round(e.ms)}ms`, 'dodge'); break;
+        case 'stun': this.floater(e.target ? this.bodyPoint(e.target, 1) : this.bossPoint(1), `STUN ${Math.round(e.ms)}ms`, 'dodge'); break;
         case 'knock': this.floater(this.bossPoint(1), `BREAK · FILE ${e.file + 1}`, 'dodge'); break;
-        case 'burn': this.floater(this.bossPoint(1), `BURNING ${e.ticks}x${e.damage}`, 'weak'); break;
-        case 'burn-tick': this.floater(this.bossPoint(), `-${e.damage} BURN`, ''); break;
-        case 'freeze': this.floater(this.bossPoint(1), 'FROZEN', 'dodge'); break;
+        case 'burn': this.floater(e.target ? this.bodyPoint(e.target, 1) : this.bossPoint(1), `BURNING ${e.ticks}x${e.damage}`, 'weak'); break;
+        case 'burn-tick': this.floater(e.target ? this.bodyPoint(e.target) : this.bossPoint(), `-${e.damage} BURN`, ''); break;
+        case 'freeze': this.floater(e.target ? this.bodyPoint(e.target, 1) : this.bossPoint(1), 'FROZEN', 'dodge'); break;
         case 'barrier': this.floater(this.bodyPoint(e.owner), `BARRIER x${e.charges}`, 'heal'); break;
         case 'ward': this.floater(this.bodyPoint(e.owner), 'WARDED', 'dodge'); break;
         case 'phase':
@@ -670,28 +684,34 @@ export class Duel {
   }
 
   /**
-   * The rival across a PvP field: their actual Chog, built once from the start message.
+   * The rival across a PvP field: their actual Chog, built once from the start message —
+   * or from the late rival message when the other boots stepped on second.
    *
-   * Same manifests as the shell's MODEL — one collection, one set of parts. The plate,
-   * the marks and the damage all work without the model, so a failed load degrades to a
-   * faceless bout instead of refusing the fight.
+   * The view comes in as an argument on purpose: at build time `this.view` is still
+   * null (it is only set after the warmup), and reading it here is how the rival used to
+   * never appear. Same manifests as the shell's MODEL — one collection, one set of parts.
+   * The plate, the marks and the damage all work without the model, so a failed load
+   * degrades to a faceless bout instead of refusing the fight.
    */
-  private async buildRival(): Promise<void> {
+  private async buildRival(v: SF.DuelView): Promise<void> {
     const rival = this.startMsg?.rival;
-    const v = this.view;
-    if (!rival || !v || !this.arena || this.disposed) return;
+    if (!rival || !this.arena || this.disposed || this.boss || this.rivalBuilding) return;
+    this.rivalBuilding = true;
     try {
       const model = await loadChogNFT({ ...RIVAL_MODEL, traits: rival.traits ?? {}, tokenId: rival.tokenId });
       if (this.disposed || !this.arena || this.boss) return;
       model.root.visible = true;
       model.root.scale.setScalar(DUEL_CAM.chog);
       model.root.rotation.set(0, RIVAL_FACING, 0);
-      model.root.position.set(fileX(v.boss.file, this.files), 0.12, laneZ(v.boss.lane));
+      model.root.position.set(fileX(v.boss.file, this.files), 0.12, laneZ(v.boss.lane, this.lanes));
       model.play('idle');
       this.arena.group.add(model.root);
       this.boss = chogAsAvatar(model);
-    } catch {
-      // Faceless bout: everything else already works.
+    } catch (err) {
+      // Faceless bout: everything else already works — but the reason belongs in the log.
+      console.warn('[rival]', err);
+    } finally {
+      this.rivalBuilding = false;
     }
   }
 
@@ -760,7 +780,7 @@ export class Duel {
       p.x += Math.sin(this.orbit) * 3.2;
       p.z -= 2 + easeOut(this.victory / 2) * 1.5;
       p.y += 0.6;
-      aim.set(0, 3.6, laneZ(this.view?.boss.lane ?? 2));
+      aim.set(0, 3.6, laneZ(this.view?.boss.lane ?? 2, this.lanes));
     }
     if (this.defeat > 0) {
       p.y -= easeOut(this.defeat / 1.2) * 1.4;
@@ -797,7 +817,7 @@ export class Duel {
     const you = this.view.you;
     const smooth = 1 - Math.exp(-dt * 18);
     this.myX += (fileX(you?.file ?? 1, this.files) - this.myX) * smooth;
-    this.myZ += (laneZ(you?.lane ?? 4) - this.myZ) * smooth;
+    this.myZ += (laneZ(you?.lane ?? this.lanes - 1, this.lanes) - this.myZ) * smooth;
     this.hop = Math.max(0, this.hop - dt * 4.5);
     chog.root.scale.setScalar(DUEL_CAM.chog);
     chog.root.position.set(this.myX, 0.12 + Math.sin(this.hop * Math.PI) * 0.45, this.myZ);
@@ -818,12 +838,12 @@ export class Duel {
     this.boss?.update(dt, this.t, { phase: this.view.boss.phase, warn: progress,
       hp: this.view.boss.hp / Math.max(1, this.view.boss.maxHp) });
     // buildBoss animates around its historical home lane; shift that animation to the SF lane.
-    if (this.boss && this.view.boss.archetype !== 'rival') this.boss.root.position.z += laneZ(this.view.boss.lane) - (laneZ(1) - 0.2);
+    if (this.boss && this.view.boss.archetype !== 'rival') this.boss.root.position.z += laneZ(this.view.boss.lane, this.lanes) - (laneZ(1) - 0.2);
     if (this.boss && this.view.boss.archetype === 'rival') {
       // A rival dodges every volley, so unlike an anomaly it is tracked, not homed.
       const k = 1 - Math.exp(-dt * 10);
       this.boss.root.position.x += (fileX(this.view.boss.file, this.files) - this.boss.root.position.x) * k;
-      this.boss.root.position.z += (laneZ(this.view.boss.lane) - this.boss.root.position.z) * k;
+      this.boss.root.position.z += (laneZ(this.view.boss.lane, this.lanes) - this.boss.root.position.z) * k;
     }
     const canvas = stage.renderer.domElement;
     this.arena.update(dt, this.t, stage.camera, canvas.clientHeight || 1, stage.camera.fov);

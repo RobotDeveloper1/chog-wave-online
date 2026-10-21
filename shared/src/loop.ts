@@ -205,10 +205,11 @@ export function referenceDecks(band: Band, count = DECKS_PER_BAND): string[][] {
 /** A neutral reference loadout; level growth is derived by the same SF API as the server. */
 function referenceStats(level: number, band: Band): SF.DuelStats {
   const model = BANDS[band];
-  const loadout = deriveBuild({ tokenId: 418, transferCount: 0, daysHeld: 0 }).loadout;
+  const build = deriveBuild({ tokenId: 418, transferCount: 0, daysHeld: 0 });
   return SF.duelStatsOf({
     level,
-    loadout: { ...loadout, gear: 'charge', voice: { critPct: model.crit * 100 }, megaCap: model.mega > 0 ? 1 : 0, gigaCap: model.giga > 0 ? 1 : 0 },
+    attrs: build.attrs,
+    loadout: { ...build.loadout, gear: 'charge', voice: { critPct: model.crit * 100 }, megaCap: model.mega > 0 ? 1 : 0, gigaCap: model.giga > 0 ? 1 : 0 },
   });
 }
 

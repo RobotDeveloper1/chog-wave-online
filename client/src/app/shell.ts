@@ -1,12 +1,12 @@
 import * as THREE from 'three';
-import { QUEST_BY_ID, REGION_BY_ID, SECTOR_NAME, type EncounterSite, type RegionId, anyCard, boardSideFor, campOf, cityOf, DUNGEONS, gatesBetween, nextStep, npcOf, unlocksAt, type AreaRun, type DropView, type ProfileView, type SectorId, type SectorState, type TalkView } from '@chog/shared';
+import { QUEST_BY_ID, REGION_BY_ID, SECTOR_NAME, type EncounterSite, type RegionId, anyCard, boardSideFor, campOf, cityOf, DUNGEONS, gatesBetween, gpsArrow, nextStep, npcOf, unlocksAt, type AreaRun, type DropView, type ProfileView, type SectorId, type SectorState, type TalkView, FURNITURE, footprintOf, type HouseLayout } from '@chog/shared';
 import { setSfxVolume, sfx, toggleMute, unlock } from '../audio.ts';
 import { playMusic, setMusicMuted, setMusicVolume, unlockMusic } from '../music.ts';
 import { QUALITY_PRESET, UI_ZOOM, getSettings, subscribeSettings, updateSettings } from '../settings.ts';
 import { net } from '../net.ts';
 import { DISTRICTS } from './art.ts';
 import { Duel, DUEL_CAM } from './duel/duel.ts';
-import { loadChogNFT, type Chog, type PartsModel } from './chogLoader.ts';
+import { PARTS_MODEL, loadChogNFT, type Chog } from './chogLoader.ts';
 import { CHOG_SCALE, Explorer, type Target } from './explorer.ts';
 import { faceUrl } from './portrait.ts';
 import { Hud } from './hud/hud.ts';
@@ -14,9 +14,12 @@ import type { MapMarker } from './hud/minimap.ts';
 import { ICON } from './hud/icons.ts';
 import { createTouchLayer, type TouchLayer } from './hud/touch.ts';
 import { buildRoom, type RoomKind, type RoomLayout } from './interiors.ts';
+import { buildHouse, type HouseRoom } from './house.ts';
+import { bindSocial, house } from './socialPage.ts';
+import { friends } from './friends.ts';
 import { buildDungeonField, type DungeonField, type DungeonNode } from './dungeon/field.ts';
 import { moodFor } from './dungeon/themes.ts';
-import { RemoteAvatars, WALK_SPEED, bindKeys, createPlayer, setVirtualInput, stepPlayer } from './player.ts';
+import { RemoteAvatars, WALK_SPEED, bindKeys, clearKeys, createPlayer, setVirtualInput, stepPlayer } from './player.ts';
 import { bindDeck } from './deckPages.ts';
 import { bindDungeons } from './dungeonPage.ts';
 import { bindOptions } from './sheet/optionsPage.ts';
@@ -49,16 +52,9 @@ import { Stage } from './stage.ts';
  */
 
 const SECTORS: SectorId[] = ['ashflat', 'voltgrid', 'hollow'];
-// One neutral body plus a small GLB per trait value: the player signs in with a
-// wallet, and the model is THAT token's model -- mounted here from the traits
-// the server read for it, not a shared mascot. `/models`, not `/chogs`: the
-// latter is proxied to the sprite server on :8787.
-const MODEL: PartsModel = {
-  baseUrl: '/models/chog-base.glb',
-  partsUrl: '/models/trait-parts.json',
-  colorsUrl: '/models/trait-colors.json',
-  skinsUrl: '/models/skins.json',
-};
+// Models mount from PARTS_MODEL (chogLoader.ts) — the same constant the picker
+// shelf mounts, so the card and the street cannot disagree. `/models`, not
+// `/chogs`: the latter is proxied to the sprite server on :8787.
 const ITEM_KEYS = ['med', 'repair', 'amp', 'ward'] as const;
 const ROOM_KINDS = new Set(['shop', 'heal', 'brother', 'telemetry']);
 
@@ -112,7 +108,7 @@ export async function bootShell(): Promise<Shell> {
   // is still being read, and the NPCs stream in around the lens the same way they do
   // around the player (that distance is just a number to `update`).
   document.body.classList.add('prejoin');
-  const explorer = new Explorer(stage, MODEL, () => {
+  const explorer = new Explorer(stage, PARTS_MODEL, () => {
     const s = net.sector(sector);
     return { wave: s?.wave ?? 0, tier: (s?.tier ?? 'normal') as 'normal' };
   });
@@ -163,7 +159,7 @@ export async function bootShell(): Promise<Shell> {
     stage.scene,
     async (p) => {
       // Somebody else's Chog, built from their traits — the generic body was the bug.
-      const c = await loadChogNFT({ ...MODEL, traits: p.attributes ?? {}, tokenId: p.tokenId });
+      const c = await loadChogNFT({ ...PARTS_MODEL, traits: p.attributes ?? {}, tokenId: p.tokenId });
       c.root.scale.setScalar(CHOG_SCALE);
       return c;
     },
@@ -175,7 +171,7 @@ export async function bootShell(): Promise<Shell> {
   // otherwise the world's. A Foster is given traits of its own and the model has
   // to be built from those -- the server says what the world read, real or predicted.
   const traits = pick.attributes ?? net.me?.attributes ?? {};
-  const chog: Chog = await loadChogNFT({ ...MODEL, traits, tokenId: net.me?.tokenId ?? 0 });
+  const chog: Chog = await loadChogNFT({ ...PARTS_MODEL, traits, tokenId: net.me?.tokenId ?? 0 });
   chog.root.scale.setScalar(CHOG_SCALE);
   const first = berth; // the city went up before the gate: reuse it, do not rebuild it
   const player = createPlayer(chog, first);
@@ -235,7 +231,7 @@ export async function bootShell(): Promise<Shell> {
 
   // ---------------------------------------------------------------- state
 
-  let inside: { kind: RoomKind; label: string } | null = null;
+  let inside: { kind: RoomKind | 'house'; label: string } | null = null;
   let room: RoomLayout | null = null;
   let roomTarget: { kind: 'board' | 'gate'; label: string; x: number; z: number; hint: string } | null = null;
   /** The dungeon we are standing in, if any. Its own scene, its own node graph. */
@@ -288,7 +284,6 @@ let fightingSite: string | null = null;
   let area: AreaView | null = null;
   let tracked: string | null = null;
   let talkingTo: string | null = null;
-  let laser = 0;
   let target: Target | null = null;
   let interactAsked = false;
   let promptKey = '';
@@ -331,7 +326,6 @@ let fightingSite: string | null = null;
       wav: p.wav,
       hp: run && !run.done ? run.hp : p.unlocks.fieldHp,
       hpMax: run && !run.done ? run.maxHp : p.unlocks.fieldHp,
-      laser,
     });
     hud.setItems(p.items, viz);
     // A server one version behind sends neither marks nor caught waves; the street still
@@ -347,20 +341,15 @@ let fightingSite: string | null = null;
   /** A short "which way, how far" for a list of targets, from the player's position and the camera's yaw. */
   const whereTo = (t: { kind: 'npc' | 'poi' | 'door'; id: string }[], questSector?: string): string => {
     const here = player.pos;
-    let best: { d: number; ang: number } | null = null;
+    let best: { d: number; arrow: string } | null = null;
     for (const k of t) {
       const at = explorer.positionOf(k.kind, k.id);
       if (!at) continue;
-      const dx = at.x - here.x;
-      const dz = at.z - here.z;
-      const d = Math.hypot(dx, dz);
-      if (!best || d < best.d) best = { d, ang: Math.atan2(dx, -dz) };
+      const { arrow, dist } = gpsArrow(at.x - here.x, at.z - here.z, stage.director.yaw);
+      if (!best || dist < best.d) best = { d: dist, arrow };
     }
     if (!best) return questSector && questSector !== sector ? questSector : '';
-    // Relative to the camera: "up" on the screen is the camera's forward direction.
-    const rel = best.ang - (Math.PI - stage.director.yaw);
-    const k = Math.round((((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8;
-    return `${'↑↗→↘↓↙←↖'[k]} ${Math.round(best.d)}m`;
+    return `${best.arrow} ${Math.round(best.d)}m`;
   };
 
   const where = (qv: ProfileView['quests'][number]): string => whereTo(qv.done ? [{ kind: 'npc' as const, id: qv.turnInId }] : (qv.track ?? []), qv.sector);
@@ -536,6 +525,45 @@ hud.sheetEl.innerHTML = renderSheet(tab, net.profile, war, area, sheetCtx());
         },
       });
     }
+    if (tab === 'social') {
+      bindSocial(hud.sheetEl, {
+        goHome: () => {
+          if (duel || dungeon || inside) return;
+          net.loop('house.enter');
+        },
+        leaveHome: () => exitRoom(),
+        arrange: (on) => {
+          house.editing = on;
+          house.selFid = null;
+          house.selUid = null;
+          updateGhost();
+          paint();
+        },
+        select: (fid) => {
+          house.selFid = fid;
+          house.selUid = null;
+          updateGhost();
+          paint();
+        },
+        turn: () => turnPiece(),
+        pickup: () => {
+          if (house.selUid) net.loop('house.pickup', { uid: house.selUid });
+        },
+        inviteHome: (id) => net.loop('house.invite', { with: id }),
+        acceptHome: () => net.loop('house.accept'),
+        declineHome: () => net.loop('house.decline'),
+        friend: (tokenId) => {
+          friends.toggle(tokenId);
+          paint();
+        },
+        whisper: (tokenId) => {
+          closeMenu();
+          hud.chatOpen(true);
+          const input = hud.hud.querySelector<HTMLInputElement>('#hud-log input');
+          if (input) input.value = '/w #' + tokenId + ' ';
+        },
+      });
+    }
     bindSheet(hud.sheetEl, {
       buy: (kind, stockId) => net.loop('buy', { kind, stockId }),
       sell: (cardId) => net.loop('sell', { stockId: cardId }),
@@ -584,6 +612,10 @@ if (tab === 'war') net.loop('war');
     if (tab === 'line') net.loop('line.state');
     if (tab === 'shop' || tab === 'jobs' || tab === 'album' || tab === 'bag' || tab === 'deck' || tab === 'library' || tab === 'career') net.loop('profile');
     if (tab === 'party') social.notice = '';
+    if (tab === 'social') {
+      house.notice = '';
+      net.loop('house.get');
+    }
     hud.menu(true);
     paint();
   };
@@ -723,6 +755,7 @@ if (tab === 'war') net.loop('war');
 
   net.on('party', (m) => {
     social.me = net.me?.id ?? null;
+    house.me = net.me?.id ?? null;
     social.party = m;
     const members = (m.members ?? []) as { id: string }[];
     if (m.invite) {
@@ -807,6 +840,33 @@ if (tab === 'war') net.loop('war');
   });
 
   net.on('disconnect', () => voice.disable());
+  net.on('house', (m) => {
+    const msg = m as {
+      layout?: HouseLayout;
+      of?: string;
+      owned?: Record<string, number>;
+      invite?: { from: string; name: string };
+      notice?: string;
+      refused?: string;
+    };
+    if (msg.invite) {
+      house.invite = { ...msg.invite, at: Date.now() };
+      sfx.ui();
+      say(msg.invite.name + ' invited you home — Y to come over, N to stay', 't-anomaly');
+      if (tab === 'social') paint();
+    }
+    if (msg.notice) {
+      house.notice = msg.notice;
+      say(msg.notice, 'sys');
+      if (tab === 'social') paint();
+    }
+    if (msg.refused) say(msg.refused, 't-storm');
+    if (msg.layout && inside?.kind === 'house' && house.atHome === msg.of) {
+      (room as HouseRoom | null)?.setLayout(msg.layout);
+      house.placed = msg.layout.items.map((i) => ({ uid: i.uid, fid: i.fid }));
+      if (tab === 'social') paint();
+    }
+  });
   addEventListener('beforeunload', () => voice.dispose());
 
   // push to talk works everywhere, in a fight as much as on the street, unless a text box has the keys
@@ -1035,10 +1095,7 @@ const transition = (fn: () => void): void => {
     });
   };
 
-  const exitRoom = (): void => {
-    if (!inside || !room) return;
-    sfx.door();
-    net.move({ place: 'street' });
+  const restoreStreetFromRoom = (): void => {
     transition(() => {
       room!.alive = false;
       stage.scene.remove(room!.group);
@@ -1046,8 +1103,18 @@ const transition = (fn: () => void): void => {
         const m = o as THREE.Mesh;
         if (m.isMesh) m.geometry?.dispose();
       });
+      const wasHouse = inside?.kind === 'house';
       room = null;
       inside = null;
+      // Bodies belong to the place they were synced in: housemates are gone from
+      // the street until the next push says otherwise. Shop exits keep theirs.
+      if (wasHouse) remotes.clear();
+      house.atHome = null;
+      house.owner = false;
+      house.editing = false;
+      house.selFid = null;
+      house.selUid = null;
+      clearGhost();
       // From a region back out of a shop is a region, not a street. Same rule as the fold.
       if (onLine) restoreLine();
       else restoreStreet();
@@ -1056,6 +1123,128 @@ const transition = (fn: () => void): void => {
       hud.setWhere(explorer.layout.name, explorer.areaName(player.pos.x, player.pos.z));
     });
   };
+
+  const exitRoom = (): void => {
+    if (!inside || !room) return;
+    // A house door is the server's: the leave round-trips, and the restore runs on
+    // the answer, so a refused leave never strands the player on a street the
+    // server does not believe in.
+    if (inside.kind === 'house') {
+      net.loop('house.leave');
+      return;
+    }
+    sfx.door();
+    net.move({ place: 'street' });
+    restoreStreetFromRoom();
+  };
+
+  const enterHouse = (of: string, layout: HouseLayout, owned: Record<string, number> | null, ownerName: string): void => {
+    if (inside) return;
+    sfx.door();
+    transition(() => {
+      house.atHome = of;
+      house.owner = owned !== null;
+      house.owned = owned ?? {};
+      house.placed = layout.items.map((i) => ({ uid: i.uid, fid: i.fid }));
+      house.editing = false;
+      house.selFid = null;
+      house.selUid = null;
+      editRot = 0;
+      room = buildHouse(DISTRICTS[sector], layout);
+      streetPos.copy(player.pos);
+      inside = { kind: 'house', label: ownerName };
+      stashLine();
+      explorer.setVisible(false);
+      // A house is a room you share: the housemates ride the same snapshot the
+      // street does, so the same avatars stay up — after forgetting the street's.
+      remotes.clear();
+      remotes.visible(true);
+      remotes.setGround(() => 0);
+      stage.scene.add(room.group);
+      player.pos.set(room.spawn.x, 0, room.spawn.z);
+      stage.setBounds(null);
+      stage.setRig('indoor', true);
+      stage.focusOn(0, 1.3, -0.4);
+      stage.snap();
+      hud.setWhere('HOME', ownerName);
+      hud.setPrompt(null);
+      say('home: ' + ownerName.toLowerCase(), 't-glitch');
+      if (tab === 'social') paint();
+    });
+  };
+
+  // --- arrange mode: clicks land furniture. The server re-validates every
+  // put-down, so the ghost is a courtesy, not a promise: red tape would only
+  // duplicate rules the answer already enforces.
+  let editRot = 0;
+  let ghost: THREE.Mesh | null = null;
+  const editRay = new THREE.Raycaster();
+  const editPointer = new THREE.Vector2();
+  const editCast = (e: PointerEvent): void => {
+    const rect = stage.renderer.domElement.getBoundingClientRect();
+    editPointer.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    editRay.setFromCamera(editPointer, stage.camera);
+  };
+  const editAim = (e: PointerEvent): { x: number; z: number } | null => {
+    if (inside?.kind !== 'house' || !room) return null;
+    editCast(e);
+    const hit = editRay.intersectObject((room as HouseRoom).floorMesh, false)[0];
+    return hit ? { x: hit.point.x, z: hit.point.z } : null;
+  };
+  const pickPiece = (e: PointerEvent): string | null => {
+    if (inside?.kind !== 'house' || !room) return null;
+    editCast(e);
+    const hits = editRay.intersectObjects((room as HouseRoom).furnGroup.children, true);
+    for (const h of hits) {
+      const uid = (h.object.userData as { uid?: unknown }).uid;
+      if (typeof uid === 'string') return uid;
+    }
+    return null;
+  };
+  const clearGhost = (): void => {
+    if (ghost && room) room.group.remove(ghost);
+    ghost?.geometry.dispose();
+    (ghost?.material as THREE.Material | undefined)?.dispose?.();
+    ghost = null;
+  };
+  const updateGhost = (): void => {
+    clearGhost();
+    if (!house.editing || !house.selFid || inside?.kind !== 'house' || !room) return;
+    const def = FURNITURE[house.selFid];
+    if (!def) return;
+    const { hw, hd } = footprintOf(def, editRot);
+    ghost = new THREE.Mesh(
+      new THREE.BoxGeometry(hw * 2, 0.5, hd * 2),
+      new THREE.MeshBasicMaterial({ color: 0x43e2a8, transparent: true, opacity: 0.35, depthWrite: false }),
+    );
+    ghost.position.set(player.pos.x, 0.25, player.pos.z);
+    room.group.add(ghost);
+  };
+  const turnPiece = (): void => {
+    if (house.selUid) net.loop('house.rotate', { uid: house.selUid });
+    else {
+      editRot = (editRot + 1) % 4;
+      updateGhost();
+    }
+  };
+  stage.renderer.domElement.addEventListener('pointermove', (e) => {
+    if (!ghost || !house.editing || inside?.kind !== 'house') return;
+    const at = editAim(e);
+    if (at) ghost.position.set(at.x, 0.25, at.z);
+  });
+  stage.renderer.domElement.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || duel || busy) return;
+    if (!house.editing || inside?.kind !== 'house' || hud.chatting || hud.dialogueOpen) return;
+    if (house.selFid) {
+      const at = editAim(e);
+      if (at) net.loop('house.place', { fid: house.selFid, x: Math.round(at.x * 10) / 10, z: Math.round(at.z * 10) / 10, rot: editRot });
+    } else {
+      const uid = pickPiece(e);
+      house.selUid = uid;
+      if (e.detail === 2 && uid) net.loop('house.pickup', { uid });
+      if (tab === 'social') paint();
+    }
+  });
 
   /**
    * Walk into a Data Area. The run the server opened becomes a *place*: its own
@@ -1313,6 +1502,7 @@ const transition = (fn: () => void): void => {
 
   const startDuel = (mode: 'anomaly' | 'train' | 'pvp' | 'node'): void => {
     if (duel) return;
+    clearKeys();
     closeDialogue();
     duel = new Duel(
       {
@@ -1330,6 +1520,7 @@ const transition = (fn: () => void): void => {
           chog.root.visible = true;
         },
         onClose: () => {
+          clearKeys();
           duel = null;
           playMusic(dungeon ? 'dungeon' : line && lineRegion ? lineRegion : 'city');
           // A node fight ends in the dungeon's own dimension: the city stays hidden and the
@@ -1431,8 +1622,28 @@ return;
     return t.hint;
   };
 
-  const markers = () => {
+  // The radar re-renders every frame, but its dots move at walking speed: rebuild the
+  // list at 4Hz instead of 60 and the minimap cannot tell the difference.
+  let markersAt = 0;
+  let markersCached: MapMarker[] = [];
+  const markers = (): MapMarker[] => {
+    const now = performance.now();
+    if (now - markersAt > 250) {
+      markersAt = now;
+      markersCached = freshMarkers();
+    }
+    return markersCached;
+  };
+  const freshMarkers = (): MapMarker[] => {
     // Inside a fold the radar shows the dungeon's own nodes, not the street behind it.
+    // On the Line it shows the region's own sites — the street's anchors (NPC doors, gates,
+    // station) live in city coordinates and landed as ghost "places" over the Tolls plate.
+    if (onLine && line && !dungeon) {
+      return line.sites.map((s) => ({
+        x: s.x, z: s.z, label: s.name,
+        kind: s.kind === 'warden' ? 'gate' : s.kind === 'post' ? 'quest' : 'npc',
+      })) as MapMarker[];
+    }
     if (dungeon) {
       return dungeon.nodes
         .filter((n) => !n.cleared)
@@ -1585,10 +1796,17 @@ case 'j':
       case 'p':
         showTab('party');
         break;
+      case 'h':
+        showTab('social');
+        break;
+      case 't':
+        if (house.editing && inside?.kind === 'house') turnPiece();
+        break;
       case 'y':
         if (social.asking === 'trade' && social.trade) tradeAct('accept');
         else if (social.asking === 'brawl' && social.brawl) pvpAct('accept');
         else if (social.invite) partyAct('accept');
+        else if (house.invite) net.loop('house.accept');
         break;
       case 'n':
         // One case, not two: a second `case 'n'` further down the switch was unreachable, so
@@ -1596,6 +1814,7 @@ case 'j':
         if (social.asking === 'trade' && social.trade) tradeAct('decline');
         else if (social.asking === 'brawl' && social.brawl) pvpAct('decline');
         else if (social.invite) partyAct('decline');
+        else if (house.invite) net.loop('house.decline');
         else {
           const off = toggleMute();
           setMusicMuted(off);
@@ -1690,12 +1909,16 @@ case 'j':
    * end in the same place.
    */
   net.on('line', (m) => {
-    const msg = m as { kind?: string; encounterId?: string };
+    const msg = m as { kind?: string; encounterId?: string; reason?: string };
     if (msg.kind === 'ambush' && msg.encounterId) fightingSite = msg.encounterId;
+    // A touch that refused to fight explains itself. The figure visibly walked over, so a
+    // silent refusal reads as a broken ambush. Server-side throttled to one per 6s.
+    if (msg.kind === 'sealed' && msg.reason) say(`sealed: ${msg.reason}`, 't-anomaly');
   });
 
   net.on('profile', () => {
     applyProfile();
+
     const pr = net.profile;
     if (pr) {
       if (lastLevel && pr.level > lastLevel) {
@@ -1725,6 +1948,7 @@ case 'j':
     social.nearby = ((m.players ?? []) as { id: string; tokenId: number; name?: string; level?: number; tribe?: string }[])
       .filter((p) => p.id !== net.me?.id)
       .map((p) => ({ ...p })) as typeof social.nearby;
+    house.nearby = social.nearby;
     void remotes.sync(
       ((m.players ?? []) as { id: string; x: number; y: number; facing: number; heading?: number; anim: string; tokenId: number; attributes?: Record<string, string> }[])
         .filter((p) => p.id !== net.me?.id)
@@ -1748,14 +1972,6 @@ case 'j':
     sfx.discover();
     hud.toast({ icon: 'pin', title: `DISCOVERED · ${String(m.name).toUpperCase()}`, sub: `+${m.xp} XP`, colour: 'var(--prism)' });
     say(String(m.text), 't-glitch');
-  });
-
-  net.on('hit', (m) => {
-    // The laser meter rides on every reply to a legacy `fire`; the duel reads its own messages.
-    if (typeof m.charge === 'number') {
-      laser = m.charge;
-      applyProfile();
-    }
   });
 
   // A fight the server started for us — stepping into a fold node — opens the duel by itself.
@@ -1796,6 +2012,48 @@ case 'j':
           sfx.wave();
           hud.toast({ icon: 'sparkle', title: m.match ? 'RESONANCE' : 'WAVE CAUGHT', sub: `+${m.wav} WAV${m.match ? ' · tuned to your element' : ''}`, colour: 'var(--cyan)' });
         } else if (m.reason) say(String(m.reason), 't-glitch');
+        break;
+      case 'house.enter':
+      case 'house.accept':
+        if (!m.ok) say(String(m.reason ?? 'refused'), 't-storm');
+        else {
+          // The owner is whoever the stock came with: guests get the room, never the shelf.
+          const owner = !!m.owned;
+          const label = owner ? 'YOUR ROOM' : house.invite ? house.invite.name + "'S ROOM" : "A FRIEND'S ROOM";
+          house.invite = null;
+          enterHouse(String(m.of), m.layout as HouseLayout, (m.owned ?? null) as Record<string, number> | null, label);
+        }
+        break;
+      case 'house.leave':
+        if (m.ok && inside?.kind === 'house') {
+          sfx.door();
+          restoreStreetFromRoom();
+        } else if (!m.ok) say(String(m.reason ?? 'refused'), 't-storm');
+        break;
+      case 'house.get':
+        if (m.ok) {
+          house.owned = (m.owned ?? {}) as Record<string, number>;
+          if (m.layout) house.placed = (m.layout as HouseLayout).items.map((i) => ({ uid: i.uid, fid: i.fid }));
+          if (tab === 'social') paint();
+        }
+        break;
+      case 'house.place':
+      case 'house.pickup':
+      case 'house.rotate':
+        if (!m.ok) say(String(m.reason ?? 'refused'), 't-storm');
+        else if (m.layout && inside?.kind === 'house') {
+          (room as HouseRoom | null)?.setLayout(m.layout as HouseLayout);
+          house.placed = (m.layout as HouseLayout).items.map((i) => ({ uid: i.uid, fid: i.fid }));
+          if (tab === 'social') paint();
+        }
+        break;
+      case 'house.invite':
+        if (m.ok) {
+          house.notice = 'invitation sent';
+          if (tab === 'social') paint();
+        } else say(String(m.reason ?? 'refused'), 't-storm');
+        break;
+      case 'house.decline':
         break;
       case 'war':
         if (m.ok) war = (m as { war?: WarView }).war ?? null;
@@ -2097,10 +2355,11 @@ case 'j':
         : inside && room
           ? { solids: room.solids, bounds: room.bounds }
           : explorer.walk;
-    // One mapping everywhere: keys mean "up the screen", and only the camera's yaw knows
-    // where that points. Dungeons and rooms used to pin this to 0 while the camera sat at
-    // whatever yaw it already had, so W walked off at an angle from screen-up.
-    stepPlayer(player, dt, walk, lock, stage.director.yaw);
+    // One mapping everywhere: keys mean "up the screen", and only the RENDERED yaw knows
+    // where that points. Fixed rigs (the house, the shops) render from 0 while yaw keeps
+    // whatever the street left behind, so mapping through yaw walked W off at an angle
+    // from screen-up in every room in the game.
+    stepPlayer(player, dt, walk, lock, stage.director.viewYaw());
 
     // Footsteps, soft, on the beat of the stride.
     if (player.moving) {
@@ -2126,14 +2385,15 @@ case 'j':
       // The Line's only interaction is the site you are standing on. This is the client half of
       // a question the server answers again for itself � world.siteUnder � so walking up to a
       // site and saying so are two independent checks, not one.
-      // No prompt and no key: walking into a mob starts the fight server-side, so the only
-      // thing the shell does on the Line is report where it stands.
-      lineSite = null;
+      // Walking into a mob starts the fight server-side — but only when the gate is open,
+      // and a sealed site fails silently. So the site underfoot gets the E prompt too: E asks
+      // `line.enter` and the server answers with the fight or the reason, out loud either way.
+      lineSite = line.layout.siteAt(player.pos.x, player.pos.z, 9) ?? null;
       target = null;
       roomTarget = null;
       // The scout talks to whoever stands by the fire. Same coordinates both sides.
       scoutNear = !!lineRegion && Math.hypot(player.pos.x - campOf(lineRegion).npc.x, player.pos.z - campOf(lineRegion).npc.z) < 4;
-      line.update(now / 1000, stage.director.focusPoint());
+      line.update(now / 1000, stage.director.focusPoint(), player.pos);
       // The bodies, fed every frame until they land. The field is built inside a fade, and the mob
       // list arrives on a later round trip, so neither "hand it over when the message lands" nor
       // "hand it over when the field is built" can be the only one — whichever happens second
@@ -2309,6 +2569,24 @@ case 'j':
   const g = window as unknown as Record<string, unknown>;
   g.__chog = shell;
   g.__pos = () => ({ x: +player.pos.x.toFixed(2), z: +player.pos.z.toFixed(2), moving: player.moving ? 1 : 0, sector, area: explorer.areaName(player.pos.x, player.pos.z) });
+  g.__faceUrl = () => faceUrl(chog.root);
+  g.__sites = () => line?.sites.map((s) => ({ id: s.id, kind: s.kind, x: +s.x.toFixed(1), z: +s.z.toFixed(1), reach: s.reach })) ?? null;
+  g.__markers = () => markers();
+  g.__faceParts = () => {
+    const out: { name: string; y: number; x: number; z: number; vis: boolean }[] = [];
+    chog.root.updateMatrixWorld(true);
+    const c = new THREE.Vector3();
+    chog.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      try { mesh.geometry.computeBoundingBox(); } catch { /* keep going */ }
+      const bb = mesh.geometry.boundingBox;
+      if (bb) bb.getCenter(c).applyMatrix4(mesh.matrixWorld);
+      else c.set(0, 0, 0);
+      out.push({ name: o.name || '(unnamed)', y: bb ? +(bb.max.y - bb.min.y).toFixed(2) : -1, x: +c.x.toFixed(2), z: +c.z.toFixed(2), vis: mesh.visible });
+    });
+    return out.sort((a, b) => b.y - a.y).slice(0, 60);
+  };
   g.__tp = (px: number, pz: number) => {
     const from = player.pos.clone();
     player.pos.set(px, 0, pz);
@@ -2334,12 +2612,28 @@ case 'j':
     setVirtualInput(0, 0);
     return 'done';
   };
+  g.__walkTo = async (tx: number, tz: number, seconds: number) => {
+    // Real-time walk: hold virtual input and let the live loop step, send and render —
+    // unlike __drive, which steps the world faster than the move throttle can report.
+    // Stops at the target, at a duel, or at the clock.
+    const t0 = Date.now();
+    for (;;) {
+      const dx = tx - player.pos.x;
+      const dz = tz - player.pos.z;
+      const len = Math.hypot(dx, dz);
+      if (len < 0.6 || duel || Date.now() - t0 > seconds * 1000) break;
+      setVirtualInput(dx / len, dz / len, len > 6);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    setVirtualInput(0, 0);
+    return duel ? 'ambushed' : `at ${player.pos.x.toFixed(1)},${player.pos.z.toFixed(1)}`;
+  };
   g.__cam = (p?: Parameters<Stage['tuneCamera']>[0]) => {
     if (p) stage.tuneCamera(p);
     return stage.director.describe();
   };
   g.__zoom = (v?: number) => (v === undefined ? stage.zoom : stage.setZoom(v));
-  g.__debug = () => stage.debug();
+  g.__debug = () => ({ ...stage.debug(), byGeo: stage.debugDetail(), byRoot: stage.debugRoots(), byParent: stage.debugParents() });
   g.__town = () => ({ sector, name: explorer.layout.name, areas: explorer.layout.areas.map((a) => a.name), anchors: explorer.layout.anchors.length, solids: explorer.layout.solids.length, tris: explorer.city?.triangles, buildMs: explorer.city?.buildMs, extent: cityOf(sector).extent });
   // **The Line's state, in one paste.** `g.__line()` with no argument returns everything needed
   // to tell a live failure apart from a wrong theory: which region, where the player stands and
@@ -2467,6 +2761,7 @@ case 'j':
   g.__duelcam = DUEL_CAM;
   g.__voice = voice;
   g.__social = social;
+  g.__house = house;
   g.__duelobj = () => duel;
   g.__me = me;
   g.__net = net;

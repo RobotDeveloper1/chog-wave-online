@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { archetypeForEncounter, mobAt, mobFacing, mobSpawns } from '../src/line/mobs.ts';
-import { lineLayout } from '../src/line/layout.ts';
+import { AGGRO_R, CHASE_CONTACT, GIVE_UP_R, archetypeForEncounter, chaseStep, mobAt, mobFacing, mobSpawns, type MobSpawn } from '../src/line/mobs.ts';
+import { lineLayout, walkable } from '../src/line/layout.ts';
 import { REGION_BY_ID, REGION_IDS } from '../src/line/index.ts';
 import { ARCHETYPES, MOVES, movePanels, pickMove } from '../src/sf/boss.ts';
 import { FIRST_PLAYER_LANE, LANES } from '../src/sf/field.ts';
@@ -39,6 +39,95 @@ describe('line mobs exist', () => {
   });
 });
 
+describe('line mobs chase', () => {
+  const spawn = () => mobSpawns('tolls')[0]!;
+  const NOW = 1_700_000_000_000;
+
+  /** A foe off the patrol along a ray the run can actually travel: foe and midpoint dry. */
+  function foeAlong(m: MobSpawn, nowMs: number, dist = 10): { x: number; z: number } {
+    const patrol = mobAt(m, nowMs);
+    for (const [dx, dz] of [[1, 0], [0, 1], [-1, 0], [0, -1]] as const) {
+      const foe = { x: patrol.x + dx * dist, z: patrol.z + dz * dist };
+      const mid = { x: patrol.x + dx * dist * 0.6, z: patrol.z + dz * dist * 0.6 };
+      if (walkable(m.region, foe.x, foe.z) && walkable(m.region, mid.x, mid.z)) return foe;
+    }
+    throw new Error('no dry ray off this patrol');
+  }
+
+  it('patrols past a foe beyond the aggro radius, keeping no anchor', () => {
+    const m = spawn();
+    const patrol = mobAt(m, NOW);
+    const far = { x: patrol.x + AGGRO_R + 5, z: patrol.z };
+    const r = chaseStep(null, m, NOW, far);
+    expect(r.anchor).toBeNull();
+    expect({ x: r.x, z: r.z }).toEqual(patrol);
+  });
+
+  it('notices a foe inside and runs it down at species speed', () => {
+    const m = spawn();
+    const patrol = mobAt(m, NOW);
+    const foe = foeAlong(m, NOW, 10);
+    const r0 = chaseStep(null, m, NOW, foe);
+    expect(r0.anchor).not.toBeNull();
+    // The run starts where the patrol stood: no teleport on notice.
+    expect(Math.hypot(r0.x - patrol.x, r0.z - patrol.z)).toBeLessThan(0.01);
+    const later = chaseStep(r0.anchor, m, NOW + 2000, foe);
+    const d0 = Math.hypot(r0.x - foe.x, r0.z - foe.z);
+    const d1 = Math.hypot(later.x - foe.x, later.z - foe.z);
+    expect(d1).toBeLessThan(d0);
+    // Two seconds at species speed: the run is a run, not a lean.
+    expect(d0 - d1).toBeCloseTo(Math.min(m.chaseSpeed * 2, d0 - CHASE_CONTACT), 1);
+  });
+
+  it('stops at contact, so the duel opens on a touch', () => {
+    const m = spawn();
+    const foe = foeAlong(m, NOW, 8);
+    const r0 = chaseStep(null, m, NOW, foe);
+    const r1 = chaseStep(r0.anchor, m, NOW + 30000, foe);
+    expect(Math.hypot(r1.x - foe.x, r1.z - foe.z)).toBeLessThanOrEqual(CHASE_CONTACT + 0.01);
+  });
+
+  it('gives up past the rim and walks home, clearing the anchor on arrival', () => {
+    const m = spawn();
+    const patrol = mobAt(m, NOW);
+    const foe = foeAlong(m, NOW, 10);
+    const r0 = chaseStep(null, m, NOW, foe);
+    expect(r0.anchor?.back).toBeFalsy();
+    const far = { x: patrol.x + AGGRO_R + GIVE_UP_R + 5, z: patrol.z };
+    const r1 = chaseStep(r0.anchor, m, NOW + 1000, far);
+    expect(r1.anchor?.back).toBe(true);
+    // The turn starts from the run's own feet, within one second of travel.
+    expect(Math.hypot(r1.x - r0.x, r1.z - r0.z)).toBeLessThan(m.chaseSpeed * 1 + 0.01);
+    const home = chaseStep(r1.anchor, m, NOW + 60000, null);
+    expect(home.anchor).toBeNull();
+    expect({ x: home.x, z: home.z }).toEqual(mobAt(m, NOW + 60000));
+  });
+
+  it('is deterministic from the same anchor, so both sides agree exactly', () => {
+    const m = spawn();
+    const foe = { x: m.home.x + 7, z: m.home.z - 3 };
+    const a = chaseStep(null, m, NOW, foe);
+    expect(chaseStep(null, m, NOW, foe)).toEqual(a);
+    expect(chaseStep(a.anchor, m, NOW + 1500, foe)).toEqual(chaseStep(a.anchor, m, NOW + 1500, foe));
+  });
+
+  it('faces down the run while moving, the foe at contact, the walk otherwise', () => {
+    const m = spawn();
+    const patrol = mobAt(m, NOW);
+    const foe = foeAlong(m, NOW, 8);
+    const want = Math.atan2(foe.x - patrol.x, foe.z - patrol.z);
+    const r0 = chaseStep(null, m, NOW, foe);
+    // Standing at notice: turned to face the foe, in one turn.
+    expect(r0.facing).toBeCloseTo(want, 9);
+    const r1 = chaseStep(r0.anchor, m, NOW + 1500, foe);
+    // Running: facing the run, which is straight at a standing foe — no whipping
+    // when the player strafes, because the yaw follows the body, not the boots.
+    expect(r1.facing).toBeCloseTo(want, 5);
+    const far = { x: patrol.x + AGGRO_R + 5, z: patrol.z };
+    expect(chaseStep(null, m, NOW, far).facing).toBe(mobFacing(m, NOW));
+  });
+});
+
 describe('line mobs wear their duel', () => {
   it('gives every mob the archetype and tier its fight opens', () => {
     for (const r of REGION_IDS) {
@@ -51,17 +140,17 @@ describe('line mobs wear their duel', () => {
     }
   });
 
-  it('fields each region its own roster of fights', () => {
-    // The whole table, not spot checks: every region leads with its own mob, in its own
-    // pattern. Tolls fields its own three kits — the reference every later region is read
-    // against; the relay leads with the glitch its own masts leak.
+  it('fields each region its own ladder of fights, nearest drift first', () => {
+    // The whole table, not spot checks: every region climbs from its own weakest mob
+    // at the nearest drift to something faster, tougher, or stranger at the far end.
+    // Tolls opens on mites because the farm track is where the game starts.
     const drifts: Record<string, string[]> = {
-      tolls: ['mite', 'walker', 'mite', 'walker'],
-      ashpine: ['spark', 'glitch', 'spark', 'glitch'],
-      marsh: ['wisp', 'spark', 'wisp', 'spark'],
-      relay: ['glitch', 'spark', 'glitch', 'spark'],
-      causeway: ['husk', 'spark', 'husk', 'spark'],
-      static: ['spark', 'husk', 'spark', 'husk'],
+      tolls: ['imp', 'walker', 'mite', 'mite'],
+      ashpine: ['imp', 'glitch', 'glitch', 'spark'],
+      marsh: ['husk', 'husk', 'spark', 'wisp'],
+      relay: ['surge', 'glitch', 'spark', 'glitch'],
+      causeway: ['husk', 'front', 'front', 'spark'],
+      static: ['husk', 'imp', 'husk', 'spark'],
     };
     for (const [region, want] of Object.entries(drifts)) {
       expect(
@@ -80,7 +169,7 @@ describe('line mobs wear their duel', () => {
       Object.entries(drifts).map(([region, d]) => [...d, archetypeForEncounter(`${region}.5`)].join(',')),
     );
     expect(sigs.size).toBe(6);
-    // Both bodies of one drift wear the same fight.
+    // Every body of one drift wears the same fight.
     for (const m of mobSpawns('tolls').filter((x) => x.encounterId === 'tolls.2')) {
       expect(m.archetype).toBe('walker');
     }

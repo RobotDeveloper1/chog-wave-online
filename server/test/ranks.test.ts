@@ -9,7 +9,7 @@ import { SF, progressOf, type RanksView } from '@chog/shared';
  *
  * The claims worth defending:
  *
- *  - **every board is ordered, and the vault is not a player** — token 0 holds the
+ *  - **every board is ordered, and the vault is not a player** — the vault key holds the
  *    team's rake, so it must never top the $CHOG board;
  *  - **a finished brawl is a win and a loss**, recorded by the same `endBrawl` that
  *    pays the wager — while a declined challenge records nothing;
@@ -22,6 +22,7 @@ import { SF, progressOf, type RanksView } from '@chog/shared';
 
 let dir: string;
 let World: typeof import('../src/world.ts').World;
+let VAULT_KEY: string;
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), 'chog-ranks-'));
@@ -29,6 +30,7 @@ beforeAll(async () => {
   process.env.META_DIR = join(dir, 'no-metadata');
   process.env.FEED = 'synthetic';
   ({ World } = await import('../src/world.ts'));
+  ({ VAULT_KEY } = await import('../src/profiles.ts'));
 });
 afterAll(() => {
   try {
@@ -83,25 +85,25 @@ describe('ranks — four boards off every save', () => {
     world.profiles.doc(a.tokenId).line.cleared = ['tolls.1', 'tolls.2'];
     world.profiles.grant(a.tokenId, {});
     // The vault holds rake, so without the exclusion it would top the money board.
-    world.profiles.addChog(0, 10_000);
+    world.profiles.addChog(VAULT_KEY, 10_000);
 
     const view = ranksOf(world, a.id);
-    expect(view.you).toBe(a.tokenId);
-    const lv = view.level.map((r) => r.tokenId);
-    expect(lv.indexOf(a.tokenId)).toBeLessThan(lv.indexOf(b.tokenId));
+    expect(view.you).toBe(a.saveKey);
+    const lv = view.level.map((r) => r.key);
+    expect(lv.indexOf(a.saveKey)).toBeLessThan(lv.indexOf(b.saveKey));
     // Joining already pays album XP for the token's own traits, so the level is read
     // off whatever the grant left behind — the board's job is the curve, not the sum.
-    const rowA = view.level.find((r) => r.tokenId === a.tokenId)!;
+    const rowA = view.level.find((r) => r.key === a.saveKey)!;
     expect(rowA.xp).toBe(world.profiles.doc(a.tokenId).xp);
     expect(rowA.level).toBe(progressOf(rowA.xp).level);
-    const money = view.chog.map((r) => r.tokenId);
-    expect(money.indexOf(b.tokenId)).toBeLessThan(money.indexOf(a.tokenId));
-    expect(view.chog.find((r) => r.tokenId === 0)).toBeUndefined();
-    const road = view.line.find((r) => r.tokenId === a.tokenId)!;
+    const money = view.chog.map((r) => r.key);
+    expect(money.indexOf(b.saveKey)).toBeLessThan(money.indexOf(a.saveKey));
+    expect(view.chog.find((r) => r.key === VAULT_KEY)).toBeUndefined();
+    const road = view.line.find((r) => r.key === a.saveKey)!;
     expect(road.lineCleared).toBe(2);
     expect(road.lineRegion).toBe('TOLLS');
     // Both are standing on the street, so both show their callsigns.
-    expect(view.level.find((r) => r.tokenId === a.tokenId)!.name).toBe(a.build.callsign);
+    expect(view.level.find((r) => r.key === a.saveKey)!.name).toBe(a.build.callsign);
   });
 
   it('banks a win and a loss when a brawl ends, and nothing when one is refused', () => {
@@ -113,15 +115,15 @@ describe('ranks — four boards off every save', () => {
     finishPvp(world, a.id);
 
     const view = ranksOf(world, b.id);
-    expect(view.pvp.find((r) => r.tokenId === a.tokenId)).toMatchObject({ pvpWins: 1, pvpLosses: 0 });
-    expect(view.pvp.find((r) => r.tokenId === b.tokenId)).toMatchObject({ pvpWins: 0, pvpLosses: 1 });
+    expect(view.pvp.find((r) => r.key === a.saveKey)).toMatchObject({ pvpWins: 1, pvpLosses: 0 });
+    expect(view.pvp.find((r) => r.key === b.saveKey)).toMatchObject({ pvpWins: 0, pvpLosses: 1 });
   });
 
   it('shows the token number for a save with nobody standing on it', () => {
     const { world, a } = twoOnStreet(4321, 4322);
     // `profiles.ranks` is the boards before the street fills in the live names.
     const bare = world.profiles.ranks();
-    expect(bare.you).toBe(-1);
-    expect(bare.level.find((r) => r.tokenId === a.tokenId)!.name).toBe('#4321');
+    expect(bare.you).toBe('');
+    expect(bare.level.find((r) => r.key === a.saveKey)!.name).toBe('#4321');
   });
 });

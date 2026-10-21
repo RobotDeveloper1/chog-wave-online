@@ -569,7 +569,7 @@ describe('album', () => {
   });
 
   it('pays the rare value more than the common one', () => {
-    const common = rarityWeight(474);
+    const common = rarityWeight(984);
     const rare = rarityWeight(1);
     expect(rare).toBeGreaterThan(common);
     expect(common).toBe(1);

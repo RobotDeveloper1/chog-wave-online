@@ -57,6 +57,11 @@ export function bindKeys(): void {
   addEventListener('keydown', (e) => {
     // Typing in the chat line must not walk the Chog.
     if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return;
+    // Auto-repeat carries no information for a held set: the key is already in it.
+    // Honouring repeats resurrected wiped keys instead — a dodge key still held when a
+    // duel ended came back on the next repeat tick after `clearKeys`, walking the Chog
+    // by itself and mixing with real input, which is the post-duel desync.
+    if (e.repeat) return;
     keys.add(e.key.toLowerCase());
     if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'tab'].includes(e.key.toLowerCase())) {
       e.preventDefault();
@@ -68,6 +73,19 @@ export function bindKeys(): void {
 
 export function pressed(...names: string[]): boolean {
   return names.some((n) => keys.has(n));
+}
+
+/**
+ * Drop all held keys. The duel listens in the capture phase and swallows movement
+ * key-ups while it is up, so a key held walking into an ambush is still "held" when
+ * the fight ends — the Chog keeps walking by itself and real input mixes with the
+ * ghost, which reads as the controls going mad for a few seconds after every duel.
+ * Called on the way in and on the way out, so neither side inherits stale boots. The wipe
+ * holds because repeats are ignored above: only a fresh physical press walks again.
+ */
+export function clearKeys(): void {
+  keys.clear();
+  taken.clear();
 }
 
 /** Consume a key press: true once per physical press, however long it is held. */

@@ -111,11 +111,19 @@ describe('line plans — the camp', () => {
 describe('line plans — the mobs', () => {
   it('fans each region its own spread', () => {
     const fans = REGION_IDS.map((id) => {
-      const [a, b] = mobSpawns(id).filter((m) => m.encounterId === `${id}.1`);
-      return Math.hypot(a!.home.x - b!.home.x, a!.home.z - b!.home.z);
+      const homes = mobSpawns(id).filter((m) => m.encounterId === `${id}.1`).map((m) => m.home);
+      let min = Infinity;
+      for (let i = 0; i < homes.length; i++) {
+        for (let j = i + 1; j < homes.length; j++) {
+          min = Math.min(min, Math.hypot(homes[i]!.x - homes[j]!.x, homes[i]!.z - homes[j]!.z));
+        }
+      }
+      // Pairs stand 180 deg apart, packs 120: divide the chord back out to recover the fan
+      // radius itself, which is the number that is supposed to differ per region.
+      return min / (homes.length > 2 ? Math.sqrt(3) : 2);
     });
     expect(new Set(fans.map((f) => Math.round(f))).size, JSON.stringify(fans)).toBeGreaterThanOrEqual(3);
-    for (const f of fans) expect(f).toBeGreaterThan(14);
+    for (const f of fans) expect(f).toBeGreaterThan(7);
   });
 
   it('walks each region its own patrol tempo, wardens never', () => {

@@ -293,7 +293,8 @@ export class Drops {
       pile.core.rotation.x = t * pile.spin * 0.6;
       pile.ring.scale.setScalar(1 + Math.sin(t * pile.pulse) * 0.08);
       pile.ring.rotation.z = t * pile.spin * 0.45;
-      const haloMat = pile.core.parent?.children[1].material as THREE.MeshBasicMaterial | undefined;
+      const halo = pile.core.parent?.children[1];
+      const haloMat = halo instanceof THREE.Mesh ? (halo.material as THREE.MeshBasicMaterial | undefined) : undefined;
       if (haloMat) haloMat.opacity = 0.14 + 0.14 * (0.5 + 0.5 * Math.sin(t * pile.pulse));
 
       // Reachability is the pile's own state, and it shows: a pile you can click is lit, one you

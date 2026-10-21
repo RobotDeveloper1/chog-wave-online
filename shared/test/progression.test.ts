@@ -18,6 +18,9 @@ import {
   nodeById,
   starterCard,
   unlocksAt,
+  xpForLine,
+  levelFromXp,
+  ENCOUNTERS,
   type ChogBuild,
 } from '../src/index.ts';
 
@@ -113,6 +116,13 @@ describe('the ladder', () => {
     expect(levels.filter((l) => l <= 5).length).toBeGreaterThanOrEqual(3);
   });
 
+  it('sells no dead mechanics: every rung is a rule the game enforces', () => {
+    // The laser-eyes charges used to sit here while the server refused every laser.
+    // A rung the game cannot honour is a lie on the career page, not a reward.
+    expect(GATES.some((g) => (g.kind as string) === 'laser')).toBe(false);
+    expect(unlocksAt(LEVEL_CAP)).not.toHaveProperty('laserCharges');
+  });
+
   it('has a rung for every dungeon, at the level it opens', () => {
     for (const d of DUNGEONS) {
       const rung = GATES.find((g) => g.kind === 'dungeon' && g.label === `Dungeon: ${d.name}`);
@@ -138,6 +148,24 @@ describe('the ladder', () => {
     expect(gatesBetween(4, 8)).toContain('Dungeon: RELAY SPIRE');
     expect(unlocksAt(1).next).toMatch(/Lv 2/);
     expect(unlocksAt(LEVEL_CAP).next).toBeNull();
+  });
+});
+
+describe('the Line pays', () => {
+  it('moves the bar on every walk, not only at the warden', () => {
+    expect(xpForLine('drift')).toBe(6);
+    expect(xpForLine('post')).toBe(12);
+    expect(xpForLine('warden')).toBe(20);
+  });
+
+  it('walks the Tolls from zero to level 3', () => {
+    // Four drifts, two posts, the warden, and the region bonus: cards build the deck,
+    // and the XP lands a fresh Chog at level 3 with the bar already moving to 4.
+    const walk = ENCOUNTERS.filter((e) => e.region === 'tolls');
+    const xp = walk.reduce((n, e) => n + xpForLine(e.kind), 0) + 70;
+    expect(walk).toHaveLength(7);
+    expect(xp).toBe(138);
+    expect(levelFromXp(xp)).toBe(3);
   });
 });
 

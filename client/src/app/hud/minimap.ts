@@ -45,6 +45,7 @@ export class Minimap {
   private extent: Rect = { x0: 0, z0: 0, x1: 1, z1: 1 };
   /** World units from the player to the edge of the disc. */
   radius = 38;
+  private still = { t: -1e9, px: 0, pz: 0, yaw: 0, facing: 0, markers: null as unknown };
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -142,6 +143,13 @@ export class Minimap {
       canvas.height = size;
     }
     const s = size / (this.radius * 2);
+    // The radar is a still life most frames: same dots, same heading. Skip the
+    // repaint unless something moved, the markers turned over, or the quest pulse
+    // (8Hz) is due for its next breath.
+    const st = this.still;
+    const moved = Math.abs(px - st.px) + Math.abs(pz - st.pz) > 0.15 || Math.abs(yaw - st.yaw) > 0.004 || Math.abs(facing - st.facing) > 0.004;
+    if (!moved && st.markers === (markers as unknown) && t - st.t < 0.12) return;
+    st.t = t; st.px = px; st.pz = pz; st.yaw = yaw; st.facing = facing; st.markers = markers as unknown;
     g.clearRect(0, 0, size, size);
     g.save();
     g.beginPath();

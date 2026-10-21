@@ -607,7 +607,7 @@ const market: Filler = (ctx) => {
   const p = ctx.profile;
   const { court } = ringBlock(ctx, {
     style: p.shop,
-    floors: [1.4, 2.4],
+    floors: [2.2, 3],
     depthNS: [6.5, 7.5],
     depthEW: [0, 0],
     minW: 6,
@@ -1026,9 +1026,11 @@ const areaOf = (out: CityLayout, x: number, z: number): string => {
  * The nearest spot to (x, z) with room to stand. A plan names where someone *should*
  * be; the random parts of a block (a kiosk, a stack of crates) decide where there is
  * actually room, and an NPC embedded in a kiosk is a bug the plan cannot see.
+ * `inside` vetoes ground the spiral may not settle on: the city passes "on a block",
+ * so a shove out of a wall can never land a person in the middle of a street.
  */
-export function nearestFree(solids: Solid[], x: number, z: number, clearance = 1.1, reach = 16): { x: number; z: number } {
-  if (isClear(solids, x, z, 0, 0, clearance)) return { x, z };
+export function nearestFree(solids: Solid[], x: number, z: number, clearance = 1.1, reach = 16, inside: (x: number, z: number) => boolean = () => true): { x: number; z: number } {
+  if (inside(x, z) && isClear(solids, x, z, 0, 0, clearance)) return { x, z };
   for (let ring = 1; ring * 0.75 <= reach; ring++) {
     const r = ring * 0.75;
     const steps = Math.max(8, ring * 6);
@@ -1036,7 +1038,7 @@ export function nearestFree(solids: Solid[], x: number, z: number, clearance = 1
       const a = (i / steps) * Math.PI * 2;
       const px = x + Math.cos(a) * r;
       const pz = z + Math.sin(a) * r;
-      if (isClear(solids, px, pz, 0, 0, clearance)) return { x: px, z: pz };
+      if (inside(px, pz) && isClear(solids, px, pz, 0, 0, clearance)) return { x: px, z: pz };
     }
   }
   return { x, z };
@@ -1044,9 +1046,13 @@ export function nearestFree(solids: Solid[], x: number, z: number, clearance = 1
 
 /** NPCs, the spawn, gates and points of interest: everything the plan names by block or door. */
 function resolveAnchors(plan: ZonePlan, out: CityLayout): void {
+  // People and points of interest belong on blocks — a sidewalk, a square, a lawn.
+  // The spiral used to test solids only, and asphalt has no solids, so a person
+  // shoved out of a wall could settle in the middle of a street unchallenged.
+  const insideBlock = (x: number, z: number): boolean => out.blocks.some((b) => inRect(b.rect, x, z));
   const spawnBlock = blockAt(out, plan.spawn.block[0], plan.spawn.block[1]);
   if (spawnBlock) {
-    const at = nearestFree(out.solids, rectCx(spawnBlock.rect) + plan.spawn.dx, rectCz(spawnBlock.rect) + plan.spawn.dz, 1.6);
+    const at = nearestFree(out.solids, rectCx(spawnBlock.rect) + plan.spawn.dx, rectCz(spawnBlock.rect) + plan.spawn.dz, 1.6, 16, insideBlock);
     out.anchors.push({ id: 'spawn', kind: 'spawn', x: at.x, z: at.z, label: 'ARRIVAL', area: spawnBlock.def.name });
   }
 
@@ -1056,15 +1062,19 @@ function resolveAnchors(plan: ZonePlan, out: CityLayout): void {
     if ('door' in npc.at) {
       const door = out.anchors.find((a) => a.id === (npc.at as { door: string }).door);
       if (!door) continue;
-      x = door.x + (npc.at.dx ?? 0);
-      z = door.z + (npc.at.dz ?? 0);
+      // dx walks along the shopfront, dz steps out from it — whatever way the door
+      // faces. In world axes once, an east door's "4.5 along the front" marched its
+      // keeper 4.5 into the avenue instead.
+      const lateral = door.face === 1 || door.face === 3;
+      x = door.x + (lateral ? (npc.at.dz ?? 0) : (npc.at.dx ?? 0));
+      z = door.z + (lateral ? (npc.at.dx ?? 0) : (npc.at.dz ?? 0));
     } else {
       const b = blockAt(out, npc.at.block[0], npc.at.block[1]);
       if (!b) continue;
       x = rectCx(b.rect) + npc.at.dx;
       z = rectCz(b.rect) + npc.at.dz;
     }
-    const at = nearestFree(out.solids, x, z, 1.3);
+    const at = nearestFree(out.solids, x, z, 1.3, 16, insideBlock);
     out.anchors.push({
       id: npc.id,
       kind: npc.role === 'board' ? 'board' : 'npc',
@@ -1081,7 +1091,7 @@ function resolveAnchors(plan: ZonePlan, out: CityLayout): void {
   for (const poi of plan.pois) {
     const b = blockAt(out, poi.at.block[0], poi.at.block[1]);
     if (!b) continue;
-    const at = nearestFree(out.solids, rectCx(b.rect) + poi.at.dx, rectCz(b.rect) + poi.at.dz, 1.1);
+    const at = nearestFree(out.solids, rectCx(b.rect) + poi.at.dx, rectCz(b.rect) + poi.at.dz, 1.1, 16, insideBlock);
     out.anchors.push({ id: poi.id, kind: 'poi', x: at.x, z: at.z, label: poi.name, sub: poi.kind, area: areaOf(out, at.x, at.z), radius: poi.radius ?? 5 });
   }
 

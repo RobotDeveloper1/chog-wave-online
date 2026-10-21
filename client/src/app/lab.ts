@@ -61,6 +61,13 @@ export function bootLab(): void {
     const tz = Number(q.get('y'));
     pos.set(q.has('x') && Number.isFinite(tx) ? tx : sp.x, 0, q.has('y') && Number.isFinite(tz) ? tz : sp.z);
     stage.snap();
+    // Screenshot survey: ?span= widens the frame, ?yaw=/?pitch= turn it. Degrees.
+    const span = Number(q.get('span'));
+    if (q.has('span') && Number.isFinite(span)) stage.tuneCamera({ span });
+    const pitch = Number(q.get('pitch'));
+    if (q.has('pitch') && Number.isFinite(pitch)) stage.tuneCamera({ pitch });
+    const yawDeg = Number(q.get('yaw'));
+    if (q.has('yaw') && Number.isFinite(yawDeg)) stage.director.setYaw((yawDeg * Math.PI) / 180, true);
     resize();
   };
 

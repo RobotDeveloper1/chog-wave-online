@@ -5,7 +5,7 @@ import { addBody, openSession, tick, type DuelSession } from '../src/sf/session.
 import { DEFAULT_STATS } from '../src/sf/stats.ts';
 import { enemyVolleyDamage, volleyAnchor, volleyClock } from '../src/sf/clock.ts';
 import { archetypeForEncounter } from '../src/line/mobs.ts';
-import { encounterBudget, screenMight } from '../src/line/budget.ts';
+import { encounterBudget, screenMight, screensForRegionDeck } from '../src/line/budget.ts';
 import { hasQuirk, quirkOf } from '../src/line/quirks.ts';
 
 /**
@@ -47,9 +47,9 @@ function tollsFight(encounterId: string, rand: () => number = Math.random): Duel
 }
 
 describe('the tolls roster', () => {
-  it('fields its own three kits, not the shared tables', () => {
+  it('fields its own four kits, not the shared tables', () => {
     expect([1, 2, 3, 4].map((n) => archetypeForEncounter(`tolls.${n}`))).toEqual([
-      'mite', 'walker', 'mite', 'walker',
+      'imp', 'walker', 'mite', 'mite',
     ]);
     expect(archetypeForEncounter('tolls.5')).toBe('walker');
     expect(archetypeForEncounter('tolls.6')).toBe('walker');
@@ -96,23 +96,44 @@ describe('seven quirks', () => {
   });
 
   it('prices the young swarm soft and the gate hard', () => {
-    expect(quirkOf('tolls.1')).toMatchObject({ hpK: 1.15, powerK: 0.9 });
+    expect(quirkOf('tolls.4')).toMatchObject({ powerK: 0.7, clock: { gapK: 1.2, tellK: 1.15 } });
     expect(quirkOf('tolls.7')).toMatchObject({ powerK: 1.25, toll: true });
     expect(quirkOf('tolls.5').walls).toBe(true);
     expect(quirkOf('tolls.2').bloodscent).toBe(true);
-    expect(quirkOf('tolls.4').cornered).toBe(true);
+    expect(quirkOf('tolls.1').cornered).toBe(true);
   });
 
   it('seasons the budget without breaking its promise', () => {
-    // tolls.1 arrives holding nothing: 1.8 screens of chained basics (12 + 13.8 + 15.6),
-    // times the swarm's 1.15.
-    expect(encounterBudget('tolls.1')!.hp).toBe(85);
-    // tolls.6 is still its own screens of its own arrivals — just 30% heavier. The best
-    // screen there runs burn (Hot Heart + Emberpaw); the volt pair never shares a lock.
+    // tolls.4 arrives holding nothing: 1.2 screens of chained basics (12 + 13.8 + 15.6),
+    // with no swarm tax — the tutorial lasts exactly what the budget promises.
+    expect(encounterBudget('tolls.4')!.hp).toBe(49);
+    // tolls.6 is still its own screens of its own arrivals - just 30% heavier.
+
     const b = encounterBudget('tolls.6')!;
-    expect(b.screenMight).toBe(309);
-    expect(b.hp).toBe(Math.round(3.4 * b.screenMight * 1.3));
+    expect(b.screenMight).toBe(171);
+    expect(b.hp).toBe(Math.round(2.6 * b.screenMight * 1.3));
     expect(b.screenMight).toBe(screenMight('tolls', 5));
+  });
+
+  it('keeps the arrival-deck promise on every tolls walk', () => {
+    // HP is priced from the same screen the player arrives holding, so each kind
+    // lasts its tutorial screens by construction — except the weighbridge, which is
+    // 30% heavier on purpose. If this drifts, pacing broke silently.
+    for (const id of ['tolls.1', 'tolls.2', 'tolls.3', 'tolls.4']) {
+      expect(screensForRegionDeck(id)).toBeCloseTo(1.2, 1);
+    }
+    expect(screensForRegionDeck('tolls.5')).toBeCloseTo(2.6, 1);
+    expect(screensForRegionDeck('tolls.6')).toBeCloseTo(3.4, 1);
+    expect(screensForRegionDeck('tolls.7')).toBeCloseTo(5, 1);
+  });
+
+  it('lets a sloppy median starter walk out of the tutorial', () => {
+    // About seven volleys land over the tutorial's 1.2 screens; at the swarm's bite
+    // ten of them still stay under level-1 field HP, so the first fight teaches
+    // dodging instead of demanding it.
+    const anchor = volleyAnchor('node');
+    const bite = enemyVolleyDamage(1, 'node', Math.round(anchor * 0.7), 'mite', 0);
+    expect(bite * 10).toBeLessThan(100);
   });
 
   it('bites above the line everywhere past the first walk', () => {
@@ -125,7 +146,7 @@ describe('seven quirks', () => {
       expect(spicy, `${id} above the line`).toBeGreaterThan(flat);
     }
     // And the first walk stays under it.
-    const soft = enemyVolleyDamage(1, 'node', Math.round(anchor * 0.9), 'mite', 0);
+    const soft = enemyVolleyDamage(1, 'node', Math.round(anchor * 0.7), 'mite', 0);
     expect(soft).toBeLessThan(enemyVolleyDamage(1, 'node', undefined, 'mite', 0));
   });
 });
@@ -149,8 +170,8 @@ describe('a boss with a memory', () => {
     expect(pickMove('walker', 1, 2, () => 0, mem({ ...blood, lastMove: 'bagholder' })).id).toBe('stop-loss');
   });
 
-  it('corners the dogs past half', () => {
-    const cornered = mem({ lastMove: 'bagholder', streak: 1, volleys: 1, quirk: 'tolls.4' });
+  it('corners the imps past half', () => {
+    const cornered = mem({ lastMove: 'bagholder', streak: 1, volleys: 1, quirk: 'tolls.1' });
     expect(pickMove('walker', 3, 2, () => 0.99, cornered).id).toBe('frontrun');
     expect(pickMove('walker', 2, 2, () => 0.99, cornered).id).not.toBe('frontrun');
     expect(pickMove('walker', 3, 2, () => 0.99, mem({ ...cornered, volleys: 2 })).id).not.toBe('frontrun');
@@ -173,23 +194,24 @@ describe('the tolls on the field', () => {
     expect(open.field.blocked).toBeNull();
   });
 
-  it('reads the crows fast', () => {
+  it('reads the mites fast', () => {
     // Nibble off the lead weight: rand 0 takes the first word of the pool.
     const crows = tollsFight('tolls.3', () => 0);
     for (let i = 0; i < 50 && !crows.field.hazards.length; i++) tick(crows, 100);
     const hazard = crows.field.hazards[0] ?? null;
     expect(hazard?.label).toBe('NIBBLE');
-    // telegraph(909) * nibble tell(0.85) * omen tellK(0.85) = 657.
-    const expectMs = Math.round(volleyClock({ phase: 1, difficulty: 2 }).telegraph * 0.85 * 0.85);
-    expect(expectMs).toBe(657);
-    expect(hazard?.total).toBe(657);
+    // telegraph(909) * nibble tell(0.9) * omen tellK(0.85) = 695.
+    const expectMs = Math.round(volleyClock({ phase: 1, difficulty: 2 }).telegraph * 0.9 * 0.85);
+    expect(expectMs).toBe(695);
+    expect(hazard?.total).toBe(695);
   });
 
   it('skitters the mites and plants the gate', () => {
-    const mites = tollsFight('tolls.1', () => 0);
+    const mites = tollsFight('tolls.4', () => 0);
     expect(mites.field.boss.file).toBe(1);
-    // The first strike lands on tick 18: the skitter scatters to file 0 with rand 0.
-    advance(mites, 1800);
+    // The first strike lands on tick 21: the tutorial clock runs calmer, so the
+    // skitter scatters to file 0 a breath later. Rand 0 still picks file 0.
+    advance(mites, 2100);
     expect(mites.boss.volleys).toBe(1);
     expect(mites.field.boss.file).toBe(0);
     // The 700 ms hunt is a skitter too: off file 0 it bounces to 1, never the chase.

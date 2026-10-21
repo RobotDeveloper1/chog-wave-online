@@ -1,6 +1,7 @@
 import { CARD_BY_ID } from '../cards.ts';
 import { NULL_ELEMENT } from './element.ts';
 import { battleCard, countClass, fitsLock, type BattleCard } from './card.ts';
+import { isBasicId } from '../cards.ts';
 import type { Element } from '../types.ts';
 
 /**
@@ -137,7 +138,9 @@ export function canPick(s: HandState, cell: number, caps: Caps): Verdict {
   if (s.queue.includes(cell)) return { ok: false, reason: 'already' };
   const picked = taken(s);
   if (s.queue.length >= Math.min(SELECT_CAP, caps.slots)) return { ok: false, reason: 'full' };
-  if (picked.some((p) => p.id === c.id)) return { ok: false, reason: 'duplicate' };
+  // One copy per turn — except the basic attack, which is five cells of the same button
+  // by design ("taking five of them in one turn is a legal (if dull) program").
+  if (!isBasicId(c.id) && picked.some((p) => p.id === c.id)) return { ok: false, reason: 'duplicate' };
   if (!fitsLock(c, lockOf(s), s.transformed)) return { ok: false, reason: 'element' };
   if (c.cls === 'mega' && countClass(picked, 'mega') >= Math.max(0, caps.mega)) return { ok: false, reason: 'mega' };
   if (c.cls === 'giga') {
@@ -148,8 +151,9 @@ export function canPick(s: HandState, cell: number, caps: Caps): Verdict {
 }
 
 /**
- * Take a cell. The first pick sets the element lock — unless it is NULL, which is precisely
- * what a NULL card is *for*: opening a turn without committing it.
+ * Take a cell. The first pick sets the element lock — unless it is NULL or the basic
+ * attack, which open a turn without committing it. The basic is filler: it fits any
+ * lock and sets none, so a mixed hand always has its floor.
  */
 export function pick(s: HandState, cell: number, caps: Caps): { ok: boolean; reason?: LockReason; state: HandState } {
   const v = canPick(s, cell, caps);
@@ -161,7 +165,7 @@ export function pick(s: HandState, cell: number, caps: Caps): { ok: boolean; rea
     state: {
       ...s,
       queue: [...s.queue, cell],
-      lock: first && c.element !== NULL_ELEMENT ? c.element : s.lock,
+      lock: first && c.element !== NULL_ELEMENT && !isBasicId(c.id) ? c.element : s.lock,
     },
   };
 }
@@ -181,7 +185,7 @@ export function clear(s: HandState): HandState {
 function lockFor(s: HandState, queue: readonly number[]): Element | null {
   for (const cell of queue) {
     const c = cardAt(s, cell);
-    if (c && c.element !== NULL_ELEMENT) return c.element;
+    if (c && c.element !== NULL_ELEMENT && !isBasicId(c.id)) return c.element;
   }
   return null;
 }
@@ -267,8 +271,9 @@ export function drawCandidates(deck: readonly string[], rand: () => number, bonu
  * §4.2.
  *
  * The basic cells are marked with `might` so the substituted number survives all the way to the
- * client, and they are ordinary cards otherwise: they take a cell, they set the element lock like
- * anything else, and taking five of them in one turn is a legal (if dull) program.
+ * client. They take a cell, but they are exempt from the two rules that would brick a small
+ * deck: any number of them may be taken in one turn, they fit whatever lock the turn is under,
+ * and they never set a lock of their own. Taking five in one turn is a legal (if dull) program.
  */
 export function drawHand(
   deck: readonly string[],

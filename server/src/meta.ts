@@ -1,20 +1,31 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { CFG } from './config.ts';
-import { ALBUM_UNIVERSE, CHOG_GENESIS_ADDRESS } from '@chog/shared';
+import { CFG, dataFile } from './config.ts';
+import { ALBUM_UNIVERSE } from '@chog/shared';
 
 /**
  * The trait index.
  *
  * Two facts make this file necessary rather than trivial:
  *
- * 1. `tokenURI` is shuffled. `.data/metadata/<X>.json` is named after the *requested*
- *    number, and only the `name` field carries the real id — keying by filename gives
- *    every player the wrong Chog, silently.
- * 2. Only part of the collection is cached locally, and the public IPFS gateways that
- *    would fill the rest are rate-limited to unusable. So a token with no local record
- *    still has to be playable, and the honest way to do that is to *predict* its
- *    traits from the id and say so out loud in `source`.
+ * 1. `tokenURI` is shuffled: token id T (what wallets hold) serves metadata file
+ *    M (what `name`, traits and art use), and T != M for almost every Chog
+ *    (e.g. token 174 -> 1635.json). Local files are metadata-numbered, so every
+ *    token-id lookup translates through `.data/token_map.json` first.
+ * 2. A token with no local record still has to be playable, and the honest way
+ *    to do that is to *predict* its traits from the id and say so out loud in
+ *    `source`. With the full collection cached this only triggers for corrupt
+ *    records.
+ *
+ * The testnet replica mints the same ids as mainnet, and a replica id IS its
+ * mainnet token: testnet #1 wears token #1's traits (MCGA, BTC Glass, Fwog),
+ * not a predicted set and not a copy. So there is exactly one map and one
+ * metadata dir, whichever chain the server points at — a second map is how
+ * testnet #1 ended up with somebody else's face.
+ *
+ * Paths are repo-rooted (`dataFile`), not cwd-relative: the server boots with
+ * cwd=server/, and a relative `.data/metadata` silently resolves to nothing,
+ * which quietly downgrades the whole collection to predicted traits.
  *
  * Everything downstream — the build formula, the Album, the 3D model's colours — reads
  * traits through here, which is the only reason those three cannot disagree.
@@ -63,9 +74,25 @@ function toAttributes(attributes: unknown): Record<string, string> {
 }
 
 export class TraitIndex {
-  private byToken = new Map<number, Record<string, string>>();
+  /** Metadata number -> attributes. Filenames and `name` agree; the name wins. */
+  private byMeta = new Map<number, Record<string, string>>();
+  /** Token id -> metadata number. Empty without a map file (identity fallback). */
+  private tokenToMeta = new Map<number, number>();
 
-  constructor(dir = CFG.metaDir) {
+  constructor(dir = dataFile(CFG.metaDir), mapPath: string | null = join(dir, '..', 'token_map.json')) {
+    if (mapPath && existsSync(mapPath)) {
+      try {
+        const raw = JSON.parse(readFileSync(mapPath, 'utf8')) as Record<string, number>;
+        for (const [t, m] of Object.entries(raw)) {
+          const ti = Number(t);
+          const mi = Number(m);
+          if (Number.isInteger(ti) && Number.isInteger(mi)) this.tokenToMeta.set(ti, mi);
+        }
+        console.log(`[meta] token map: ${this.tokenToMeta.size} pairs`);
+      } catch {
+        console.warn(`[meta] unreadable token map at ${mapPath} — identity fallback`);
+      }
+    }
     if (!existsSync(dir)) {
       console.warn(`[meta] no local metadata at ${dir} — every token will be predicted`);
       return;
@@ -93,23 +120,29 @@ export class TraitIndex {
         skipped++;
         continue;
       }
-      this.byToken.set(id, attrs);
+      this.byMeta.set(id, attrs);
       real++;
     }
-    console.log(`[meta] ${real} tokens with real traits${skipped ? `, ${skipped} unreadable` : ''}`);
+    console.log(`[meta] ${real} metadata records with real traits${skipped ? `, ${skipped} unreadable` : ``}`);
   }
 
   get size(): number {
-    return this.byToken.size;
+    return this.byMeta.size;
   }
 
-  /** Every locally-known id, so the Album can offer a "browse the collection" list. */
+  /** Token id -> metadata number. Identity without a map (tests). */
+  metaOf(tokenId: number): number {
+    return this.tokenToMeta.get(tokenId) ?? tokenId;
+  }
+
+  /** Every locally-known token id, so the Album can offer a "browse the collection" list. */
   knownIds(limit = 200): number[] {
-    return [...this.byToken.keys()].sort((a, b) => a - b).slice(0, limit);
+    const ids = this.tokenToMeta.size ? [...this.tokenToMeta.keys()] : [...this.byMeta.keys()];
+    return ids.sort((a, b) => a - b).slice(0, limit);
   }
 
   has(tokenId: number): boolean {
-    return this.byToken.has(tokenId);
+    return this.byMeta.has(this.metaOf(tokenId));
   }
 
   /**
@@ -139,22 +172,16 @@ export class TraitIndex {
   }
 
   for(tokenId: number): TokenTraits {
-    const real = this.byToken.get(tokenId);
+    const real = this.byMeta.get(this.metaOf(tokenId));
     if (real) return { tokenId, attributes: real, source: 'real' };
     return { tokenId, attributes: this.predict(tokenId), source: 'predicted' };
   }
 }
 
-/**
- * Which map the world reads. The replica's ids start at 1, exactly where
- * mainnet's do, so sharing one map would hand testnet #1 mainnet #1's face.
- * The contract address is fixed before boot (the server restarts to switch
- * chains), so choosing here, once, cannot drift mid-session.
- */
-function traitDir(): string {
-  const contract = (process.env.CHOG_GENESIS_CONTRACT ?? '').toLowerCase();
-  if (contract && contract !== CHOG_GENESIS_ADDRESS.toLowerCase()) return CFG.metaTestnetDir;
-  return CFG.metaDir;
-}
+/** One map for the process: replica ids are mainnet ids (see the note above). */
+export const traits = new TraitIndex();
 
-export const traits = new TraitIndex(traitDir());
+/** Token id -> metadata number for art/trait lookups (identity without a map). */
+export function metaNumberFor(tokenId: number): number {
+  return traits.metaOf(tokenId);
+}

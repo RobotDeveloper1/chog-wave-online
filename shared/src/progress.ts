@@ -12,7 +12,7 @@ import { DUNGEONS } from './dungeonData.ts';
  * first-time trait sightings — so a player who explores levels faster than one who
  * only grinds boss damage.
  *
- * Levels buy *room*, not raw numbers: extra queue slots, deeper Data Areas, a second laser
+ * Levels buy *room*, not raw numbers: extra queue slots, deeper Data Areas, an earlier
  * charge, and from level 22 onward a licence for one more Mega or Giga card in the Deck. The
  * six attributes stay exactly what the build formula decided, so the NFT still owns the Chog's
  * ceiling — a low-level token holder can out-damage a level 40 foster player. But the deck is
@@ -79,6 +79,15 @@ export function xpForClear(tier: ClearTier, damage = 0, scale = 1): number {
   return Math.round(base * (1 + bonus) * scale);
 }
 
+/**
+ * A Line encounter's own XP, by kind — paid on top of the cards, so the bar moves
+ * on every walk, not only at the warden. A drift is the easiest fight in the game
+ * (ambient-tier); a post is a dungeon room; the warden's 20 sits under the region's
+ * firstClear bonus, which still pays on top. The whole Tolls walk is 68 + 70.
+ */
+export function xpForLine(kind: 'drift' | 'post' | 'warden'): number {
+  return kind === 'warden' ? 20 : kind === 'post' ? 12 : 6;
+}
 export function xpForRoom(areaTier: number): number {
   return 8 + areaTier * 5;
 }
@@ -105,8 +114,6 @@ export interface Unlocks {
   queueSlots: number;
   /** Highest Data Area tier you may enter. */
   areaTier: number;
-  /** Stored laser-eyes charges. */
-  laserCharges: number;
   /** Cards the bag can hold. */
   bagCap: number;
   /** Charge cooldown multiplier, applied to CHARGE_MS. */
@@ -130,7 +137,7 @@ export interface DeckLicence {
   fused: number;
 }
 
-export type UnlockKind = 'hand' | 'dungeon' | 'laser' | 'charge' | 'bag' | 'build';
+export type UnlockKind = 'hand' | 'dungeon' | 'charge' | 'bag' | 'build';
 
 export interface Gate {
   at: number;
@@ -158,7 +165,7 @@ export interface Gate {
 const UPGRADES: Gate[] = [
   { at: 2, kind: 'hand', label: 'Hand: 4-card programs', detail: 'one more card in every program you fire', apply: (u) => { u.queueSlots += 1; } },
   { at: 6, kind: 'hand', label: 'Hand: 5-card programs', detail: 'longer programs, bigger fusions', apply: (u) => { u.queueSlots += 1; } },
-  { at: 10, kind: 'laser', label: 'Second laser charge', detail: 'store two laser-eyes beams', apply: (u) => { u.laserCharges = 2; } },
+  { at: 10, kind: 'charge', label: 'Hand charge: 6% sooner', detail: 'the charge fills sooner — an early taste of the clock', apply: (u) => { u.chargeScale = 0.94; } },
   { at: 12, kind: 'bag', label: 'Bigger bag (40)', detail: 'room for eight more cards', apply: (u) => { u.bagCap = 40; } },
   { at: 14, kind: 'hand', label: 'Hand: 6-card programs', detail: 'the whole panel in one program', apply: (u) => { u.queueSlots += 1; } },
   { at: 20, kind: 'charge', label: 'Faster Hand charge', detail: 'the charge fills 12% sooner', apply: (u) => { u.chargeScale = 0.88; } },
@@ -167,10 +174,10 @@ const UPGRADES: Gate[] = [
   { at: 26, kind: 'charge', label: 'Hand charge: 20% sooner', detail: 'the second rung — another program per fight', apply: (u) => { u.chargeScale = 0.80; } },
   { at: 28, kind: 'build', label: 'Giga licence', detail: 'one more Giga card in the deck', apply: (u) => { u.gigaSlots += 1; } },
   { at: 32, kind: 'build', label: 'Fusion licence', detail: 'one more fused GA card in the deck', apply: (u) => { u.fusedSlots += 1; } },
-  { at: 36, kind: 'laser', label: 'Third laser charge', detail: 'store three laser-eyes beams', apply: (u) => { u.laserCharges = 3; } },
+  { at: 36, kind: 'build', label: 'Second Giga licence', detail: 'a second Giga slot over the born deck', apply: (u) => { u.gigaSlots += 1; } },
   { at: 38, kind: 'charge', label: 'Hand charge: 28% sooner', detail: 'the third rung — the clock from level 20 again', apply: (u) => { u.chargeScale = 0.72; } },
   { at: 44, kind: 'build', label: 'Second Mega licence', detail: 'a fourth Mega slot over the born deck', apply: (u) => { u.megaSlots += 1; } },
-  { at: 48, kind: 'laser', label: 'Fourth laser charge', detail: 'store four laser-eyes beams', apply: (u) => { u.laserCharges = 4; } },
+  { at: 48, kind: 'build', label: 'Second Fusion licence', detail: 'a second fused GA slot over the born deck', apply: (u) => { u.fusedSlots += 1; } },
 ];
 
 /** A rung for every dungeon, at the level it opens: the career, as a list. */
@@ -192,7 +199,6 @@ export const GATES: readonly Gate[] = [...UPGRADES, ...DUNGEON_RUNGS].sort((a, b
 const BASE: Unlocks = {
   queueSlots: 3,
   areaTier: 0,
-  laserCharges: 1,
   bagCap: 32,
   chargeScale: 1,
   fieldHp: 100,
@@ -234,7 +240,7 @@ export function xpForRun(tier: number, flawless: boolean): number {
  * and never the power behind a card the Chog was not born with. A designer note more
  * than code, but it is the rule the rest of this file obeys.
  */
-export const LEVEL_AFFECTS: readonly string[] = ['queueSlots', 'areaTier', 'laserCharges', 'bagCap', 'chargeScale', 'fieldHp', 'megaSlots', 'gigaSlots', 'fusedSlots'];
+export const LEVEL_AFFECTS: readonly string[] = ['queueSlots', 'areaTier', 'bagCap', 'chargeScale', 'fieldHp', 'megaSlots', 'gigaSlots', 'fusedSlots'];
 
 /** Element affinity carried by progression: nothing, by design. */
 export function elementBias(_level: number): Partial<Record<Element, number>> {

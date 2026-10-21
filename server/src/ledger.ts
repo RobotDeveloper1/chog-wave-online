@@ -76,9 +76,11 @@ export class TransferLedger {
   private dirty = false;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private readonly file = join(CFG.dataDir, 'transfers.json');
+  /** Chain-namespaced when CHAIN_ID is set, so a mainnet launch never reads testnet rows as history. */
+  private readonly file: string;
 
-  constructor() {
+  constructor(file = join(CFG.dataDir, CFG.chainId ? `transfers-${CFG.chainId}.json` : 'transfers.json')) {
+    this.file = file;
     this.load();
   }
 

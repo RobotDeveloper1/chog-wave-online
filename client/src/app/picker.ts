@@ -2,7 +2,11 @@ import './picker.css';
 import { GENESIS_SUPPLY, describeBuild, type HolderCard, type HoldingsView } from '@chog/shared';
 import { net } from '../net.ts';
 import { wallet } from '../wallet.ts';
+
 import { wordmark } from './brand.ts';
+import * as THREE from 'three';
+import { PARTS_MODEL, hullMaterial, loadChogNFT, type Chog } from './chogLoader.ts';
+import { bodyUrl } from './portrait.ts';
 
 /**
  * The gate in front of the world.
@@ -67,14 +71,20 @@ class Picker {
   private readonly detailEl = h('div', 'pk-detail');
   private readonly enterBtn = h('button', 'pk-enter');
   private readonly connectBtn = h('button', 'pk-connect');
-  private readonly emailEl = h('input', 'pk-email');
-  private readonly codeEl = h('input', 'pk-code');
-  private codeStage: 'idle' | 'sent' = 'idle';
-  private email = '';
+
   private readonly kickerEl = h('span', 'pk-kicker');
   private resolve: ((p: Pick) => void) | null = null;
   private view: HoldingsView | null = null;
   private chosen: HolderCard | null = null;
+  /** tokenId -> full-body 3D still, shot once per detected Chog. */
+  private snaps = new Map<number, string>();
+  private snapFailed = new Set<number>();
+  private snapBusy = new Set<number>();
+  /** Bumped on close so late mounts dispose instead of painting a dead gate. */
+  private snapRun = 0;
+  /** The detail panel's live viewport: one renderer for the whole gate. */
+  private stage: { renderer: THREE.WebGLRenderer; scene: THREE.Scene; camera: THREE.PerspectiveCamera; chog: Chog; raf: number; tokenId: number } | null = null;
+  private detailKey = '';
   /** `?chog=` for a token this wallet does not hold, tried only without a session. */
   private ghost: number | null = null;
   private note = '';
@@ -100,8 +110,14 @@ class Picker {
 
   private build(): void {
     const brand = h('div', 'pk-brand');
+    const logo = document.createElement('img');
+    logo.src = '/brand/chog-wave-logo.png';
+    logo.alt = 'Chog Wave logo';
+    logo.className = 'pk-logo';
+    const lockup = h('div', 'pk-lockup');
+    lockup.append(logo, this.markEl);
     brand.append(
-      this.markEl,
+      lockup,
       h('span', 'pk-tag', 'online'),
       h('span', 'pk-supply', `chog testnet replicas · monad testnet`),
     );
@@ -127,35 +143,39 @@ class Picker {
     lede.append(
       document.createTextNode('There are '),
       h('b', '', GENESIS_SUPPLY.toLocaleString()),
-      document.createTextNode(' of them, and they live on Monad. Your Privy wallet says which are yours — the world will not let you wear one you do not hold.'),
+      document.createTextNode(' of them, and they live on Monad. Connect through Privy with the wallet that holds them — the world will not let you wear one you do not hold.'),
     );
     const steps = h('div', 'pk-steps');
-    for (const [n, label, detail] of [['01', 'EMAIL', 'a code, no password'], ['02', 'PICK', 'a testnet Chog'], ['03', 'PLAY', 'the street, live']] as const) {
+    for (const [n, label, detail] of [['01', 'WALLET', 'connect via privy'], ['02', 'PICK', 'a testnet Chog'], ['03', 'PLAY', 'the street, live']] as const) {
       const step = h('div', n === '01' ? 'pk-step now' : 'pk-step');
       step.append(h('b', '', `${n} ${label}`), h('span', '', detail));
       steps.append(step);
     }
     const copy = h('section', 'pk-copy');
-    copy.append(title, lede, steps);
+    // The collection's voice, up front: the gate sells the fantasy before the wallet does.
+    const meme = h('p', 'pk-meme', 'Make Chog great again.');
+    // Four real faces off the collection's own art: the 1969 are already on chain.
+    const faces = h('div', 'pk-faces');
+    for (const tokenId of [1, 7, 418, 1462]) {
+      const face = document.createElement('img');
+      face.src = `/art/${tokenId}.webp`;
+      face.alt = `Chog #${tokenId}`;
+      face.loading = 'lazy';
+      face.onerror = () => face.remove();
+      faces.append(face);
+    }
+    faces.append(h('span', '', 'the 1969 · already on chain'));
+    copy.append(title, lede, meme, steps, faces);
 
-    this.emailEl.type = 'email';
-    this.emailEl.placeholder = 'you@example.com';
-    this.emailEl.autocomplete = 'email';
-    this.emailEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.connect(); });
-    this.codeEl.type = 'text';
-    this.codeEl.placeholder = '6-digit code';
-    this.codeEl.autocomplete = 'one-time-code';
-    this.codeEl.maxLength = 6;
-    this.codeEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') void this.connect(); });
     this.connectBtn.addEventListener('click', () => void this.connect());
     const fine = h('p', 'pk-fine');
     fine.append(
-      document.createTextNode('Privy emails a '),
-      h('b', '', 'one-time code'),
-      document.createTextNode('. No password, no extension. Everybody gets an embedded wallet; Chogs on it pick, the rest foster.'),
+      document.createTextNode('Connect your own crypto wallet through Privy — '),
+      h('b', '', 'the wallet that holds your Chogs'),
+      document.createTextNode(' is the one you play as; holding none, foster in instead.'),
     );
     const act = h('div', 'pk-act');
-    act.append(this.kickerEl, this.emailEl, this.codeEl, this.connectBtn, this.fosterButton(true), fine);
+    act.append(this.kickerEl, this.connectBtn, this.fosterButton(true), fine);
 
     const hero = h('section', 'pk-hero');
     hero.append(copy, act);
@@ -211,15 +231,11 @@ class Picker {
     if (this.view && !this.view.ready) this.poll = setTimeout(() => void this.load(), POLL_MS);
   }
 
-  private async connect(): Promise<void> {
+  private connect(): void {
     if (wallet.session) {
       wallet.signOut();
       this.view = null;
       this.chosen = null;
-      this.codeStage = 'idle';
-      this.email = '';
-      this.emailEl.value = '';
-      this.codeEl.value = '';
       this.note = 'signed out';
       this.bad = false;
       this.paint();
@@ -231,36 +247,20 @@ class Picker {
       this.paint();
       return;
     }
-    if (this.codeStage === 'idle') {
-      this.email = this.emailEl.value;
-      this.note = `sending a code to ${this.email}…`;
-      this.bad = false;
-      this.paint();
-      try {
-        await wallet.requestCode(this.email);
-        this.codeStage = 'sent';
-        this.note = `code sent — check ${this.email}`;
-        this.paint();
-        this.codeEl.focus();
-      } catch (error) {
-        this.note = (error as Error).message;
-        this.bad = true;
-        this.paint();
-      }
-      return;
-    }
-    this.note = `signing in as ${this.email}…`;
+    this.note = '';
     this.bad = false;
     this.paint();
-    try {
-      await wallet.confirmCode(this.email, this.codeEl.value);
-      this.note = '';
-      await this.load();
-    } catch (error) {
-      this.note = (error as Error).message;
-      this.bad = true;
-      this.paint();
-    }
+    void wallet.loginWithModal().then(
+      () => {
+        this.note = '';
+        void this.load();
+      },
+      (error: unknown) => {
+        this.note = error instanceof Error ? error.message : 'that login did not work';
+        this.bad = true;
+        this.paint();
+      },
+    );
   }
 
   // ── painting ──────────────────────────────────────────────────────────────────
@@ -280,18 +280,26 @@ class Picker {
     this.chainEl.classList.toggle('bad', !!wallet.address && !wallet.onMonad);
     this.walletBtn.textContent = signed ? 'sign out' : wallet.available ? `connect ${wallet.label}` : 'no privy app id';
     this.walletBtn.disabled = !signed && !wallet.available;
-    this.kickerEl.textContent = signed ? 'session live' : this.codeStage === 'sent' ? `code sent to ${this.email}` : 'no session';
+    this.kickerEl.textContent = signed ? 'session live' : 'no session';
 
     this.connectBtn.textContent = '';
     this.connectBtn.disabled = !signed && !wallet.available;
     const cta = h('span', '');
+    const cap = h('small', '');
+    if (signed) cap.textContent = wallet.short;
+    else if (!wallet.available) cap.textContent = 'missing VITE_PRIVY_APP_ID';
+    else {
+      // Their mark, not a redrawn one: the official Privy lockup, dark art for the mint button.
+      const seal = document.createElement('img');
+      seal.src = '/brand/privy-lockup-dark.png';
+      seal.alt = 'Privy';
+      cap.append(document.createTextNode('Protected by '), seal);
+    }
     cta.append(
-      document.createTextNode(signed ? 'You are signed in' : !wallet.available ? 'Login not configured' : this.codeStage === 'sent' ? 'Enter the code' : 'Send login code'),
-      h('small', '', signed ? wallet.short : !wallet.available ? 'missing VITE_PRIVY_APP_ID' : this.codeStage === 'sent' ? `${this.email} · 6 digits` : 'email · one-time code'),
+      document.createTextNode(signed ? 'You are signed in' : !wallet.available ? 'Login not configured' : 'Connect wallet'),
+      cap,
     );
     this.connectBtn.append(cta, h('i', '', '›'));
-    this.emailEl.style.display = signed || this.codeStage === 'sent' ? 'none' : '';
-    this.codeEl.style.display = !signed && this.codeStage === 'sent' ? '' : 'none';
 
     // A `?chog=` this wallet does hold, or a wallet holding exactly one Chog, has already
     // answered the question — the gate should not make somebody click it again.
@@ -319,6 +327,7 @@ class Picker {
       this.gridEl.append(h('div', 'pk-empty', `this wallet holds none of the ${GENESIS_SUPPLY.toLocaleString()} genesis chogs.`));
     } else {
       for (const card of view.tokens) this.gridEl.append(this.card(card));
+      void this.warmSnapshots(view.tokens);
     }
     // The unsigned `?chog=` candidate sits beside whatever else is on the shelf. It is a
     // request rather than a claim, so the server's answer is what settles it.
@@ -355,9 +364,16 @@ class Picker {
     if (card === this.chosen) node.classList.add('sel');
 
     const art = h('div', 'pk-art');
+    art.dataset.artFor = String(card.tokenId);
     // The atlas is a 6x4 grid of 128px cells and idle is row 0, so the six frames are
     // the six horizontal positions — no canvas, no decoder, one request per card.
-    if (card.sprite) {
+    // The token's own 3D model, shot off-screen; the sprite covers the load, the plate covers failure.
+    const snap = this.snaps.get(card.tokenId);
+    if (snap) {
+      const img = h('div', 'pk-model');
+      img.style.backgroundImage = `url(${snap})`;
+      art.append(img);
+    } else if (card.sprite) {
       const sprite = h('div', 'pk-sprite');
       sprite.style.backgroundImage = `url(${card.sprite})`;
       art.append(sprite);
@@ -393,6 +409,11 @@ class Picker {
 
   private paintDetail(): void {
     const card = this.chosen;
+    // The readout is deterministic per choice; rebuilding it would remount the live viewport on every poll.
+    const key = `${card?.tokenId ?? 'none'}|${this.ghost ?? 'none'}`;
+    if (key === this.detailKey && this.detailEl.childElementCount) return;
+    this.detailKey = key;
+    this.teardownStage();
     this.detailEl.textContent = '';
     this.detailEl.append(h('div', 'pk-micro', 'THE BUILD THE WORLD WILL RUN'));
     if (!card) {
@@ -410,19 +431,178 @@ class Picker {
     const head = h('div', 'pk-dhead');
     head.style.setProperty('--el', ELEMENT_HEX[card.element] ?? ELEMENT_HEX.prism!);
     // The readout opens on the face you are about to wear, not on a table of numbers.
-    if (card.sprite) {
-      const art = h('div', 'pk-dart');
-      const sprite = h('div', 'pk-sprite');
-      sprite.style.backgroundImage = `url(${card.sprite})`;
-      art.append(sprite);
-      head.append(art);
-    }
+    const stage = h('div', 'pk-stage');
+    head.append(stage);
+    void this.mountStage(stage, card);
     head.append(h('b', '', `chog #${card.tokenId}`), h('span', '', card.callsign));
     this.detailEl.append(head);
     for (const line of describeBuild(card.build)) this.detailEl.append(h('p', 'pk-dline', line));
     this.detailEl.append(
       h('p', 'pk-dline', `traits ${card.traitsSource === 'real' ? 'read off the token metadata' : 'predicted from the token id'} · links ${card.linkSlots}x${card.linkSlots} · provenance ${card.provenance.transferCount} transfers, ${card.provenance.daysHeld}d held`),
     );
+  }
+
+  /** Shoot every detected Chog once, sequentially, painting each card as its still lands. */
+  private async warmSnapshots(tokens: HolderCard[]): Promise<void> {
+    const run = this.snapRun;
+    for (const card of tokens.slice(0, 24)) {
+      if (run !== this.snapRun) return;
+      if (this.snaps.has(card.tokenId) || this.snapFailed.has(card.tokenId) || this.snapBusy.has(card.tokenId)) continue;
+      this.snapBusy.add(card.tokenId);
+      const url = await this.snapCard(card);
+      this.snapBusy.delete(card.tokenId);
+      if (run !== this.snapRun) return;
+      if (url) {
+        this.snaps.set(card.tokenId, url);
+        this.refreshCardArt(card.tokenId, url);
+      } else {
+        this.snapFailed.add(card.tokenId);
+      }
+    }
+  }
+
+  /** Mount one token's model off-screen, shoot it, dispose it. Never throws. */
+  private async snapCard(card: HolderCard): Promise<string | null> {
+    let chog: Chog;
+    try {
+      chog = await loadChogNFT({ ...PARTS_MODEL, traits: card.attributes, tokenId: card.tokenId });
+    } catch {
+      return null;
+    }
+    let url: string | null = null;
+    try {
+      if (chog.clips.includes('idle')) {
+        chog.play('idle');
+        chog.update(0.35);
+      }
+      chog.root.updateMatrixWorld(true);
+      url = bodyUrl(chog.root);
+    } catch {
+      url = null;
+    }
+    this.disposeChog(chog);
+    return url;
+  }
+
+  private refreshCardArt(tokenId: number, url: string): void {
+    const art = this.gridEl.querySelector(`[data-art-for="${tokenId}"]`);
+    if (!art || art.querySelector('.pk-model')) return;
+    art.textContent = '';
+    const img = h('div', 'pk-model');
+    img.style.backgroundImage = `url(${url})`;
+    art.append(img);
+  }
+
+  /** The chosen Chog, live and turning. Falls back to its still, then its sprite. */
+  private async mountStage(box: HTMLElement, card: HolderCard): Promise<void> {
+    const run = this.snapRun;
+    let chog: Chog;
+    try {
+      chog = await loadChogNFT({ ...PARTS_MODEL, traits: card.attributes, tokenId: card.tokenId });
+    } catch {
+      this.stageFallback(box, card);
+      return;
+    }
+    if (run !== this.snapRun || !box.isConnected) {
+      this.disposeChog(chog);
+      return;
+    }
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+    } catch {
+      this.disposeChog(chog);
+      this.stageFallback(box, card);
+      return;
+    }
+    const scene = new THREE.Scene();
+    scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    key.position.set(1.4, 1.8, 2.6);
+    scene.add(key);
+    const rim = new THREE.DirectionalLight(0x9fb0ff, 0.55);
+    rim.position.set(-1.6, 0.6, -1.2);
+    scene.add(rim);
+    const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 60);
+    const root = chog.root;
+    root.rotation.set(0, 0.55, 0);
+    scene.add(root);
+    const height = chog.height > 0 ? chog.height : 1.6;
+    camera.position.set(0, height * 0.55, height * 2.6);
+    camera.lookAt(0, height * 0.5, 0);
+    renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+    renderer.setSize(480, 480, false);
+    box.append(renderer.domElement);
+    if (chog.clips.includes('idle')) {
+      try {
+        chog.play('idle');
+      } catch {
+        /* a dead clip must not kill the gate */
+      }
+    }
+    const spin = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    let last = performance.now();
+    const loop = (now: number): void => {
+      if (!this.stage || this.stage.tokenId !== card.tokenId) return;
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      try {
+        if (spin) root.rotation.y += dt * 0.5;
+        chog.update(dt);
+      } catch {
+        /* a dead frame must not kill the gate */
+      }
+      renderer.render(scene, camera);
+      this.stage.raf = requestAnimationFrame(loop);
+    };
+    this.teardownStage();
+    this.stage = { renderer, scene, camera, chog, raf: 0, tokenId: card.tokenId };
+    this.stage.raf = requestAnimationFrame(loop);
+  }
+
+  private stageFallback(box: HTMLElement, card: HolderCard): void {
+    const show = (url: string | null): void => {
+      if (!box.isConnected) return;
+      if (url) {
+        const img = h('div', 'pk-model');
+        img.style.backgroundImage = `url(${url})`;
+        box.append(img);
+      } else if (card.sprite) {
+        const sprite = h('div', 'pk-sprite');
+        sprite.style.backgroundImage = `url(${card.sprite})`;
+        box.append(sprite);
+      }
+    };
+    const snap = this.snaps.get(card.tokenId);
+    if (snap || this.snapFailed.has(card.tokenId)) {
+      show(snap ?? null);
+      return;
+    }
+    void this.snapCard(card).then(show);
+  }
+
+  private teardownStage(): void {
+    const st = this.stage;
+    this.stage = null;
+    if (!st) return;
+    cancelAnimationFrame(st.raf);
+    st.scene.remove(st.chog.root);
+    this.disposeChog(st.chog);
+    st.renderer.dispose();
+    st.renderer.domElement.remove();
+  }
+
+  /** Drop a snapshot model's GPU copies. Cache sources re-upload on demand; the ink hull is module-shared and stays. */
+  private disposeChog(chog: Chog): void {
+    chog.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const m of mats) {
+        if (m && m !== hullMaterial) m.dispose();
+      }
+    });
   }
 
   private select(card: HolderCard): void {
@@ -445,6 +625,8 @@ class Picker {
   }
 
   private close(pick: Pick): void {
+    this.snapRun++;
+    this.teardownStage();
     const resolve = this.resolve;
     this.resolve = null;
     if (this.poll) clearTimeout(this.poll);

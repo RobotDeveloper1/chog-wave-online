@@ -1,18 +1,15 @@
-import Privy from '@privy-io/js-sdk-core';
-import { defineChain } from 'viem';
-import { MONAD_TESTNET_CHAIN_ID, MONAD_TESTNET_EXPLORER_URL, MONAD_TESTNET_RPC_URL, isAddress, type HoldingsView } from '@chog/shared';
+import { MONAD_TESTNET_CHAIN_ID, type HoldingsView } from '@chog/shared';
 import { SERVER_HTTP } from './config.ts';
+import { ensurePrivyIsland, privyIsland, waitPrivyReady } from './app/privyIsland.tsx';
 
 /**
- * Sign-in, Privy only.
+ * Sign-in, Privy only — the real Privy modal, wallet-only.
  *
- * There is no injected provider here and no EIP-191 challenge: the player logs
- * in with Privy (email code today, whatever the dashboard enables tomorrow),
- * Privy hands them an embedded wallet, and the server verifies both Privy
- * tokens itself before issuing a game session. The address the game plays as
- * is the embedded wallet's — everybody gets one, holder or not, which is
- * exactly what keeps the foster path alive: no Chogs on it just means the
- * shelf is empty, not that the door is shut.
+ * Pressing connect opens Privy's own login dialog (wallet list, QR, the works);
+ * the player connects an external wallet there, Privy verifies and links it, and
+ * the game server then verifies the Privy access token itself before issuing a
+ * game session. The address the game plays as is the EXTERNAL wallet's — the one
+ * that actually holds the Chogs. No email, no socials: `loginMethods: ['wallet']`.
  *
  * The shape is the old wallet's on purpose (`session`, `restore`,
  * `holdings`, `signOut`), so the picker keeps asking the same questions and
@@ -27,21 +24,6 @@ export interface SignIn {
   session: string;
 }
 
-interface LinkedWallet {
-  type?: string;
-  address?: string;
-  chainType?: string;
-}
-
-function embeddedAddressOf(accounts: LinkedWallet[] | undefined): string | null {
-  for (const a of accounts ?? []) {
-    if (a?.type === 'wallet' && isAddress(a.address) && (!a.chainType || a.chainType === 'ethereum')) {
-      return a.address!.toLowerCase();
-    }
-  }
-  return null;
-}
-
 export class Wallet {
   address: string | null = null;
   session: string | null = null;
@@ -49,8 +31,8 @@ export class Wallet {
   onMonad = false;
   readonly chainId = MONAD_TESTNET_CHAIN_ID;
 
-  private privy: Privy | null = null;
   private watchers = new Set<() => void>();
+  private pending: { resolve: (s: SignIn) => void; reject: (e: Error) => void } | null = null;
 
   get available(): boolean {
     return APP_ID !== '';
@@ -74,74 +56,38 @@ export class Wallet {
     for (const fn of this.watchers) fn();
   }
 
-  private requirePrivy(): Privy {
+  private ensure(): void {
     if (!APP_ID) throw new Error('no privy app id (VITE_PRIVY_APP_ID)');
-    if (!this.privy) {
-      // The embedded wallet defaults to the first supported chain, so Monad
-      // testnet goes first: fresh wallets are born where the replica lives.
-      const monadTestnet = defineChain({
-        id: MONAD_TESTNET_CHAIN_ID,
-        name: 'Monad Testnet',
-        nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-        rpcUrls: { default: { http: [MONAD_TESTNET_RPC_URL] } },
-        blockExplorers: { default: { name: 'MonadExplorer', url: MONAD_TESTNET_EXPLORER_URL } },
-      });
-      // Privy's storage speaks JSON values, localStorage speaks strings: translate.
-      const storage = {
-        get: (key: string): unknown => {
-          const raw = localStorage.getItem(`privy:${key}`);
-          if (raw === null) return undefined;
-          try {
-            return JSON.parse(raw) as unknown;
-          } catch {
-            return raw;
-          }
-        },
-        put: (key: string, value: unknown): void => {
-          localStorage.setItem(`privy:${key}`, JSON.stringify(value));
-        },
-        del: (key: string): void => {
-          localStorage.removeItem(`privy:${key}`);
-        },
-        getKeys: (): string[] => {
-          const out: string[] = [];
-          for (let i = 0; i < localStorage.length; i++) {
-            const k = localStorage.key(i);
-            if (k?.startsWith('privy:')) out.push(k.slice('privy:'.length));
-          }
-          return out;
-        },
-      };
-      this.privy = new Privy({ appId: APP_ID, storage, supportedChains: [monadTestnet] });
-    }
-    return this.privy;
-  }
-
-  /** Step one of the email login: Privy sends the code, we wait for it. */
-  async requestCode(email: string): Promise<void> {
-    const clean = email.trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) throw new Error('that email does not look like one');
-    try {
-      await this.requirePrivy().auth.email.sendCode(clean);
-    } catch (error) {
-      throw new Error(why(error, 'privy would not send a code'));
-    }
+    ensurePrivyIsland(APP_ID, () => void this.onPrivyAuth());
   }
 
   /**
-   * Step two: the code becomes a Privy user, the user gets an embedded wallet
-   * if they have none, and both Privy tokens buy a game session from the
-   * server — which verifies them itself before believing a word.
+   * Open Privy's modal and resolve when the login completes. Closing the modal
+   * without logging in leaves the promise pending — nothing spins, nothing
+   * errors; pressing connect again just reopens it.
    */
-  async confirmCode(email: string, code: string): Promise<SignIn> {
-    const privy = this.requirePrivy();
-    const clean = email.trim().toLowerCase();
+  loginWithModal(): Promise<SignIn> {
+    this.ensure();
+    const island = privyIsland();
+    if (!island) return Promise.reject(new Error('privy did not start'));
+    if (island.snapshot().authenticated) return this.finishSignIn();
+    return new Promise<SignIn>((resolve, reject) => {
+      // A newer call replaces an older one; a stale promise simply never settles.
+      this.pending = { resolve, reject };
+      island.openLogin();
+    });
+  }
+
+  private async onPrivyAuth(): Promise<void> {
+    const pending = this.pending;
+    this.pending = null;
     try {
-      await privy.auth.email.loginWithCode(clean, code.trim(), 'login-or-sign-up');
+      const signIn = await this.finishSignIn();
+      pending?.resolve(signIn);
     } catch (error) {
-      throw new Error(why(error, 'that code did not work'));
+      pending?.reject(error instanceof Error ? error : new Error('that login did not work'));
     }
-    return this.finishSignIn(privy);
+    if (!pending) this.notify();
   }
 
   /** A session from an earlier visit, if Privy still knows us and so does the server. */
@@ -153,57 +99,35 @@ export class Wallet {
       stored = null;
     }
     if (!stored?.session || !APP_ID) return null;
-    const privy = this.requirePrivy();
-    let live: string | null = null;
-    try {
-      live = await privy.getAccessToken();
-    } catch {
-      live = null;
-    }
-    if (!live) {
+    this.ensure();
+    const ready = await waitPrivyReady();
+    const snap = privyIsland()?.snapshot();
+    if (!ready || !snap?.authenticated) {
       this.signOut();
       return null;
     }
     try {
-      return await this.finishSignIn(privy, stored.address ?? undefined);
+      return await this.finishSignIn(stored.address ?? undefined);
     } catch {
       this.signOut();
       return null;
     }
   }
 
-  private async finishSignIn(privy: Privy, expectAddress?: string): Promise<SignIn> {
-    let accounts: LinkedWallet[] | undefined;
-    try {
-      const { user } = await privy.user.get();
-      accounts = (user as { linkedAccounts?: LinkedWallet[] }).linkedAccounts;
-    } catch (error) {
-      throw new Error(why(error, 'privy would not say who that is'));
-    }
-    let address = embeddedAddressOf(accounts);
-    if (!address) {
-      try {
-        const updated = await privy.embeddedWallet.create({});
-        accounts = (updated as unknown as { linkedAccounts?: LinkedWallet[] }).linkedAccounts ?? accounts;
-        address = embeddedAddressOf(accounts);
-      } catch (error) {
-        throw new Error(why(error, 'no wallet came with that login'));
-      }
-    }
-    if (!address) throw new Error('that login has no wallet to play as');
+  private async finishSignIn(expectAddress?: string): Promise<SignIn> {
+    const island = privyIsland();
+    const snap = island?.snapshot();
+    const address = snap?.address ?? null;
+    if (!island || !snap?.authenticated || !address) throw new Error('privy would not say who that is');
     if (expectAddress && address !== expectAddress.toLowerCase()) {
       this.signOut();
       throw new Error('a different privy user is signed in now');
     }
-    let accessToken: string | null = null;
-    let idToken: string | null = null;
-    try {
-      accessToken = await privy.getAccessToken();
-      idToken = await privy.getIdentityToken();
-    } catch (error) {
-      throw new Error(why(error, 'privy went quiet after the login'));
-    }
-    const verified = await post('/api/auth/privy', { accessToken, idToken });
+    const accessToken = await island.accessToken();
+    if (!accessToken) throw new Error('privy went quiet after the login');
+    // The server reads the address out of Privy's own user object — never out of
+    // this body, which is exactly where a liar would put it.
+    const verified = await post('/api/auth/privy', { accessToken });
     if (!verified.ok || typeof verified.session !== 'string') {
       throw new Error(why(verified, 'the server would not take that login'));
     }
@@ -229,7 +153,7 @@ export class Wallet {
     this.address = null;
     this.onMonad = false;
     try {
-      void this.privy?.auth.logout();
+      void privyIsland()?.logout().catch(() => undefined);
     } catch {
       /* already out */
     }

@@ -226,6 +226,16 @@ export class CameraDirector {
   }
 
   /**
+   * The yaw the lens is actually rendering from. Follow rigs ease toward yaw; fixed
+   * rigs (indoor, battle) always render from 0 - see the pose call in update. Movement
+   * must map through THIS, not yaw: mapping a fixed shot through a stale street yaw is
+   * how W walked diagonally across every room in the game.
+   */
+  viewYaw(): number {
+    return this.active().follow ? this.yaw : 0;
+  }
+
+  /**
    * Tell the director where the player is. The look-ahead leans into the way the Chog
    * faces so the screen shows where it is going rather than where it has been, and it
    * only engages while moving, so standing still settles on the Chog instead of

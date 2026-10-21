@@ -11,6 +11,7 @@ import { GEAR_STEPS, voiceStats, type PartySeat } from './party.ts';
 import { deckShape } from '../traits.ts';
 import { BASIC_IDS, card } from '../cards.ts';
 import { ofCard, type BattleCard } from './card.ts';
+import { ATTR_MIN, type Vector } from '../formula.ts';
 import type { ChogLoadout, Element } from '../types.ts';
 
 /**
@@ -75,20 +76,34 @@ export const depthFor = (level: number): number =>
 export interface LoadoutInput {
   loadout: ChogLoadout;
   level: number;
+  /** The six budget-filled attributes; PWR feeds Attack below. */
+  attrs: Vector;
 }
+
+/**
+ * What the token's own PWR buys on top of the ladder: one Attack step per four
+ * PWR past the floor, capped at two. PWR 2-5 is nothing, 6-9 is +1, 10 is +2 —
+ * at most +18% card damage, so a strong token is felt on every card without ever
+ * out-scaling the deck it fights with.
+ */
+export const PWR_ATTACK_EVERY = 4;
+export const PWR_ATTACK_CAP = 2;
+export const attackFromPwr = (pwr: number): number =>
+  Math.max(0, Math.min(PWR_ATTACK_CAP, Math.floor((Math.round(pwr) - ATTR_MIN) / PWR_ATTACK_EVERY)));
 
 /**
  * The stats a Chog fights with, straight off its traits.
  *
  * Your own Head trait applies to *you*, on top of whatever the party is granting — that is the
- * difference between the trait that builds you and the trait that builds us.
+ * difference between the trait that builds you and the trait that builds us. PWR feeds Attack
+ * on top of the ladder, so the token's own power is felt on every card.
  */
-export function duelStatsOf({ loadout, level }: LoadoutInput): DuelStats {
+export function duelStatsOf({ loadout, level, attrs }: LoadoutInput): DuelStats {
   const lvl = clampLevel(level);
   const voice = voiceStats(loadout.voice);
   const base: DuelStats = {
     hp: hpFor(lvl),
-    attack: clampStat(1 + at(lvl, STEPS.attack)),
+    attack: clampStat(1 + at(lvl, STEPS.attack) + attackFromPwr(attrs.PWR)),
     charge: clampStat(1 + at(lvl, STEPS.charge)),
     slots: Math.min(6, DEFAULT_STATS.slots + at(lvl, STEPS.slots)),
     cols: Math.min(6, DEFAULT_STATS.cols + at(lvl, STEPS.cols)),
@@ -114,7 +129,7 @@ export function duelStatsOf({ loadout, level }: LoadoutInput): DuelStats {
 }
 
 /**
- * The basic attack, and the one place the NFT's own numbers decide how hard you hit.
+ * The basic attack, and the first place the NFT's own numbers decide how hard you hit.
  *
  * A Chog used to be born holding 24–34 cards, so the first hour of a run had nothing to want and
  * no moment where the token's own quality was felt. Now the deck is found on the Line
@@ -123,12 +138,12 @@ export function duelStatsOf({ loadout, level }: LoadoutInput): DuelStats {
  * is worth.
  *
 * PWR carries it and SPD trims it, which is why a sharp token and a heavy one are different
- * builds and neither is strictly better. Measured across the 493 tokens in `.data/metadata`:
- * **might 9 → 16, median 12, a 1.40× spread at p90/p10 and 1.78× at max/min**. That is the whole
+ * builds and neither is strictly better. Measured across the 1969 tokens in `.data/metadata`:
+ * **might 9 → 16, median 12, a 1.30× spread at p90/p10 and 1.78× at max/min**. That is the whole
  * gap between the bottom and the top of the collection in the first hour — and after the first
- * region it stops mattering, because by then you are firing cards that do not read your attributes
- * at all. That is the honest shape for invariant 3: **owning one helps you, it does not play for
- * you**, and it helps you exactly where you have nothing else.
+ * region the basic stops mattering, because by then you are firing cards — and the cards read
+ * PWR through Attack (`attackFromPwr`, at most +18%). That is the honest shape for invariant 3:
+ * **owning one helps you, it does not play for you**, past the first hour as well as in it.
  *
  * A foster Chog's profile is capped before the budget is filled (`FOSTER_SHARE_CAP`), so it lands
  * at the low end. That is what not owning one costs, and it is a third of your damage for an hour
@@ -145,9 +160,9 @@ export function duelStatsOf({ loadout, level }: LoadoutInput): DuelStats {
  */
 export const FOSTER_BASIC_SHARE = 0.75;
 
-export const BASIC_BASE = 6;
-export const BASIC_PWR = 0.9;
-export const BASIC_SPD = 0.25;
+export const BASIC_BASE = 7;
+export const BASIC_PWR = 0.7;
+export const BASIC_SPD = 0.2;
 
 export function basicMight(attrs: { PWR: number; SPD: number }): number {
   return Math.max(1, Math.round(BASIC_BASE + attrs.PWR * BASIC_PWR + attrs.SPD * BASIC_SPD));

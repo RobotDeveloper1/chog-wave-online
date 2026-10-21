@@ -174,6 +174,11 @@ export class Pipeline {
     this.composer.render(dt);
   }
 
+  /** Free the composer's targets. The gate's backdrop stage is thrown away on login. */
+  dispose(): void {
+    this.composer.dispose();
+  }
+
   get tone(): Look {
     return this.look;
   }

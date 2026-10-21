@@ -1,4 +1,4 @@
-import { anyCard, card as catalogCard } from '../cards.ts';
+import { anyCard, card as catalogCard, isBasicId } from '../cards.ts';
 import type { CellShape, Card, Element } from '../types.ts';
 import { NULL_ELEMENT } from './element.ts';
 
@@ -169,6 +169,9 @@ export function card(id: string): BattleCard {
 export function fitsLock(c: BattleCard, lock: Element | null, transformed: boolean): boolean {
   if (transformed || lock === null) return true;
   if (c.element === NULL_ELEMENT) return true;
+  // The basic attack is filler, not a commitment: it chains with any element, which is
+  // what the Line budgets price (`line/budget.ts` fills unfilled picks with basics).
+  if (isBasicId(c.id)) return true;
   return c.element === lock;
 }
 

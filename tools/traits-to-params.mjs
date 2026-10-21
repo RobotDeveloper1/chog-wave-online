@@ -427,8 +427,18 @@ for (const f of files) {
 let synth = 0;
 // 1..1969, matching the contract. Generating 0..1968 left the last Chog in the
 // pass with no model and invented a token that does not exist.
+// Synthesis used to run silently here and fabricated 1476 trait sets with
+// 1461+id names; it now fails loudly unless --allow-synth is passed.
+const missing = [];
 for (let id = 1; id <= SUPPLY; id++) {
   if (out[id]) continue;
+  missing.push(id);
+}
+if (missing.length && !process.argv.includes('--allow-synth')) {
+  console.error('refusing to synthesise ' + missing.length + ' missing ids (first: ' + missing.slice(0, 8).join(',') + ') - backfill .data/metadata first');
+  process.exit(1);
+}
+for (const id of missing) {
   out[id] = paramsFor(synthMeta(id, FREQ, mulberry32(fnv1a(`chog:${id}`))), id);
   synth++;
 }

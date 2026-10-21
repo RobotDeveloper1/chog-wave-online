@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { deriveBuild, type ChogSource, type HolderCard, type HoldingsView } from '@chog/shared';
-import { CFG } from './config.ts';
+import { CFG, dataFile } from './config.ts';
 import { traits } from './meta.ts';
 import { ledger } from './ledger.ts';
 import { ownership } from './owners.ts';
@@ -22,7 +21,7 @@ const spriteCache = new Map<number, string | null>();
 function spriteFor(tokenId: number): string | null {
   const hit = spriteCache.get(tokenId);
   if (hit !== undefined) return hit;
-  const file = join(process.cwd(), CFG.spritesDir, `${tokenId}.png`);
+  const file = dataFile(CFG.spritesDir, `${tokenId}.png`);
   const url = existsSync(file) ? `/chogs/${tokenId}.png` : null;
   spriteCache.set(tokenId, url);
   return url;

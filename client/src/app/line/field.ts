@@ -33,7 +33,7 @@ export interface LineField {
   setMobs(mobs: MobView[]): void;
   /** The sites, in walk order, with what each one is. */
   sites: EncounterSite[];
-  update(t: number, focus: THREE.Vector3): void;
+  update(t: number, focus: THREE.Vector3, foe?: { x: number; z: number }): void;
   dispose(): void;
 }
 
@@ -95,12 +95,12 @@ export function buildLineField(region: RegionId, _cleared?: readonly string[]): 
       mobsSeen = mobs;
     },
     sites: l.encounters,
-    update(t, focus) {
+    update(t, focus, foe) {
       if (Math.abs(focus.x - centred.x) > REACH * 0.45 || Math.abs(focus.z - centred.z) > REACH * 0.45) {
         centred = { x: focus.x, z: focus.z };
         refill();
       }
-      scene.update(t, focus, mobsSeen);
+      scene.update(t, focus, mobsSeen, foe ?? focus);
     },
     dispose: () => scene.dispose(),
   };

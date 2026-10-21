@@ -41,6 +41,8 @@ const CLERK_MODEL: PartsModel = {
   partsUrl: '/models/trait-parts.json',
   colorsUrl: '/models/trait-colors.json',
   skinsUrl: '/models/skins.json',
+  skullBaseUrl: '/models/chog-skull.glb',
+  skullSkinsUrl: '/models/skull-skins.json',
 };
 /** One tribe per counter, so every clerk reads different at a glance. */
 const CLERK_TRIBE: Record<string, string> = { shop: 'volt', heal: 'wave', station: 'frost', brother: 'burn', telemetry: 'prism', dungeon: 'void' };

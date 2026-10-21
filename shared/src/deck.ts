@@ -178,8 +178,8 @@ export function checkDeck(rules: DeckRules, deck: readonly string[], pool: Reado
     else if (!pool.has(id)) errors.push(`${c.name} is not in your collection`);
   }
   // Over-full is a rule; under-full is a Tuesday. A fresh Chog holds nothing and that is a
-  // legal deck — every empty slot is the next place to walk. Only `autoDeck` is asked to fill
-  // every slot.
+  // legal deck — every empty slot is the next place to walk. Nothing in the save fills a gap
+  // with a duplicate; the fight pads its own transient copy (`padWithCopies`).
   if (deck.length > rules.size) errors.push(`a deck holds ${rules.size} cards (${deck.length})`);
   for (const [id, n] of Object.entries(t.counts)) {
     const c = anyCard(id)!;
@@ -210,9 +210,12 @@ function worth(c: Card, element: Element): number {
 }
 
 /**
- * Fill `deck` up to the rules' size from `pool`, strongest first. Two passes: one or two
- * copies of every strong card (variety is what a six-card hand is made of), then top up
- * with copies of the best of them. A deck of one card repeated is legal and a bad idea.
+ * Fill `deck` toward the rules' size from `pool`, strongest first - one of each, never a
+ * second copy. This is the top-up a SAVED deck gets: the gaps stay gaps until a distinct
+ * card arrives to fill them, which is why a bought, drafted or dropped card joins the deck
+ * the moment it lands. Copies are the fight's business (`padWithCopies`), never the save's:
+ * a filler duplicate in the save is indistinguishable from a curated one, and a deck that
+ * looks full stops accepting new cards.
  */
 function fill(build: ChogBuild, rules: DeckRules, start: string[], pool: readonly string[]): string[] {
   const set = new Set(pool);
@@ -221,15 +224,39 @@ function fill(build: ChogBuild, rules: DeckRules, start: string[], pool: readonl
     .map((id) => anyCard(id))
     .filter((c): c is Card => !!c)
     .sort((a, b) => worth(b, build.loadout.element) - worth(a, build.loadout.element));
-  for (const pass of [Math.min(2, rules.copies), rules.copies]) {
-    for (const c of cards) {
-      while (out.length < rules.size && out.filter((x) => x === c.id).length < pass && canAdd(rules, out, c.id, set)) out.push(c.id);
-    }
+  for (const c of cards) {
+    if (out.length < rules.size && !out.includes(c.id) && canAdd(rules, out, c.id, set)) out.push(c.id);
   }
   return out;
 }
 
-/** The best deck the rules allow from this pool. */
+/**
+ * The fight's copy of a deck: the saved cards plus copies of the best of them, up to the
+ * size the Line paid for. Transient - never persisted - so filler can make a hand strong
+ * without locking the save against the next card the player earns. Short decks still fight
+ * (the hand pads with the basic attack), but a fuller hand is a stronger one.
+ */
+export function padWithCopies(
+  build: ChogBuild,
+  deck: readonly string[],
+  pool: readonly string[],
+  licence: DeckLicence = NO_LICENCE,
+  slots: number = LINE_BASE_SLOTS,
+): string[] {
+  const rules = deckRules(build, licence, slots);
+  const set = new Set(pool);
+  const out = [...deck];
+  const cards = pool
+    .map((id) => anyCard(id))
+    .filter((c): c is Card => !!c)
+    .sort((a, b) => worth(b, build.loadout.element) - worth(a, build.loadout.element));
+  for (const c of cards) {
+    while (out.length < rules.size && canAdd(rules, out, c.id, set)) out.push(c.id);
+  }
+  return out;
+}
+
+/** The best distinct deck the rules allow from this pool. What a fresh save starts from. */
 export function autoDeck(
   build: ChogBuild,
   pool: readonly string[],
@@ -242,7 +269,8 @@ export function autoDeck(
 
 /**
  * After a card is sold or a rule changes: keep every card of the player's own choice that is
- * still legal, in order, and top up the rest from the best of what they hold.
+ * still legal, in order (the player's own duplicates survive), and top up the gaps with the
+ * best distinct cards they hold. Gaps with nothing distinct to fill them stay gaps.
  */
 export function repairDeck(
   build: ChogBuild,

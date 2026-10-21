@@ -6,12 +6,32 @@ import { seasonKey, type SaveView } from '@chog/shared';
 
 export type SaveRow = SaveView;
 
+/** A save key: the signer's wallet address, or a bare token id for callers without one. */
+export type SaveKeyInput = number | string;
+
+/**
+ * Every save belongs to a wallet. A bare token id is the anonymous fallback —
+ * a visitor playing without signing in keeps the old per-token behaviour under
+ * `token:<id>`, which is also where pre-migration rows land, so nothing saved
+ * before the wallet change stops loading.
+ */
+export function normalizeKey(id: SaveKeyInput): string {
+  return typeof id === 'number' ? `token:${id}` : id;
+}
+
+/** The name a board prints for a save nobody online owns: `#id`, or a short wallet. */
+export function saveDisplayName(key: string): string {
+  const legacy = /^token:(\d+)$/.exec(key);
+  if (legacy) return `#${legacy[1]}`;
+  return key.length === 42 && key.startsWith('0x') ? `${key.slice(0, 6)}…${key.slice(-4)}` : key;
+}
+
 /** Soft curve — early kills feel meaningful, the top of the board is hard to move. */
 export const levelOf = (kills: number) => 1 + Math.floor(Math.sqrt(kills));
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS saves (
-  token_id   INTEGER PRIMARY KEY,
+  key        TEXT PRIMARY KEY,
   kills      INTEGER NOT NULL DEFAULT 0,
   storm_kills INTEGER NOT NULL DEFAULT 0,
   cards      TEXT    NOT NULL DEFAULT '[]',
@@ -21,15 +41,40 @@ CREATE TABLE IF NOT EXISTS saves (
   updated_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS chapters (
-  token_id INTEGER NOT NULL,
-  ts       INTEGER NOT NULL,
-  kind     TEXT    NOT NULL,
-  detail   TEXT    NOT NULL
+  key    TEXT    NOT NULL,
+  ts     INTEGER NOT NULL,
+  kind   TEXT    NOT NULL,
+  detail TEXT    NOT NULL
 );
-CREATE INDEX IF NOT EXISTS chapters_token ON chapters (token_id, ts);
 CREATE TABLE IF NOT EXISTS war (
   week   TEXT PRIMARY KEY,
   ledger TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token   TEXT PRIMARY KEY,
+  address TEXT NOT NULL,
+  made    INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS escrow (
+  key        TEXT PRIMARY KEY,
+  challenger TEXT NOT NULL,
+  rival      TEXT NOT NULL,
+  wager      INTEGER NOT NULL,
+  made       INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS deposits (
+  tx     TEXT PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  amount REAL NOT NULL,
+  block  INTEGER NOT NULL,
+  made   INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS withdraw (
+  id     INTEGER PRIMARY KEY AUTOINCREMENT,
+  wallet TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  made   INTEGER NOT NULL
 );
 `;
 
@@ -49,27 +94,105 @@ export class SaveStore {
     this.migrate();
   }
 
-  /** `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists. */
+  /**
+   * `CREATE TABLE IF NOT EXISTS` cannot add a column to a database that already exists —
+   * and a write naming a missing column kills the process on a timer, mid-demo. So every
+   * column `write()` names is ensured here: old databases heal in place with defaults.
+   *
+   * The wallet migration runs here too. A database whose saves are still keyed by
+   * `token_id` is rebuilt once into key-keyed tables, with every old row carried
+   * over as `token:<id>` — the same key an unsigned visitor writes today, so the
+   * rows stay readable instead of being orphaned by the rename.
+   */
   private migrate(): void {
-    const cols = this.db.prepare('PRAGMA table_info(saves)').all() as { name: string }[];
-    if (!cols.some((c) => c.name === 'progress')) {
-      this.db.exec("ALTER TABLE saves ADD COLUMN progress TEXT NOT NULL DEFAULT '{}'");
+    const cols = new Set(
+      (this.db.prepare('PRAGMA table_info(saves)').all() as { name: string }[]).map((c) => c.name),
+    );
+    const want: Record<string, string> = {
+      kills: 'INTEGER NOT NULL DEFAULT 0',
+      storm_kills: 'INTEGER NOT NULL DEFAULT 0',
+      cards: "TEXT NOT NULL DEFAULT '[]'",
+      peak_wave: 'REAL NOT NULL DEFAULT 0',
+      streak: 'INTEGER NOT NULL DEFAULT 0',
+      season: "TEXT NOT NULL DEFAULT ''",
+      updated_at: 'INTEGER NOT NULL DEFAULT 0',
+      progress: "TEXT NOT NULL DEFAULT '{}'",
+    };
+    for (const [name, decl] of Object.entries(want)) {
+      if (!cols.has(name)) this.db.exec(`ALTER TABLE saves ADD COLUMN ${name} ${decl}`);
     }
+    let migrated = false;
+    if (cols.has('token_id')) {
+    this.db.exec(`
+      CREATE TABLE saves_new (
+        key TEXT PRIMARY KEY,
+        kills INTEGER NOT NULL DEFAULT 0,
+        storm_kills INTEGER NOT NULL DEFAULT 0,
+        cards TEXT NOT NULL DEFAULT '[]',
+        peak_wave REAL NOT NULL DEFAULT 0,
+        streak INTEGER NOT NULL DEFAULT 0,
+        season TEXT NOT NULL DEFAULT '',
+        updated_at INTEGER NOT NULL DEFAULT 0,
+        progress TEXT NOT NULL DEFAULT '{}'
+      );
+      INSERT INTO saves_new (key, kills, storm_kills, cards, peak_wave, streak, season, updated_at, progress)
+        SELECT 'token:' || token_id, kills, storm_kills, cards, peak_wave, streak, season, updated_at, progress FROM saves;
+      DROP TABLE saves;
+      ALTER TABLE saves_new RENAME TO saves;
+    `);
+    migrated = true;
+    }
+    const chapterCols = new Set(
+      (this.db.prepare('PRAGMA table_info(chapters)').all() as { name: string }[]).map((c) => c.name),
+    );
+    if (chapterCols.has('token_id')) {
+    this.db.exec(`
+        CREATE TABLE chapters_new (key TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT NOT NULL);
+        INSERT INTO chapters_new (key, ts, kind, detail)
+          SELECT 'token:' || token_id, ts, kind, detail FROM chapters;
+        DROP TABLE chapters;
+        ALTER TABLE chapters_new RENAME TO chapters;
+        CREATE INDEX chapters_key ON chapters (key, ts);
+      `);
+    }
+    const escrowCols = new Set(
+      (this.db.prepare('PRAGMA table_info(escrow)').all() as { name: string }[]).map((c) => c.name),
+    );
+    if (escrowCols.size) {
+      const challengerType = (
+        this.db.prepare('PRAGMA table_info(escrow)').all() as { name: string; type: string }[]
+      ).find((c) => c.name === 'challenger')?.type;
+      if (challengerType === 'INTEGER') {
+        this.db.exec(`
+          CREATE TABLE escrow_new (
+            key TEXT PRIMARY KEY, challenger TEXT NOT NULL, rival TEXT NOT NULL,
+            wager INTEGER NOT NULL, made INTEGER NOT NULL
+          );
+          INSERT INTO escrow_new (key, challenger, rival, wager, made)
+            SELECT key, 'token:' || challenger, 'token:' || rival, wager, made FROM escrow;
+          DROP TABLE escrow;
+          ALTER TABLE escrow_new RENAME TO escrow;
+        `);
+      }
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS chapters_key ON chapters (key, ts)');
+    if (migrated) console.log('[saves] migrated token-keyed rows to wallet keys');
   }
 
-  get(tokenId: number, now = Date.now()): SaveRow {
+  get(id: SaveKeyInput, now = Date.now()): SaveRow {
+    const key = normalizeKey(id);
     const season = seasonKey(now);
     const row = this.db
-      .prepare('SELECT * FROM saves WHERE token_id = ?')
-      .get(tokenId) as Record<string, unknown> | undefined;
+      .prepare('SELECT * FROM saves WHERE key = ?')
+      .get(key) as Record<string, unknown> | undefined;
 
     if (!row) {
-      return { tokenId, kills: 0, stormKills: 0, cards: [], peakWave: 0, streak: 0, season, updatedAt: 0 };
+      return { key, kills: 0, stormKills: 0, cards: [], peakWave: 0, streak: 0, season, updatedAt: 0 };
     }
     const storedSeason = String(row.season ?? '');
     return {
-      tokenId,
-      // A new season resets the board but never the token's own history.
+      key,
+      // A new season resets the board but never the wallet's own history.
       kills: storedSeason === season ? Number(row.kills) : 0,
       stormKills: Number(row.storm_kills),
       cards: JSON.parse(String(row.cards ?? '[]')) as string[],
@@ -83,18 +206,19 @@ export class SaveStore {
   private write(s: SaveRow): void {
     this.db
       .prepare(
-        `INSERT INTO saves (token_id, kills, storm_kills, cards, peak_wave, streak, season, updated_at)
+        `INSERT INTO saves (key, kills, storm_kills, cards, peak_wave, streak, season, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(token_id) DO UPDATE SET
+         ON CONFLICT(key) DO UPDATE SET
            kills = excluded.kills, storm_kills = excluded.storm_kills, cards = excluded.cards,
            peak_wave = excluded.peak_wave, streak = excluded.streak, season = excluded.season,
            updated_at = excluded.updated_at`,
       )
-      .run(s.tokenId, s.kills, s.stormKills, JSON.stringify(s.cards), s.peakWave, s.streak, s.season, s.updatedAt);
+      .run(s.key, s.kills, s.stormKills, JSON.stringify(s.cards), s.peakWave, s.streak, s.season, s.updatedAt);
   }
 
-  recordClear(tokenId: number, tier: string, peakWave: number, loot: string[], now = Date.now()): SaveRow {
-    const s = this.get(tokenId, now);
+  recordClear(id: SaveKeyInput, tier: string, peakWave: number, loot: string[], now = Date.now()): SaveRow {
+    const key = normalizeKey(id);
+    const s = this.get(key, now);
     s.kills += 1;
     if (tier === 'storm') s.stormKills += 1;
     s.streak += 1;
@@ -102,52 +226,55 @@ export class SaveStore {
     s.cards = [...new Set([...s.cards, ...loot])];
     s.updatedAt = now;
     this.write(s);
-    this.chapter(tokenId, 'clear', `${tier} x${s.kills} streak${s.streak}`, now);
+    this.chapter(key, 'clear', `${tier} x${s.kills} streak${s.streak}`, now);
     return s;
   }
 
   /** Only the deck changes; kills and streak are untouched. */
-  setChips(tokenId: number, cards: string[], now = Date.now()): SaveRow {
-    const s = this.get(tokenId, now);
+  setChips(id: SaveKeyInput, cards: string[], now = Date.now()): SaveRow {
+    const key = normalizeKey(id);
+    const s = this.get(key, now);
     s.cards = [...new Set(cards)];
     s.updatedAt = now;
     this.write(s);
     return s;
   }
 
-  recordRout(tokenId: number, now = Date.now()): SaveRow {
-    const s = this.get(tokenId, now);
+  recordRout(id: SaveKeyInput, now = Date.now()): SaveRow {
+    const key = normalizeKey(id);
+    const s = this.get(key, now);
     s.streak = 0;
     s.updatedAt = now;
     this.write(s);
-    this.chapter(tokenId, 'rout', 'failed the sector', now);
+    this.chapter(key, 'rout', 'failed the sector', now);
     return s;
   }
 
-  /** The read-only story the token carries: every owner left a mark. */
-  chapter(tokenId: number, kind: string, detail: string, now = Date.now()): void {
-    this.db.prepare('INSERT INTO chapters (token_id, ts, kind, detail) VALUES (?, ?, ?, ?)').run(
-      tokenId,
+  /** The read-only story the wallet carries: every season left a mark. */
+  chapter(id: SaveKeyInput, kind: string, detail: string, now = Date.now()): void {
+    this.db.prepare('INSERT INTO chapters (key, ts, kind, detail) VALUES (?, ?, ?, ?)').run(
+      normalizeKey(id),
       now,
       kind,
       detail,
     );
   }
 
-  chapters(tokenId: number, limit = 12): { ts: number; kind: string; detail: string }[] {
+  chapters(id: SaveKeyInput, limit = 12): { ts: number; kind: string; detail: string }[] {
     return this.db
-      .prepare('SELECT ts, kind, detail FROM chapters WHERE token_id = ? ORDER BY ts DESC LIMIT ?')
-      .all(tokenId, limit) as { ts: number; kind: string; detail: string }[];
+      .prepare('SELECT ts, kind, detail FROM chapters WHERE key = ? ORDER BY ts DESC LIMIT ?')
+      .all(normalizeKey(id), limit) as { ts: number; kind: string; detail: string }[];
   }
 
-  leaderboard(limit = 20, now = Date.now()): { tokenId: number; kills: number; streak: number }[] {
+  leaderboard(limit = 20, now = Date.now()): { key: string; name: string; kills: number; streak: number }[] {
     const season = seasonKey(now);
-    return this.db
+    const rows = this.db
       .prepare(
-        `SELECT token_id AS tokenId, kills, streak FROM saves
+        `SELECT key, kills, streak FROM saves
          WHERE season = ? AND kills > 0 ORDER BY kills DESC, streak DESC LIMIT ?`,
       )
-      .all(season, limit) as { tokenId: number; kills: number; streak: number }[];
+      .all(season, limit) as { key: string; kills: number; streak: number }[];
+    return rows.map((r) => ({ ...r, name: saveDisplayName(r.key) }));
   }
 
   /**
@@ -155,10 +282,10 @@ export class SaveStore {
    * subsystem replaces its default outright rather than half-inheriting it, and the
    * writer always stores the full document, so nothing is ever partially saved.
    */
-  readProgress<T extends object>(tokenId: number, defaults: T): T {
+  readProgress<T extends object>(id: SaveKeyInput, defaults: T): T {
     const row = this.db
-      .prepare('SELECT progress FROM saves WHERE token_id = ?')
-      .get(tokenId) as { progress?: string } | undefined;
+      .prepare('SELECT progress FROM saves WHERE key = ?')
+      .get(normalizeKey(id)) as { progress?: string } | undefined;
     let raw: Record<string, unknown> = {};
     try {
       raw = row?.progress ? (JSON.parse(row.progress) as Record<string, unknown>) : {};
@@ -168,23 +295,23 @@ export class SaveStore {
     return { ...defaults, ...raw } as T;
   }
 
-  writeProgress(tokenId: number, doc: unknown, now = Date.now()): void {
+  writeProgress(id: SaveKeyInput, doc: unknown, now = Date.now()): void {
     this.db
       .prepare(
-        `INSERT INTO saves (token_id, progress, updated_at) VALUES (?, ?, ?)
-         ON CONFLICT(token_id) DO UPDATE SET progress = excluded.progress, updated_at = excluded.updated_at`,
+        `INSERT INTO saves (key, progress, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET progress = excluded.progress, updated_at = excluded.updated_at`,
       )
-      .run(tokenId, JSON.stringify(doc), now);
+      .run(normalizeKey(id), JSON.stringify(doc), now);
   }
 
   /**
    * Every progression blob on disk, for the RANKS tab. The board is small and the
    * ask is on tab-open, so a full scan beats four maintained indexes.
    */
-  allProgress(): { tokenId: number; progress: string }[] {
+  allProgress(): { key: string; progress: string }[] {
     return this.db
-      .prepare('SELECT token_id AS tokenId, progress FROM saves WHERE progress IS NOT NULL')
-      .all() as { tokenId: number; progress: string }[];
+      .prepare('SELECT key, progress FROM saves WHERE progress IS NOT NULL')
+      .all() as { key: string; progress: string }[];
   }
 
   readWar<T>(week: string): T | null {
@@ -201,6 +328,69 @@ export class SaveStore {
     this.db
       .prepare('INSERT INTO war (week, ledger) VALUES (?, ?) ON CONFLICT(week) DO UPDATE SET ledger = excluded.ledger')
       .run(week, JSON.stringify(ledger));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auth sessions: a restart stops logging everyone out.
+  // ---------------------------------------------------------------------------
+
+  sessionPut(token: string, address: string, made: number): void {
+    this.db
+      .prepare('INSERT INTO sessions (token, address, made) VALUES (?, ?, ?) ON CONFLICT(token) DO UPDATE SET address = excluded.address, made = excluded.made')
+      .run(token, address, made);
+  }
+
+  sessionDel(token: string): void {
+    this.db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  }
+
+  sessionPrune(olderThan: number): void {
+    this.db.prepare('DELETE FROM sessions WHERE made < ?').run(olderThan);
+  }
+
+  sessionsAll(): { token: string; address: string; made: number }[] {
+    return this.db.prepare('SELECT token, address, made FROM sessions').all() as { token: string; address: string; made: number }[];
+  }
+
+  // ---------------------------------------------------------------------------
+  // PvP escrow: stakes deducted at accept live here until the bout settles, so a
+  // restart refunds them instead of eating them.
+  // ---------------------------------------------------------------------------
+
+  escrowPut(key: string, challenger: SaveKeyInput, rival: SaveKeyInput, wager: number, made = Date.now()): void {
+    this.db
+      .prepare('INSERT INTO escrow (key, challenger, rival, wager, made) VALUES (?, ?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET challenger = excluded.challenger, rival = excluded.rival, wager = excluded.wager, made = excluded.made')
+      .run(key, normalizeKey(challenger), normalizeKey(rival), wager, made);
+  }
+
+  escrowDel(key: string): void {
+    this.db.prepare('DELETE FROM escrow WHERE key = ?').run(key);
+  }
+
+  escrowAll(): { key: string; challenger: string; rival: string; wager: number }[] {
+    return this.db.prepare('SELECT key, challenger, rival, wager FROM escrow').all() as { key: string; challenger: string; rival: string; wager: number }[];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Real $CHOG: vault deposits in, manual payouts out. Every applied Transfer is
+  // recorded by tx hash first, so a re-polled window or a restart pays nothing twice.
+  // ---------------------------------------------------------------------------
+
+  depositSeen(tx: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM deposits WHERE tx = ?').get(tx);
+  }
+
+  depositPut(tx: string, wallet: string, amount: number, block: number, made = Date.now()): void {
+    this.db.prepare('INSERT OR IGNORE INTO deposits (tx, wallet, amount, block, made) VALUES (?, ?, ?, ?, ?)').run(tx, wallet, amount, block, made);
+  }
+
+  withdrawReqPut(wallet: string, amount: number, made = Date.now()): number {
+    const r = this.db.prepare("INSERT INTO withdraw (wallet, amount, status, made) VALUES (?, ?, 'pending', ?)").run(wallet, amount, made);
+    return Number(r.lastInsertRowid);
+  }
+
+  withdrawReqAll(): { id: number; wallet: string; amount: number; status: string; made: number }[] {
+    return this.db.prepare('SELECT id, wallet, amount, status, made FROM withdraw ORDER BY id').all() as { id: number; wallet: string; amount: number; status: string; made: number }[];
   }
 
   close(): void {

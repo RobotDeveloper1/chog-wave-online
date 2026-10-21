@@ -49,50 +49,50 @@ function invert<T extends string>(byOutcome: Record<T, readonly string[]>): Reco
 
 const AURA_ELEMENT = invert<Element>({
   burn: ['Burning Aura', 'Fiery Aura', 'Fire'],
-  frost: ['Royal Blue Aura', 'Mint', 'Cool Aura'],
+  frost: ['Royal Blue Aura', 'Royal Blue', 'Mint', 'Cool Aura'],
   wave: ['Rose Aura', 'Aqua Aura', 'Rose Scent', 'Pink Mist'],
   volt: ['Electric Shock', 'Yellow Aura'],
-  prism: ['Wind', 'Royal Aura', 'Clean', 'Light Purple'],
+  prism: ['Wind', 'Royal Aura', 'Clean', 'Light Purple', 'White Aura'],
   void: ['Purple', 'Violet', 'Smoke', 'Green Aura'],
 });
 
 const BACKGROUND_SECTOR = invert<SectorId>({
-  ashflat: ['Coral Pink', 'Lemon', 'Rosie', 'Sunlight', 'Lemon Yellow', 'Peach Pink', 'Afternoon Orange', 'Rosy Pink'],
-  voltgrid: ['Mon', 'Light Purple', 'Light Magenta', 'Soft Lavender', 'Radioactive'],
-  hollow: ['Aqua', 'Mint', 'Sky Blue', 'Aqua Mint', 'Fresh Green', 'Lime Green', 'Deep Aqua', 'Deep Blue'],
+  ashflat: ['Coral Pink', 'Lemon', 'Rosie', 'Sunlight', 'Lemon Yellow', 'Peach Pink', 'Afternoon Orange', 'Rosy Pink', 'Red Sky', 'Blood Red', 'Rose Pink', 'Gold', 'Bright Yellow'],
+  voltgrid: ['Mon', 'Light Purple', 'Light Magenta', 'Soft Lavender', 'Radioactive', 'Magenta', 'Deep Purple', 'Supreme Purple'],
+  hollow: ['Aqua', 'Mint', 'Sky Blue', 'Aqua Mint', 'Fresh Green', 'Lime Green', 'Deep Aqua', 'Deep Blue', 'Royal Blue', 'Aqua Blue', 'Noble Blue'],
 });
 
 const EYES_STYLE = invert<EyeStyle>({
   laser: ['Purple laser', 'fire laser', 'Green laser', 'cyan laser', 'Chog Viper'],
   visor: ['Sunset visor', 'Gradient visor', 'Plasma visor', 'Retro Glass', 'Anime Glass', 'BTC Glass', '3D Glass'],
   vr: ['Modern VR', 'Classic VR'],
-  wide: ['Happy', 'Normal Eye', 'Round', 'Round Eye', 'XD', 'Up', 'Base', 'Round Crying'],
-  narrow: ['Side Eye', 'Vertical', 'Flat', 'Green Side Eye', 'Blue Flat', 'Red Round Eye'],
+  wide: ['Happy', 'Normal Eye', 'Normal', 'Round', 'Round Eye', 'Blue Round Eye', 'Green Round Eye', 'Mixed Round Eye', 'Mixed Happy', 'Green Happy', 'Blue Happy', 'XD', 'Up', 'Base', 'Round Crying'],
+  narrow: ['Side Eye', 'Mixed Side Eye', 'Vertical', 'Flat', 'Red Flat', 'Green Side Eye', 'Blue Flat', 'Red Round Eye'],
   tear: ['Closed Eye Crying', 'Teary', 'Round Tear', 'Worried', 'Tired'],
   dead: ['Dead'],
-  wild: ['Heart', 'Clown Eye Mix', 'Clown Eye', 'MOG', 'Retard', 'Blue Retard', 'Frog', 'Thug', 'Smirk', 'Angry'],
+  wild: ['Heart', 'Clown Eye Mix', 'Clown Eye', 'MOG', 'Retard', 'Blue Retard', 'Mixed Retard', 'Green Retard', 'Red Retard', 'Frog', 'Thug', 'Smirk', 'Green Smirk', 'Blue Smirk', 'Angry'],
 });
 
 const BODY_PROFILE = invert<DeckProfile>({
-  giga: ['Kings Robe', 'Golden Armor', 'Dragon suit', 'Wizard', 'Jesus', 'Astro Suit', 'Zero THOTS', 'Gojo', 'CEO Vest'],
+  giga: ['Kings Robe', 'Golden Armor', 'Dragon suit', 'Wizard', 'Wizard Cape', 'Jesus', 'Jesus Robe', 'Astro Suit', 'Zero THOTS', 'Gojo', 'CEO Vest'],
   mega: [
     'Gangster suit', 'Tuxedo', 'Red Tuxedo', 'Cream Tuxedo', 'Pink Tuxedo', 'White tuxedo', 'Cyan tuxedo',
     'Blue tuxedo', 'Aqua Tuxedo', 'Squid Game Guard', 'Squid Game', 'Inmate', 'Prisoner', 'CWO', 'Army Vest',
-    'Shark Suit', 'Sci Fi', 'Electro Hoodie', 'Glitch Hoodie', 'Blue Chinese', 'Red Chinese', 'Red jacket',
+    'Shark Suit', 'Sci Fi', 'Electro Hoodie', 'Glitch Hoodie', 'Blue Chinese', 'Red Chinese', 'Blue Mafia', 'Red jacket',
     'Blue jacket', 'dark jacket', 'Toad blue suit', 'Toad pink suit', 'Toad green Suit',
   ],
   chaos: [
-    'Banana suit', 'Duck Float', 'MILF Lover', 'Six Seven', 'BBC', 'Guko', 'Boner', 'Chug Life', 'Hawaiian Polo',
-    'Stripes', 'Stripe shirts', 'Brown Homeless Shirt', 'Grey Homeless Shirt', 'Blue Homeless Shirt',
-    'Blue Holed Jacket',
+    'Banana suit', 'Duck Float', 'MILF Lover', 'Six Seven', 'BBC', 'Guko', 'Boner', 'Chug Life', 'Hawaiian Polo', 'Mummy',
+    'Stripes', 'Stripe shirts', 'Stripe Shirt', 'Brown Homeless Shirt', 'Grey Homeless Shirt', 'Blue Homeless Shirt',
+    'Blue Holed Jacket', 'Orange Holed Jacket',
   ],
   balanced: [
-    'Black Trackset', 'Red Trackset', 'Yellow Hoodie', 'Orange Hoodie', 'Peach Hoodie', 'Sky Hoodie', 'Mon Hoodie',
+    'Black Trackset', 'Red Trackset', 'Yellow Hoodie', 'Orange Hoodie', 'Peach Hoodie', 'Sky Hoodie', 'Mon Hoodie', 'Blue Sleeveless',
     'Yellow Yukata', 'White Yukata', 'Yellow 143 Jersey', 'Red 143 Jersey', 'Blue 143 Jersey', 'Farmer Shirt',
-    'Tank Top', 'Red Sleeveless', 'Orange Sleeveless', 'White Sleeveless',
+    'Tank Top', 'White Tank', 'Purple Tank', 'Red Sleeveless', 'Orange Sleeveless', 'White Sleeveless',
   ],
   standard: [
-    'Black Shirt', 'White Pure Shirt', 'Yellow Shirt', 'Grey Shirt', 'White Shirt', 'Red shirt',
+    'Black Shirt', 'White Pure Shirt', 'Yellow Shirt', 'Grey Shirt', 'White Shirt', 'Red shirt', 'blue tee', 'white tee', 'Cyan Shirt',
     'Pink Shirt', 'Purple Shirt', 'Black Vest', 'dark vest', 'pink vest', 'dark tee', 'red tee', 'purple vest',
     'Fire Shirt', 'Virgin',
   ],
@@ -100,11 +100,11 @@ const BODY_PROFILE = invert<DeckProfile>({
 
 const HEAD_GEAR = invert<GearMod>({
   charge: ['Thunder Cap', '10k TPS Cap', 'WAGMI Cap', 'MMGA Cap', 'MCGA', 'MCGA Cap', 'MEGA Chog', 'Choggie Cap', 'Chog Cap', 'Star Cap', 'Cloud Cap', 'Rainbow Wig'],
-  hp: ['Spartan Helmet', 'Russian Hat', 'Gold Thorn', 'Silver Thorn', 'Crown', 'Holy Seal', 'Purple Horn', 'Plumber', 'Robber'],
+  hp: ['Spartan Helmet', 'Russian Hat', 'Gold Thorn', 'Silver Thorn', 'Silver wreath', 'Crown', 'Diamond', 'Holy Seal', 'Purple Horn', 'Red Horn', 'Demon Horn', 'Void Horn', 'devil horn', 'Plumber', 'Robber'],
   slots: ['Wizard Hat', 'Wizard Beanie', '3rd Eye', 'Durag', 'Bob Hair', 'Head Wrap', 'NEET', 'JEET Cap'],
-  crit: ['Red Headband', 'Japan Headband', 'RETARD Cap', 'Boob Cap', 'Horny Cap', 'Clown Nose', 'Balls Cap'],
-  guard: ['Mon Cap', 'Mon Beanie', 'Choggie Beanie', 'RH Beanie', 'BTC Beanie', 'BTC Cap', 'Dollar Cap', 'Buttcoin Cap', 'ETH Cap', 'Gray Bucket Cap', 'Orange Bucket Cap', 'Blue Bucket Cap'],
-  drain: ['TISM Cap', 'Peace hat', 'Red Peace Cap'],
+  crit: ['Red Headband', 'Red Bandana', 'Japan Headband', 'RETARD Cap', 'Boob Cap', 'Horny Cap', 'Clown Nose', 'Balls Cap', 'Taped Banana', 'Blue Laser', 'Mafia Hat'],
+  guard: ['Mon Cap', 'Mon Beanie', 'Choggie Beanie', 'RH Beanie', 'BTC Beanie', '8 Ball Beanie', 'BTC Cap', 'Dollar Cap', 'Buttcoin Cap', 'ETH Cap', 'Gray Bucket Cap', 'Orange Bucket Cap', 'Blue Bucket Cap'],
+  drain: ['TISM Cap', 'Peace hat', 'Peace Cap', 'Red Peace Cap', 'Poison Shroom'],
 });
 
 const MOUTH_VOICE: Record<string, VoiceMod> = {
@@ -130,7 +130,7 @@ const SKIN_RESIST = invert<Element>({
   frost: ['Green', 'Jade'],
   volt: ['Yellow', 'Metal'],
   wave: ['Blue'],
-  prism: ['White', 'Grey', 'Pink', 'Origin'],
+  prism: ['White', 'Grey', 'Pink', 'Origin', 'Multi Colored', 'Beige'],
   void: ['Black', 'Purple'],
 });
 
@@ -165,11 +165,11 @@ const norm = (v: string | undefined) => (v ?? '').trim().toLowerCase();
  * base is what it fundamentally is. tokenId only breaks a tie nobody else could see.
  */
 const BACKGROUND_ELEMENT = invert<Element>({
-  burn: ['Coral Pink', 'Lemon', 'Sunlight', 'Afternoon Orange', 'Rosy Pink', 'Peach Pink', 'Lemon Yellow', 'Rosie'],
-  frost: ['Deep Blue', 'Sky Blue', 'Deep Aqua', 'Mint', 'Aqua Mint'],
-  volt: ['Mon', 'Radioactive', 'Fresh Green', 'Lime Green'],
+  burn: ['Coral Pink', 'Lemon', 'Sunlight', 'Afternoon Orange', 'Rosy Pink', 'Peach Pink', 'Lemon Yellow', 'Rosie', 'Red Sky', 'Blood Red', 'Rose Pink'],
+  frost: ['Deep Blue', 'Sky Blue', 'Deep Aqua', 'Mint', 'Aqua Mint', 'Royal Blue', 'Aqua Blue', 'Noble Blue'],
+  volt: ['Mon', 'Radioactive', 'Fresh Green', 'Lime Green', 'Gold', 'Bright Yellow'],
   wave: ['Aqua', 'Soft Lavender'],
-  prism: ['Light Purple', 'Light Magenta'],
+  prism: ['Light Purple', 'Light Magenta', 'Magenta', 'Deep Purple', 'Supreme Purple'],
   void: [],
 });
 

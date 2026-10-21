@@ -54,9 +54,14 @@ afterAll(() => {
 
 let nextToken = 7200;
 
-function seat() {
+/**
+ * A fixed token pins the build: `weakness` derives from the id, so a test that asserts
+ * pool contents must not ride the sequential counter — every seat added above it would
+ * re-deal the banned element. Fixed ids live at 9000+, far from the counter's range.
+ */
+function seat(fixedToken?: number) {
   const world = new World();
-  const tokenId = nextToken++;
+  const tokenId = fixedToken ?? nextToken++;
   const p = world.join(`w${tokenId}`, { tokenId, transferCount: 0, daysHeld: 0 }, 'ashflat', null);
   return { world, p, tokenId, id: p.id };
 }
@@ -233,6 +238,19 @@ describe('line — fighting a site', () => {
     expect(res.reason).toBe('nothing here to fight');
   });
 
+  it('keeps banked encounters walking the road: the Line never runs out of bodies', () => {
+    // A cleared road used to go quiet — bodies unlisted, contacts refused in silence — which
+    // reads as a map that died with the duel. Banked encounters stay listed and standing;
+    // the repeat pays the purse while the cards land once.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    s.world.profiles.lineCleared(s.tokenId, ['tolls.1'], s.p.build, true);
+    const state = loop(s, 'line.state');
+    const mobs = state.mobs as { encounterId: string; alive: boolean }[];
+    expect(mobs.some((m) => m.encounterId === 'tolls.1' && m.alive)).toBe(true);
+    expect(mobs.some((m) => m.encounterId === 'tolls.2')).toBe(true);
+  });
+
   it('refuses a fight whose id is not the one under your feet', () => {
     const s = seat();
     loop(s, 'line.travel', { region: 'tolls' });
@@ -252,14 +270,26 @@ describe('line — fighting a site', () => {
     expect(field.spec.hp).toBe(encounterBudget(enc)!.hp);
   });
 
-  it('will not re-fight a site whose reward is already banked', () => {
+  it('re-fights a banked site for the repeat purse, not the cards', () => {
+    // Every touch is a duel, first or fiftieth. The cards land once — that is the curve —
+    // and every win after the first pays the purse on the dirt.
     const s = seat();
     loop(s, 'line.travel', { region: 'tolls' });
-    s.world.profiles.lineCleared(s.tokenId, ['tolls.1'], s.p.build);
-    standOn(s, 'tolls.1');
-    const res = loop(s, 'line.enter', { encounterId: 'tolls.1' });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toContain('already cleared');
+    const enc = nearestToSpawn();
+    expect(walkInto(s, enc)).toBe(enc);
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    const first = loop(s, 'line.clear', { encounterId: enc });
+    expect(first.ok).toBe(true);
+    expect(first.cards as string[]).not.toHaveLength(0);
+    // The banker walks free with a breath; once it passes, the same site opens again.
+    (s.world as unknown as { duelGrace: Map<string, number> }).duelGrace.set(s.id, Date.now() - 1);
+    standOn(s, enc);
+    expect(loop(s, 'line.enter', { encounterId: enc }).ok).toBe(true);
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    const repeat = loop(s, 'line.clear', { encounterId: enc });
+    expect(repeat.ok).toBe(true);
+    expect(repeat.cards).toHaveLength(0);
+    expect(repeat.repeatWav as number).toBeGreaterThan(0);
   });
 });
 
@@ -315,6 +345,25 @@ describe('line — claiming a clear', () => {
 });
 
 describe('line — the duel wears the map mob', () => {
+  it('claims a win the field already announced, after the session is gone', () => {
+    // The tick deletes a finished session in the step that ends it; the plate closes
+    // seconds later and asks to claim. Checking the session alone read as "no fight
+    // here to have won" for every honest win: dead clicks, no drops, nothing banked.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    walkInto(s, enc);
+    const field = s.world.sessionOf(s.id)!;
+    field.state.result = 'win';
+    s.world.stepSessions(16);
+    expect(s.world.sessionOf(s.id)).toBeNull();
+    const res = loop(s, 'line.clear', { encounterId: enc });
+    expect(res.ok).toBe(true);
+    expect((res.cards as string[]).length).toBeGreaterThan(0);
+    // Spent is spent: the same claim twice pays once.
+    expect(loop(s, 'line.clear', { encounterId: enc }).ok).toBe(false);
+  });
+
   it('opens the engaged encounter’s own archetype, on the ground and in the fight', () => {
     const s = seat();
     loop(s, 'line.travel', { region: 'tolls' });
@@ -462,11 +511,11 @@ describe('line — loot falls where the mob fell', () => {
 
 describe('line — what the fights cost', () => {
   it('is beatable with the basic attack alone where the road starts', () => {
-    // The tutorial's promise: the first drift of the Line falls to basics in about two
-    // screens. Past that the gates prove the deck — every region's key is its warden, every
-    // encounter's key is the one before it — so later fights are priced on the cards the
-    // road has already handed over, not on an empty hand nobody holds that far down.
-    expect(screensForBasicsOnly('tolls.1')).toBeLessThanOrEqual(2.5);
+    // The tutorial promise: the first drift of the Line falls to basics in about two
+    // screens. Past that the region gates prove the deck, so later fights are priced on
+    // the cards the road has already handed over, not on an empty hand nobody holds
+    // that far down.
+    expect(screensForBasicsOnly('tolls.4')).toBeLessThanOrEqual(2.5);
   });
 
   it('lasts its own screens on the deck the road proves', () => {
@@ -574,6 +623,151 @@ describe('line — starting the fight', () => {
     expect(walkInto(s, enc)).toBe(enc);
     expect(s.world.sessionOf(s.id)).not.toBeNull();
   });
+
+  it('reopens the duel when E names the fight the ambush already started', () => {
+    // Walking into a drift engages you; pressing E on its site is a rejoin, not a
+    // second fight. Refusing it read as a broken map ("leave the current field first"
+    // for the field you are standing on).
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    expect(walkInto(s, enc)).toBe(enc);
+    expect(s.world.sessionOf(s.id)).not.toBeNull();
+    expect(loop(s, 'line.enter', { encounterId: enc }).ok).toBe(true);
+  });
+
+  it('makes leaving a fight buy breath, not another fight', () => {
+    // The eternal duel: leave, step, ambush, leave… Standing on the site after
+    // walking out has to refuse for a breath instead of reopening instantly.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    expect(walkInto(s, enc)).toBe(enc);
+    s.world.duelLeave(s.id);
+    const refused = loop(s, 'line.enter', { encounterId: enc });
+    expect(refused.ok).toBe(false);
+    expect(String(refused.reason)).toMatch('catch your breath');
+    // …and once the breath passes, the same fight opens fresh.
+    (s.world as unknown as { duelGrace: Map<string, number> }).duelGrace.set(s.id, Date.now() - 1);
+    expect(loop(s, 'line.enter', { encounterId: enc }).ok).toBe(true);
+  });
+
+  it('banks a clear by releasing the field, not by haunting it', () => {
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    clearThrough(s, enc);
+    standOn(s, enc);
+    expect(loop(s, 'line.enter', { encounterId: enc }).ok).toBe(true);
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    expect(loop(s, 'line.clear', { encounterId: enc }).ok).toBe(true);
+    // Staying in the corpse session bricked the next ambush check and reopened a
+    // finished duel on E. The banker walks free with a breath; once it passes, the same
+    // site opens again for the repeat purse - the road never ends.
+    expect(s.world.sessionOf(s.id)).toBeNull();
+    const breath = loop(s, 'line.enter', { encounterId: enc });
+    expect(breath.ok).toBe(false);
+    expect(String(breath.reason)).toMatch('catch your breath');
+    (s.world as unknown as { duelGrace: Map<string, number> }).duelGrace.set(s.id, Date.now() - 1);
+    expect(loop(s, 'line.enter', { encounterId: enc }).ok).toBe(true);
+  });
+
+  it('stands a drift back up at new ground once its timer elapses', () => {
+    // Lazy respawn: the body that fell long ago is listed alive again, walking from a
+    // fresh home near its site rather than the printed one.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const mob = mobSpawns('tolls').find((m) => m.encounterId === 'tolls.1')!;
+    expect(mob.respawnS).toBeGreaterThan(0);
+    (s.world as unknown as { lineMobs: Map<string, { deadAt: number; inFight: string | null }> }).lineMobs.set(
+      mob.id, { deadAt: Date.now() - (mob.respawnS * 1000 + 5000), inFight: null },
+    );
+    const state = loop(s, 'line.state');
+    const back = (state.mobs as { id: string; alive: boolean; home: { x: number; z: number } }[]).find(
+      (m) => m.id === mob.id,
+    )!;
+    expect(back.alive).toBe(true);
+    const site = lineLayout('tolls').encounters.find((e) => e.id === 'tolls.1')!;
+    expect(Math.hypot(back.home.x - site.x, back.home.z - site.z)).toBeLessThanOrEqual(12.5);
+  });
+
+  it('leaves a crossed warden crossed', () => {
+    // `respawnS: 0` is the gate that was crossed: no timer elapses it back.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const mob = mobSpawns('tolls').find((m) => m.encounterId === 'tolls.7')!;
+    expect(mob.respawnS).toBe(0);
+    (s.world as unknown as { lineMobs: Map<string, { deadAt: number; inFight: string | null }> }).lineMobs.set(
+      mob.id, { deadAt: Date.now() - 3600_000, inFight: null },
+    );
+    const state = loop(s, 'line.state');
+    const warden = (state.mobs as { id: string; alive: boolean }[]).find((m) => m.id === mob.id)!;
+    expect(warden.alive).toBe(false);
+  });
+
+  it('tells the player why a touch refused to fight', () => {
+    // A downed body walks into tolls.1's mob: the touch refuses out loud instead of
+    // dying quietly, because a figure that came at you and then did
+    // nothing reads as a broken ambush.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    (s.world as unknown as { downedUntil: Map<string, number> }).downedUntil.set(s.id, Date.now() + 8000);
+    const mob = mobSpawns('tolls').find((m) => m.encounterId === 'tolls.1')!;
+    const at = mobAt(mob, Date.now());
+    s.p.x = at.x;
+    s.p.y = at.z;
+    const got: Record<string, unknown>[] = [];
+    (s.world as unknown as { pushSends: Map<string, (m: Record<string, unknown>) => void> }).pushSends.set(
+      s.id, (m) => { got.push(m); },
+    );
+    (s.world as unknown as { checkLineMobs: (id: string, p: unknown) => void }).checkLineMobs(s.id, s.p);
+    const sealed = got.find((m) => m['kind'] === 'sealed') as { reason?: string } | undefined;
+    expect(sealed).toBeTruthy();
+    expect(String(sealed!.reason)).toContain('still recovering');
+    expect(s.world.sessionOf(s.id)).toBeNull();
+  });
+
+  it('kills the body on the win tick, so the reaped claim still pays the purse', () => {
+    // The live path: the tick reaps the won session before `line.clear` arrives. The body
+    // used to be released by the end plate and re-stood with purse 0; now the win arm kills
+    // it and banks the purse with the claim.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    expect(walkInto(s, enc)).toBe(enc);
+    const marks = (s.world as unknown as { lineMobs: Map<string, { deadAt: number; inFight: string | null }> }).lineMobs;
+    const mobId = [...marks].find(([, st]) => st.inFight === s.id)?.[0];
+    expect(mobId).toBeTruthy();
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    s.world.stepSessions(100);
+    // Reaped: no session, a banked claim, and a corpse on the road.
+    expect(s.world.sessionOf(s.id)).toBeNull();
+    expect(marks.get(mobId!)!.inFight).toBeNull();
+    expect(marks.get(mobId!)!.deadAt).toBeGreaterThan(0);
+    const clear = loop(s, 'line.clear', { encounterId: enc });
+    expect(clear.ok).toBe(true);
+    expect(clear.repeatWav as number).toBeGreaterThan(0);
+    const state = loop(s, 'line.state');
+    const corpse = (state.mobs as { id: string; alive: boolean }[]).find((m) => m.id === mobId)!;
+    expect(corpse.alive).toBe(false);
+  });
+
+  it('keeps the recovering and the finished out of the rejoin', () => {
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    expect(walkInto(s, enc)).toBe(enc);
+    (s.world as unknown as { downedUntil: Map<string, number> }).downedUntil.set(s.id, Date.now() + 8000);
+    const downed = loop(s, 'line.enter', { encounterId: enc });
+    expect(downed.ok).toBe(false);
+    expect(String(downed.reason)).toMatch('still recovering');
+    (s.world as unknown as { downedUntil: Map<string, number> }).downedUntil.delete(s.id);
+    const sess = s.world.sessionOf(s.id)!;
+    (sess.state as unknown as { over: boolean }).over = true;
+    const over = loop(s, 'line.enter', { encounterId: enc });
+    expect(over.ok).toBe(false);
+    expect(String(over.reason)).toMatch('that fight is over');
+  });
 });
 
 describe('line — card drops', () => {
@@ -617,7 +811,8 @@ describe('line — card drops', () => {
   });
 
   it('drops first-clear cards on the dirt instead of the deck', () => {
-    const s = seat();
+    // Token 9000's weakness is not frost, so tolls.4's green_candle is pool-legal.
+    const s = seat(9000);
     loop(s, 'line.travel', { region: 'tolls' });
     const enc = nearestToSpawn();
     const res = clearSite(s, enc);

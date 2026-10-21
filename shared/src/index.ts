@@ -14,6 +14,7 @@ export { PARTY_MAX, GROUP_BONUS, ALT_WEIGHT, partyHpScale, partyPowerScale, part
 export * from './progress.ts';
 export * from './loop.ts';
 export * from './economy.ts';
+export * from './housing.ts';
 export * from './quest.ts';
 export * from './questbook.ts';
 export * from './dungeonData.ts';
@@ -23,6 +24,7 @@ export * from './albumData.ts';
 export * from './tribe.ts';
 export * from './protocol.ts';
 export * from './city/index.ts';
+export * from './guide.ts';
 export * from './version.ts';
 // Namespace the new combat API while economy/dungeon models retain their existing exports.
 export * as SF from './sf/index.ts';

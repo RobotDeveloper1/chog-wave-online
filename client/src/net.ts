@@ -124,7 +124,7 @@ export class Net {
     else if (t !== 'move') this.queue.push(payload);
   }
 
-  /** Sector change that keeps the player — re-joining would reset the laser. */
+  /** Sector change that keeps the player — re-joining would reset the field. */
   switchSector(sector: SectorId): void {
     if (!this.me) return;
     this.me = { ...this.me, sector };
@@ -139,20 +139,16 @@ export class Net {
     this.send('fire', { sector, placements });
   }
 
-  /** The laser-eyes powerup. The server owns the charge meter, so this only asks. */
-  laser(sector: SectorId): void {
-    this.send('laser', { sector });
-  }
 
   sectors(): SectorState[] {
     return this.world?.sectors ?? [];
   }
 
   /** Pulled rather than pushed: it changes on a clear, not on a tick. */
-  async leaderboard(): Promise<{ tokenId: number; kills: number; streak: number }[]> {
+  async leaderboard(): Promise<{ key: string; name: string; kills: number; streak: number }[]> {
     try {
       const r = await fetch(`${SERVER_HTTP}/api/leaderboard`);
-      return (await r.json()) as { tokenId: number; kills: number; streak: number }[];
+      return (await r.json()) as { key: string; name: string; kills: number; streak: number }[];
     } catch {
       return [];
     }

@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import type { SF } from '@chog/shared';
 import { Particles, Rings, Shots } from './fx.ts';
-import { FILES, LANES, MAX_FILES, PANEL, PITCH, fileX, isEnemyLane, laneZ, type Palette } from './theme.ts';
+import { FILES, LANES, MAX_FILES, MAX_LANES, PANEL, PITCH, fileX, isEnemyLane, laneZ, type Palette } from './theme.ts';
 
 /**
  * The battle network: a floating board of glowing panels in a void of moving light.
  *
- * Three to six files wide, five lanes deep. Your side is warm and near, the anomaly's cool and far.
+ * Three to six files wide, five lanes deep — six across a PvP field. Your side is warm and near, the anomaly's cool and far.
  * Panels are one instanced draw call and one shader with five states: idle, danger on an exact
  * warned panel, wall on an enemy file, occupancy, and a downed body on its authoritative panel.
  * The floor itself tells you what is about to happen, before any text
@@ -123,8 +123,10 @@ export class Arena {
   private bodies = new Set<number>();
   /** The authoritative width can grow when another body joins. */
   private files = FILES;
+  /** The authoritative depth: five lanes PvE, six PvP. */
+  private lanes = LANES;
   private deck!: THREE.Group;
-  private readonly pulses = new Float32Array(MAX_FILES * LANES);
+  private readonly pulses = new Float32Array(MAX_FILES * MAX_LANES);
 
   constructor(palette: Palette) {
     this.palette = palette;
@@ -140,13 +142,13 @@ export class Arena {
     this.panelMat = track(
       new THREE.ShaderMaterial({ uniforms: { uTime: { value: 0 } }, vertexShader: PANEL_VERT, fragmentShader: PANEL_FRAG, transparent: true }),
     );
-    const n = MAX_FILES * LANES;
+    const n = MAX_FILES * MAX_LANES;
     this.panels = track(new THREE.InstancedMesh(geo, this.panelMat, n));
     this.panels.frustumCulled = false;
     const tint = new Float32Array(n * 3);
     const mine = new THREE.Color(pal.mine);
     const theirs = new THREE.Color(pal.theirs);
-    for (let lane = 0; lane < LANES; lane++) {
+    for (let lane = 0; lane < MAX_LANES; lane++) {
       for (let file = 0; file < MAX_FILES; file++) {
         const c = isEnemyLane(lane) ? theirs : mine;
         tint.set([c.r, c.g, c.b], (lane * MAX_FILES + file) * 3);
@@ -188,7 +190,7 @@ export class Arena {
     // Built at the widest the floor can be and scaled to the width it has, so growing the arena is
     // one number rather than new geometry in the middle of a fight.
     const w = MAX_FILES * PITCH + 1.4;
-    const d = LANES * PITCH + 1.4;
+    const d = MAX_LANES * PITCH + 1.4;
     const deck = new THREE.Group();
     const slab = new THREE.Mesh(track(new THREE.BoxGeometry(w, 0.7, d)), track(new THREE.MeshLambertMaterial({ color: 0x0c0a1a })));
     slab.position.y = -0.36;
@@ -286,13 +288,13 @@ export class Arena {
 
   /** The centre of a panel, lifted a little, for anything that wants to stand or burst there. */
   panelAt(file: number, lane: number, y = 0.1): THREE.Vector3 {
-    return new THREE.Vector3(fileX(file, this.files), y, laneZ(lane));
+    return new THREE.Vector3(fileX(file, this.files), y, laneZ(lane, this.lanes));
   }
 
   /** Both axes follow the server's boss panel. */
   setBossMark(panel: SF.Panel, show = true): void {
     this.markX = fileX(panel.file, this.files);
-    this.bossMark.position.set(this.markX, 0.17, laneZ(panel.lane));
+    this.bossMark.position.set(this.markX, 0.17, laneZ(panel.lane, this.lanes));
     this.bossMark.visible = show;
   }
 
@@ -339,21 +341,24 @@ export class Arena {
     const q = new THREE.Quaternion();
     const on = new THREE.Vector3(1, 1, 1);
     const off = new THREE.Vector3(0, 0, 0);
-    for (let lane = 0; lane < LANES; lane++) {
+    for (let lane = 0; lane < MAX_LANES; lane++) {
       for (let file = 0; file < MAX_FILES; file++) {
-        m.compose(at.set(fileX(file, this.files), 0.08, laneZ(lane)), q, file < this.files ? on : off);
+        m.compose(at.set(fileX(file, this.files), 0.08, laneZ(lane, this.lanes)), q, file < this.files && lane < this.lanes ? on : off);
         this.panels.setMatrixAt(lane * MAX_FILES + file, m);
       }
     }
     this.panels.instanceMatrix.needsUpdate = true;
     if (this.deck) this.deck.scale.x = (this.files * PITCH + 1.4) / (MAX_FILES * PITCH + 1.4);
+    if (this.deck) this.deck.scale.z = (this.lanes * PITCH + 1.4) / (MAX_LANES * PITCH + 1.4);
   }
 
   /** Match the snapshot's field width without rebuilding owned geometry. */
-  setFiles(n: number): void {
+  setFiles(n: number, lanes: number = this.lanes): void {
     const next = Math.max(FILES, Math.min(MAX_FILES, Math.round(n)));
-    if (next === this.files) return;
+    const nextLanes = Math.max(LANES, Math.min(MAX_LANES, Math.round(lanes)));
+    if (next === this.files && nextLanes === this.lanes) return;
     this.files = next;
+    this.lanes = nextLanes;
     this.layoutPanels();
     this.applyStates();
   }
@@ -367,12 +372,12 @@ export class Arena {
   private applyStates(): void {
     const s = this.state.array as Float32Array;
     const dg = this.danger.array as Float32Array;
-    for (let lane = 0; lane < LANES; lane++) {
+    for (let lane = 0; lane < MAX_LANES; lane++) {
       for (let file = 0; file < MAX_FILES; file++) {
         const i = lane * MAX_FILES + file;
         // Files past this floor's width are written out rather than left stale, so a shrink after a
         // partner leaves cannot leave a lit panel floating in the void.
-        if (file >= this.files) { s[i] = 0; dg[i] = 0; this.pulses[i] = 0; continue; }
+        if (file >= this.files || lane >= this.lanes) { s[i] = 0; dg[i] = 0; this.pulses[i] = 0; continue; }
         let st = 0;
         let d = 0;
         if (this.wall === file && isEnemyLane(lane)) st = 2;

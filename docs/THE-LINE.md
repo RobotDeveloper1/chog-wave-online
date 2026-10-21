@@ -94,19 +94,19 @@ and the Training Sim keep the signal avatars.
 
 | region | drifts | posts | warden | count |
 |---|---|---|---|---|
-| **TOLLS** | `emberpaw` `hot_heart` `cigar_steady` | `switchblade` `magmachog` | **TOLLKEEPER** (tollkeeper) → `cinderfang` | 6 |
-| **ASH PINE** | `staticnip` `green_candle` `fwog_buddy` | `b_origin` `sb_signal` | **FIRST FLAME** (baron) → `red_candle` `ga_cinderfall` | 7 |
-| **GLASS MARSH** | `v_bubblegum` `v_worried` `v_flatline` | `v_normsmile` `glacierhowl` | **RIME LIBRARIAN** (front) → `hoarbar` `ga_hollowwinter` | 7 |
-| **RELAY FLATS** | `v_btccoin` `v_drool` `lucky_coin` | `v_grit` `arcsnap` | **PACKET KING** (surge) → `stormchomp` `ga_arccathedral` | 7 |
-| **CAUSEWAY** | `v_rainfall` `pepe_curse` `ripplebite` | `v_goldtooth` `refract` | **UNDERTOW MOTHER** (mirror) → `tsunamichog` `ga_drownedbell` | 7 |
-| **THE STATIC LINE** | `v_clownlaugh` `nullfur` `signaldeath` | `v_lipbite` `v_wo` `e_dead` | **THE INDEX** (baron) → `eclipse` + all six remaining GA | 12 |
+| **TOLLS** | `undertow` `rimeclaw` `lucky_coin` `v_bubblegum` `refract` `staticnip` `nullfur` | — | **TOLLKEEPER** (tollkeeper) → `magmachog` | 8 |
+| **ASH PINE** | `cigar_steady` `v_lipbite` `fwog_buddy` `v_normsmile` | `emberpaw` `v_flatline` | **FIRST FLAME** (baron) → `ga_cinderfall` | 7 |
+| **GLASS MARSH** | `v_puke` `v_clownlaugh` `splashback` `b_origin` | `v_goldtooth` `switchblade`+`ga_moltenmirror` | **RIME LIBRARIAN** (front) → `hoarbar` `ga_hollowwinter` | 9 |
+| **RELAY FLATS** | `stormchomp` `v_worried` `cinderfang` `v_smile` | `v_rainfall` `v_drool`+`ga_staticbloom` | **PACKET KING** (surge) → `sb_signal` `ga_arccathedral` | 9 |
+| **CAUSEWAY** | `pepe_curse` `v_btccoin` `hot_heart` `green_candle` | `v_grit` `v_wo`+`ga_quietdeath` | **UNDERTOW MOTHER** (mirror) → `tsunamichog` `ga_drownedbell` | 9 |
+| **THE STATIC LINE** | `chognova` `red_candle` `ripplebite` `arcsnap` | `eclipse` `glacierhowl`+`ga_prismchoir` | **THE INDEX** (baron) → `signaldeath` `ga_lasttrain` | 9 |
 
-46 of the 57 cards live on the Line. The other 11 are deliberately elsewhere:
+51 of the 70 cards live on the Line. The other 19 are deliberately elsewhere:
 
 - **the eight `e_*` (eye/style) cards** are only found in **anomalies** — they are what
   you get from staring at other people's Chogs, so they belong in the market-driven
   endgame, not on the critical path. They also feed the Album's sighting loop.
-- **`undertow`, `rimeclaw`, `chognova`, `v_puke`, `v_smile`** are **dungeon** rewards,
+- **`b_*` (body/form) cards, seven mains and `v_moncoin`** are **dungeon** rewards,
   because phase two should hand out cards the Line does not.
 
 ---
@@ -149,11 +149,11 @@ Not a card in the folder, not won by anything — always there, always free to p
 is the attribute profile:
 
 ```
-might = round(6 + PWR × 0.9 + SPD × 0.25)
+might = round(7 + PWR × 0.7 + SPD × 0.2)
 ```
 
-Measured across the 493 tokens in `.data/metadata`: **might 9 → 16, median 12**. The spread is
-**1.40× at p90/p10 and 1.78× at max/min** — a common token at the bottom and a Legendary at the
+Measured across the 1969 tokens in `.data/metadata`: **might 9 → 16, median 12**. The spread is
+**1.30× at p90/p10 and 1.78× at max/min** — a common token at the bottom and a Legendary at the
 top really do hit for very different numbers with nothing else on the board, which is the whole
 early game. The absolute band is deliberately low and will have to be reconciled against the HP
 of a region's drift when slice 3 prices the encounters; that is the one number in this document
@@ -164,7 +164,7 @@ A foster Chog is a **ceiling**, not a multiplier: `capShares` hands a capped pro
 into whichever attribute is still under the cap, and PWR is exactly what the basic attack reads,
 so computing the number from the *capped* attributes made a free Chog hit **harder** (17) than
 the held token it was borrowing (16). It is now `floor(held × 0.75)` off the **uncapped**
-profile — measured 12 against 16 on a Kings Robe / Fire / Legendary — the same shape as
+profile — measured 11 against 15 on a Kings Robe / Fire / Legendary — the same shape as
 `cleanCeiling`. That is the honest version of invariant 3: **owning one helps you, it does not
 play for you**, and it helps you exactly where you have nothing else.
 

@@ -1,0 +1,242 @@
+{
+ "byToken": {
+  "561": "Blaze",
+  "900": "Burning Skully",
+  "942": "Chog Scream",
+  "1002": "Chogbomination",
+  "1481": "Frogger",
+  "1514": "Grim",
+  "1667": "Halo",
+  "1798": "Krown",
+  "1881": "Midas",
+  "1884": "Redd"
+ },
+ "ones": {
+  "Blaze": {
+   "file": "trait-oneoff-blaze.glb",
+   "skull": false,
+   "hideMane": [
+    "hair_shell_low",
+    "hair_shell_side",
+    "hair_shell_top",
+    "tuft_00",
+    "tuft_01",
+    "tuft_02",
+    "tuft_03",
+    "tuft_04",
+    "tuft_05",
+    "tuft_06",
+    "tuft_07",
+    "tuft_08",
+    "tuft_09",
+    "tuft_10",
+    "tuft_11",
+    "tuft_12",
+    "tuft_13",
+    "tuft_14"
+   ],
+   "tint": {
+    "M_Purple": "c2410c",
+    "M_Body": "7c2d12",
+    "M_Face": "fb923c",
+    "M_Pink": "7c2d12"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Burning Skully": {
+   "file": "trait-oneoff-burning-skully.glb",
+   "skull": true,
+   "hideMane": [],
+   "tint": {
+    "M_Body": "e8e4da",
+    "M_Purple": "e8e4da",
+    "M_Pink": "f472b6"
+   },
+   "parts": {},
+   "eyes": false,
+   "mouth": false
+  },
+  "Chog Scream": {
+   "file": "trait-oneoff-chog-scream.glb",
+   "skull": false,
+   "hideMane": [],
+   "tint": {
+    "M_Purple": "5b3fa8",
+    "M_Body": "4c1d95",
+    "M_Face": "e8c98f",
+    "M_Pink": "ec4899"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Chogbomination": {
+   "file": "trait-oneoff-chogbomination.glb",
+   "skull": false,
+   "hideMane": [],
+   "tint": {
+    "M_Face": "e6f4d8",
+    "M_Body": "4c1d95",
+    "M_Purple": "5b21b6",
+    "M_Pink": "65a30d"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Frogger": {
+   "file": "trait-oneoff-frogger.glb",
+   "skull": false,
+   "hideMane": [
+    "hair_shell_low",
+    "hair_shell_side",
+    "hair_shell_top",
+    "tuft_00",
+    "tuft_01",
+    "tuft_02",
+    "tuft_03",
+    "tuft_04",
+    "tuft_05",
+    "tuft_06",
+    "tuft_07",
+    "tuft_08",
+    "tuft_09",
+    "tuft_10",
+    "tuft_11",
+    "tuft_12",
+    "tuft_13",
+    "tuft_14"
+   ],
+   "tint": {
+    "M_Body": "4d7c0f",
+    "M_Pink": "ec4899"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Grim": {
+   "file": "trait-oneoff-grim.glb",
+   "skull": false,
+   "hideMane": [
+    "hair_shell_low",
+    "hair_shell_side",
+    "hair_shell_top",
+    "tuft_00",
+    "tuft_01",
+    "tuft_02",
+    "tuft_03",
+    "tuft_04",
+    "tuft_05",
+    "tuft_06",
+    "tuft_07",
+    "tuft_08",
+    "tuft_09",
+    "tuft_10",
+    "tuft_11",
+    "tuft_12",
+    "tuft_13",
+    "tuft_14"
+   ],
+   "tint": {
+    "M_Purple": "1a1a1a",
+    "M_Body": "0a0a0a",
+    "M_Face": "f5f5f5",
+    "M_Pink": "d4d4d4",
+    "M_Eye": "000000",
+    "M_White": "ffffff"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Halo": {
+   "file": "trait-oneoff-halo.glb",
+   "skull": false,
+   "hideMane": [],
+   "tint": {
+    "M_Purple": "ede6d6",
+    "M_Body": "f5eddc",
+    "M_Face": "f5eddc",
+    "M_Pink": "f0c6a0"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Krown": {
+   "file": "trait-oneoff-krown.glb",
+   "skull": false,
+   "hideMane": [
+    "hair_shell_top",
+    "tuft_00",
+    "tuft_01",
+    "tuft_02",
+    "tuft_03",
+    "tuft_04",
+    "tuft_05",
+    "tuft_06",
+    "tuft_07"
+   ],
+   "tint": {
+    "M_Body": "b45309",
+    "M_Purple": "7e22ce",
+    "M_Face": "f5eddc"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": false
+  },
+  "Midas": {
+   "file": "trait-oneoff-midas.glb",
+   "skull": false,
+   "hideMane": [
+    "hair_shell_low",
+    "hair_shell_side",
+    "hair_shell_top",
+    "tuft_00",
+    "tuft_01",
+    "tuft_02",
+    "tuft_03",
+    "tuft_04",
+    "tuft_05",
+    "tuft_06",
+    "tuft_07",
+    "tuft_08",
+    "tuft_09",
+    "tuft_10",
+    "tuft_11",
+    "tuft_12",
+    "tuft_13",
+    "tuft_14"
+   ],
+   "tint": {
+    "M_Purple": "d4a017",
+    "M_Body": "b8860b",
+    "M_Face": "e8c547",
+    "M_Pink": "b45309",
+    "M_White": "fde68a",
+    "M_Eye": "713f12"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": true
+  },
+  "Redd": {
+   "file": "trait-oneoff-redd.glb",
+   "skull": false,
+   "hideMane": [],
+   "tint": {
+    "M_Purple": "dc2626",
+    "M_Body": "b91c1c",
+    "M_Face": "fca5a5",
+    "M_Pink": "7f1d1d"
+   },
+   "parts": {},
+   "eyes": true,
+   "mouth": false
+  }
+ }
+}

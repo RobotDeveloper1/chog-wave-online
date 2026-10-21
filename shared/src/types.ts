@@ -90,7 +90,8 @@ export interface GridScore {
 }
 
 export interface SaveView {
-  tokenId: number;
+  /** Who this save belongs to: the wallet address, or `token:<id>` for a visitor without one. */
+  key: string;
   kills: number;
   stormKills: number;
   cards: string[];

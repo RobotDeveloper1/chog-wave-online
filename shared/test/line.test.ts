@@ -19,6 +19,7 @@ import {
   regionGate,
   regionState,
   regionsCleared,
+  distOrder,
   slotsFor,
   unlockedBy,
   wardenOf,
@@ -121,6 +122,39 @@ describe('line — cards', () => {
     }
   });
 
+  it('deals stronger cards the farther down the road they sit', () => {
+    // Near weak, far strong: along each region's distance order the best non-fusion
+    // card per site never steps down, so the drops stay commensurate with the walk.
+    // Wardens are excluded -- a warden pays a spike for the next region plus a
+    // keepsake, and the keepsake is allowed to be small.
+    const mightOf = (id: string): number => {
+      const c = anyCard(id)!;
+      return c.power * Math.max(1, c.hits);
+    };
+    for (const r of REGIONS) {
+      let prev = 0;
+      for (const id of distOrder(r.id)) {
+        const e = ENCOUNTER_BY_ID.get(id)!;
+        if (e.kind === 'warden') continue;
+        const m = Math.max(...e.unlocks.filter((u) => !u.startsWith('ga_')).map(mightOf));
+        expect(m, `${id} under ${prev}`).toBeGreaterThanOrEqual(prev);
+        prev = Math.max(prev, m);
+      }
+    }
+  });
+
+  it('opens the road with vendor bait, not a winning lottery ticket', () => {
+    // The first clear used to pay 90+ power and end the tutorial on the spot.
+    // The nearest site now pays the two weakest cards on the whole Line.
+    const first = ENCOUNTER_BY_ID.get(distOrder('tolls')[0]!)!;
+    const mightOf = (id: string): number => {
+      const c = anyCard(id)!;
+      return c.power * Math.max(1, c.hits);
+    };
+    const floor = Math.min(...ENCOUNTERS.flatMap((e) => e.unlocks).map(mightOf));
+    for (const id of first.unlocks) expect(mightOf(id), id).toBeLessThanOrEqual(floor + 10);
+  });
+
   it('never hands out a card before the region that contains it is reachable', () => {
     // A card from region 5 cannot appear in a region 1-4 clear list, which is the property
     // that makes "walk the Line in order" and "collect the whole set" the same activity.
@@ -151,16 +185,16 @@ describe('line — gating', () => {
     expect(encounterGate(done(), 'nope').reason).toBe('no such encounter');
   });
 
-  it('walks each region in order — no skipping to the warden', () => {
-    // The budget prices every fight on the cards the encounters before it hand over, so the
-    // gate has to prove those cards: the warden on an empty road is shut.
+  it('leaves encounters independent inside an open region', () => {
+    // No predecessor chain: a fresh road can fight anything, including the warden. The
+    // region gate is the only seal — difficulty runs by distance, not by ticket.
     expect(encounterGate(done(), 'tolls.1').open).toBe(true);
-    expect(encounterGate(done(), 'tolls.2').open).toBe(false);
-    expect(encounterGate(done(), 'tolls.7').open).toBe(false);
-    expect(encounterGate(done('tolls.1'), 'tolls.2').open).toBe(true);
-    expect(encounterGate(done('tolls.1'), 'tolls.3').open).toBe(false);
-    expect(encounterGate(through(1), 'ashpine.2').open).toBe(false);
+    expect(encounterGate(done(), 'tolls.2').open).toBe(true);
+    expect(encounterGate(done(), 'tolls.7').open).toBe(true);
+    expect(encounterGate(through(1), 'ashpine.2').open).toBe(true);
     expect(encounterGate(through(1), 'ashpine.1').open).toBe(true);
+    // …and a sealed region still seals everything in it.
+    expect(encounterGate(done(), 'ashpine.1').open).toBe(false);
   });
 
   it('counts regions only as a contiguous run from the first', () => {
@@ -263,7 +297,7 @@ describe('line — the hand it hands out', () => {
   });
 
   it('unlocks in walk order, not table order', () => {
-    expect(unlockedBy(done('tolls.1', 'tolls.5'))).toEqual(['emberpaw', 'splashback', 'switchblade']);
+    expect(unlockedBy(done('tolls.1', 'tolls.5'))).toEqual(['staticnip', 'refract']);
   });
 
   it('counts a card once even if two encounters could both hand it over', () => {

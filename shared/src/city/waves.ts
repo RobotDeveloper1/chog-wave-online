@@ -33,7 +33,8 @@ export interface WaveRoll {
 }
 
 export interface WaveArgs {
-  tokenId: number;
+  /** Who is catching: the wallet save key, so two wallets never roll the same wave. */
+  seed: string;
   /** The wave's anchor id. */
   id: string;
   day: number;
@@ -52,7 +53,7 @@ const hash = (s: string): number => {
 };
 
 export function rollWave(a: WaveArgs): WaveRoll {
-  const r = mulberry32(hash(`${a.tokenId}:${a.id}:${a.day}`));
+  const r = mulberry32(hash(`${a.seed}:${a.id}:${a.day}`));
   const match = a.element === a.tribe;
   const thick = 1 + Math.min(0.6, Math.max(0, a.heat) / 200);
   const wav = Math.round((6 + r() * 14) * (match ? 1.5 : 1) * thick);

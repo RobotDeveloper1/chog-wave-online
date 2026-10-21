@@ -33,6 +33,14 @@ export const ENEMY_LANES = 3;
 /** Lanes a player may stand on. */
 export const PLAYER_LANES = 2;
 export const FIRST_PLAYER_LANE = LANES - PLAYER_LANES;
+/**
+ * PvP: six lanes, three a side. The old field gave the far side three lanes and the
+ * near side two, so one body always dodged in a bigger half. A 3×3 each is the same
+ * fight from both screens — neither side can own an advantage in geometry.
+ */
+export const PVP_LANES = 6;
+/** Lanes each body owns in PvP: 0..2 far, 3..5 near. */
+export const PVP_HALF = 3;
 
 export const MIN_COLS = 3;
 export const MAX_COLS = 6;
@@ -113,11 +121,23 @@ export interface Hazard {
   owner: string | null;
   /** Share of the landed damage paid back to the owner. DRAIN cards, PvP only. */
   drain: number;
+  /**
+   * Status the program carries onto whoever is still standing in it. PvP only — the
+   * anomaly's own volleys are plain damage, and stun/freeze/burn against the boss ride
+   * on shots, not warnings. Zeroes and nulls mean a clean hit.
+   */
+  stunMs: number;
+  freezeMs: number;
+  burn: { ticks: number; damage: number } | null;
+  /** Whether a BARRIER card rode along: the owner arms one charge if this hits. */
+  barrier: boolean;
 }
 
 export interface WaveField {
   /** How many files this floor is cut into. */
   cols: number;
+  /** How many lanes deep. Five against the anomaly, six across a PvP field. */
+  lanes: number;
   boss: FieldBody;
   shots: Shot[];
   /** The warnings on the floor: one at most outside PvP, one per side inside it. */
@@ -136,10 +156,10 @@ export type FieldEvent =
   | { type: 'took-hit'; owner: string; damage: number; file: number }
   | { type: 'dodge'; owner: string; file: number }
   | { type: 'drain'; owner: string; amount: number }
-  | { type: 'stun'; owner: string; ms: number }
-  | { type: 'burn'; owner: string; ticks: number; damage: number }
-  | { type: 'burn-tick'; damage: number; left: number }
-  | { type: 'freeze'; owner: string; ms: number }
+  | { type: 'stun'; owner: string; ms: number; target?: string }
+  | { type: 'burn'; owner: string; ticks: number; damage: number; target?: string }
+  | { type: 'burn-tick'; damage: number; left: number; target?: string }
+  | { type: 'freeze'; owner: string; ms: number; target?: string }
   | { type: 'barrier'; owner: string; charges: number }
   | { type: 'ward'; owner: string; left: number }
   | { type: 'knock'; owner: string; file: number }
@@ -202,8 +222,8 @@ export function makeBoss(args: { hp: number; element: Element; file: number; col
   };
 }
 
-export function makeField(boss: FieldBody, cols: number): WaveField {
-  return { cols: clampCols(cols), boss, shots: [], hazards: [], blocked: null };
+export function makeField(boss: FieldBody, cols: number, lanes = LANES): WaveField {
+  return { cols: clampCols(cols), lanes, boss, shots: [], hazards: [], blocked: null };
 }
 
 /**

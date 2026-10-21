@@ -3,6 +3,7 @@ import {
   ENCOUNTERS,
   REGION_IDS,
   allMobSpawns,
+  bodiesForEncounter,
   lineLayout,
   mobAt,
   mobSpawns,
@@ -23,12 +24,18 @@ import {
  */
 
 describe('mobs — the roster', () => {
-  it('fields two bodies for a drift, one for a post, one for a warden', () => {
+  it('fields pairs near the trailhead, packs of three past halfway, singles elsewhere', () => {
     for (const id of REGION_IDS) {
       for (const e of ENCOUNTERS.filter((x) => x.region === id)) {
         const bodies = mobSpawns(id).filter((m) => m.encounterId === e.id);
-        expect(bodies.length, e.id).toBe(e.kind === 'drift' ? 2 : 1);
+        expect(bodies.length, e.id).toBe(bodiesForEncounter(e.id));
+        if (e.kind !== 'drift') expect(bodies.length, e.id).toBe(1);
       }
+      // Both pack sizes exist on every road: pairs to learn on, packs to fear.
+      const sizes = new Set(
+        ENCOUNTERS.filter((x) => x.region === id && x.kind === 'drift').map((x) => bodiesForEncounter(x.id)),
+      );
+      expect(sizes, id).toEqual(new Set([2, 3]));
     }
   });
 
@@ -37,8 +44,8 @@ describe('mobs — the roster', () => {
     expect(new Set(allMobSpawns().map((m) => m.id)).size).toBe(allMobSpawns().length);
   });
 
-  it('gives every region eleven bodies to meet', () => {
-    for (const id of REGION_IDS) expect(mobSpawns(id)).toHaveLength(11);
+  it('gives every region thirteen bodies to meet', () => {
+    for (const id of REGION_IDS) expect(mobSpawns(id)).toHaveLength(13);
   });
 
   it('lets a warden stand still and makes everything else wander', () => {
@@ -70,14 +77,19 @@ describe('mobs — where they stand', () => {
     }
   });
 
-  it('keeps a drift\'s two bodies one encounter apart, never one fight', () => {
+  it('keeps a drift\'s bodies a meeting apart, never one fight', () => {
     for (const id of REGION_IDS) {
       for (const e of ENCOUNTERS.filter((x) => x.region === id && x.kind === 'drift')) {
-        const [a, b] = mobSpawns(id).filter((m) => m.encounterId === e.id);
-        const d = Math.hypot(a!.home.x - b!.home.x, a!.home.z - b!.home.z);
-        // Two reaches that overlap are one fight starting inside another. `reach` is 6, so 14
-        // leaves a real corridor between them.
-        expect(d, e.id).toBeGreaterThan(14);
+        const homes = mobSpawns(id).filter((m) => m.encounterId === e.id).map((m) => m.home);
+        let min = Infinity;
+        for (let i = 0; i < homes.length; i++) {
+          for (let j = i + 1; j < homes.length; j++) {
+            min = Math.min(min, Math.hypot(homes[i]!.x - homes[j]!.x, homes[i]!.z - homes[j]!.z));
+          }
+        }
+        // Reaches that overlap are one fight starting inside another. `reach` is 6, so past
+        // 12 no two bodies share a meeting; pairs keep the old 14-unit corridor.
+        expect(min, e.id).toBeGreaterThan(homes.length > 2 ? 12 : 14);
       }
     }
   });

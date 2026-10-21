@@ -1,4 +1,4 @@
-﻿import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -49,9 +49,11 @@ afterAll(() => {
 
 let nextToken = 9100;
 
-function seat() {
+function seat(fixed?: number) {
   const world = new World();
-  const tokenId = nextToken++;
+  // A fixed id parks outside the counter's range, so a new test cannot reshuffle the
+  // identity — and the signature — of every seat after it.
+  const tokenId = fixed ?? nextToken++;
   const p = world.join(`line${tokenId}`, { tokenId, transferCount: 0, daysHeld: 0 }, 'ashflat', null);
   return { world, p, tokenId, build: p.build };
 }
@@ -107,14 +109,40 @@ describe('line â€” clearing an encounter', () => {
     const s = seat();
     const first = s.world.profiles.lineCleared(s.tokenId, ['tolls.1'], s.build);
     expect(first.ok).toBe(true);
-    expect(first.cards).toEqual(['emberpaw', 'splashback']);
-    expect(s.world.profiles.lineCards(s.tokenId)).toEqual(['emberpaw', 'splashback']);
+    expect(first.cards).toEqual(['staticnip']);
+    expect(s.world.profiles.lineCards(s.tokenId)).toEqual(['staticnip']);
 
     const again = s.world.profiles.lineCleared(s.tokenId, ['tolls.1'], s.build);
     expect(again.ok).toBe(false);
     expect(again.reason).toBe('already cleared');
-    // Two cards, once â€” not two copies of them.
-    expect(s.world.profiles.lineCards(s.tokenId)).toEqual(['emberpaw', 'splashback']);
+    // One card, once — not two copies of it.
+    expect(s.world.profiles.lineCards(s.tokenId)).toEqual(['staticnip']);
+  });
+
+  it('pays XP by kind on the first clear, on top of the cards', () => {
+    // The drift moves the bar a little, the post twice that, the warden its 20 plus
+    // the region bonus — the walk from the first fight lands a level, not just cards.
+    const s = seat(9500);
+    const drift = s.world.profiles.lineCleared(s.tokenId, ['tolls.1'], s.build);
+    expect(drift.ok).toBe(true);
+    expect(drift.xp).toBe(6);
+    for (const id of ['tolls.2', 'tolls.3', 'tolls.4']) {
+      expect(s.world.profiles.lineCleared(s.tokenId, [id], s.build).ok, id).toBe(true);
+    }
+    const post = s.world.profiles.lineCleared(s.tokenId, ['tolls.5'], s.build);
+    expect(post.ok).toBe(true);
+    expect(post.xp).toBe(12);
+  });
+
+  it('pays the warden encounter plus the region bonus', () => {
+    const s = seat(9501);
+    for (const id of ['tolls.1', 'tolls.2', 'tolls.3', 'tolls.4', 'tolls.5', 'tolls.6']) {
+      expect(s.world.profiles.lineCleared(s.tokenId, [id], s.build).ok, id).toBe(true);
+    }
+    const warden = s.world.profiles.lineCleared(s.tokenId, ['tolls.7'], s.build);
+    expect(warden.ok).toBe(true);
+    expect(warden.xp).toBe(20 + 70);
+    expect(warden.wav).toBe(140);
   });
 
   it('never hands the same card over twice across the whole Line', () => {
@@ -164,7 +192,9 @@ describe('line â€” the deck follows the world', () => {
   });
 
   it('fills the new slots from what the Line just handed over', () => {
-    const s = seat();
+    // Token 9506's predicted signature is lucky_coin, a Tolls card: the seat has to
+    // be able to earn its own signature from the region it walks.
+    const s = seat(9506);
     clearRegion(s, 'tolls');
     const view = s.world.profiles.deckView(s.tokenId, s.build);
     expect(view.rules.size).toBeGreaterThan(LINE_BASE_SLOTS);
@@ -241,14 +271,14 @@ describe('line â€” a forged clear cannot open a region', () => {
 
   it('takes the whole message or none of it, so a forged batch banks nothing', () => {
     const s = seat();
-    // Tolls' seven encounters plus the first five of Ash Pine. Validated against one snapshot,
-    // the road is refused at the second id â€” tolls.1 is not banked yet, so tolls.2 is out of
-    // order â€” and not one id is committed.
+    // Tolls' seven encounters plus the first five of Ash Pine. Validated against one
+    // snapshot, the road is refused at the first Ash Pine id — Tolls warden is still
+    // standing in the snapshot — and not one id is committed.
     // A partial commit would be worse than the original bug: it lets a client push a region
     // forward one id at a time and learn the gate by probing.
     const res = s.world.profiles.lineCleared(s.tokenId, ENCOUNTERS.slice(0, 12).map((e) => e.id), s.build);
     expect(res.ok).toBe(false);
-    expect(res.reason).toContain('walk the road in order');
+    expect(res.reason).toContain('warden is still standing');
     expect(s.world.profiles.lineView(s.tokenId).regions.filter((r) => r.state === 'done')).toHaveLength(0);
     expect(s.world.profiles.lineCards(s.tokenId)).toEqual([]);
   });

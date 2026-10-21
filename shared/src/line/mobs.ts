@@ -7,8 +7,9 @@ import type { RegionId } from './index.ts';
  *
  * The first version of this design put a glowing pillar on each site and asked the player to
  * press E. That is a menu with extra steps, not an encounter — you do not "interact" with a
- * rust mite, you walk into it and it starts. So each encounter is now 1-2 mobs standing on the
+ * rust mite, you walk into it and it starts. So each encounter is 1-3 mobs standing on the
  * road, and walking within reach of one starts the fight by itself. No prompt, no key, no menu.
+ * Drifts near the trailhead travel in pairs; past the halfway mark they run in packs of three.
  *
  * A mob is `{encounterId}.{n}`. Several mobs share one encounter, and only the first one killed
  * banks the clear: the rest are the same fight again for a smaller purse, which is what makes a
@@ -46,17 +47,37 @@ export interface MobSpawn {
   respawnS: number;
   /** WAV a repeat kill pays, when the cards are already banked. */
   repeatWav: number;
+  /** Chase speed in units a second: mites shamble, imps nearly keep up. */
+  chaseSpeed: number;
 }
 
-/** How many bodies an encounter fields. Drifts travel in pairs; a post stands alone twice; a warden is one thing. */
-const BODIES: Record<string, number> = { drift: 2, post: 1, warden: 1 };
+/**
+ * How many bodies a post or a warden fields. Drifts are not here: their count comes from
+ * `bodiesForEncounter`, because pairs near the trailhead and packs of three past it.
+ */
+const BODIES: Record<string, number> = { post: 1, warden: 1 };
+
+/**
+ * How many bodies an encounter fields. Posts stand alone and wardens are one thing; drifts
+ * travel in pairs near the trailhead and in packs of three past the halfway mark, because
+ * distance is the Line's risk dial and a far drift should read as one before it is walked
+ * into. An unknown encounter fields one body rather than none, so a bad id is a lonely mob,
+ * not a hole in the road.
+ */
+export function bodiesForEncounter(encounterId: string): number {
+  const def = ENCOUNTER_BY_ID.get(encounterId);
+  if (!def) return 1;
+  if (def.kind !== 'drift') return BODIES[def.kind] ?? 1;
+  const drifts = distOrder(def.region).filter((id) => ENCOUNTER_BY_ID.get(id)?.kind === 'drift');
+  return drifts.indexOf(encounterId) >= Math.ceil(drifts.length / 2) ? 3 : 2;
+}
 
 const REPEAT_WAV: Record<string, number> = { drift: 6, post: 14, warden: 0 };
 
 /**
  * How wide an encounter fans its bodies around its site. The highway's packs hold the road;
- * the farm track's hug it. Stays above 7 everywhere, because a drift's two bodies 14 units
- * apart is the corridor that keeps them two meetings instead of one fight.
+ * the farm track's hug it. Stays above 7 everywhere, because drift bodies ~14 units apart
+ * is the corridor that keeps them separate meetings instead of one fight.
  */
 const FAN_R: Record<RegionId, number> = {
   tolls: 8, ashpine: 9, marsh: 8.5, relay: 9.5, causeway: 10, static: 9,
@@ -80,7 +101,7 @@ export function mobSpawns(region: RegionId): MobSpawn[] {
   const out: MobSpawn[] = [];
   for (const site of l.encounters) {
     const def = ENCOUNTER_BY_ID.get(site.id)!;
-    const n = BODIES[def.kind] ?? 1;
+    const n = bodiesForEncounter(site.id);
     const archetype = archetypeForEncounter(site.id);
     for (let i = 0; i < n; i++) {
       // Bodies fan around the site. Flat ground means anything inside the bounds is standing,
@@ -92,7 +113,7 @@ export function mobSpawns(region: RegionId): MobSpawn[] {
       // letters long.
       const ang = (i / Math.max(1, n)) * Math.PI * 2 + seedOf(region);
       // The trailhead is safe ground: when the site sits too close to the spawn, the whole fan
-      // shifts out as one body, so the two bodies of a drift keep their spread instead of
+      // shifts out as one body, so a drift's bodies keep their spread instead of
       // collapsing onto the same point of the safe circle. With roam the closest a shifted body
       // patrols is still ~20 units off.
       const sdx = site.x - l.spawn.x;
@@ -122,6 +143,7 @@ export function mobSpawns(region: RegionId): MobSpawn[] {
         reach: 6,
         respawnS: def.kind === 'warden' ? 0 : def.kind === 'post' ? 150 : 90,
         repeatWav: REPEAT_WAV[def.kind] ?? 0,
+        chaseSpeed: def.kind === 'warden' ? 5.2 : chaseSpeedFor(archetype),
       });
     }
   }
@@ -129,34 +151,65 @@ export function mobSpawns(region: RegionId): MobSpawn[] {
 }
 
 /**
- * Who each region fields: the four drifts in walk order, and the one thing every post is.
+/**
+ * Who each region fields, nearest drift first.
  *
- * Six regions, six rosters — no two alike. Tolls keeps the original alternation, because it
- * is the reference every later region is read against; everywhere else the lead mob, the
- * pattern, or both change. The wisp walls a file for the whole fight and the husk wears
- * guard, so a region that *leads* with one opens on a very different first impression than
- * a region that alternates it in second — which is why the marsh and the causeway lead with
- * theirs, and why the relay leads with the loose signal its own masts keep leaking.
+ * Six regions, six ladders — no two alike. Tolls opens on mites because the farm track
+ * is where the game starts and the tutorial fight is a mite; every ladder climbs from
+ * there to something faster, tougher, or stranger at the far end. Posts keep one
+ * regional mob each: they are roadblocks, not the climb.
  */
-const ROSTER: Record<RegionId, { drifts: [string, string, string, string]; post: string }> = {
-  tolls: { drifts: ['mite', 'walker', 'mite', 'walker'], post: 'walker' },
-  ashpine: { drifts: ['spark', 'glitch', 'spark', 'glitch'], post: 'glitch' },
-  marsh: { drifts: ['wisp', 'spark', 'wisp', 'spark'], post: 'wisp' },
-  relay: { drifts: ['glitch', 'spark', 'glitch', 'spark'], post: 'glitch' },
-  causeway: { drifts: ['husk', 'spark', 'husk', 'spark'], post: 'husk' },
-  static: { drifts: ['spark', 'husk', 'spark', 'husk'], post: 'husk' },
+const LADDER: Record<RegionId, { drifts: [string, string, string, string]; post: string }> = {
+  tolls: { drifts: ['mite', 'mite', 'walker', 'imp'], post: 'walker' },
+  ashpine: { drifts: ['spark', 'glitch', 'glitch', 'imp'], post: 'glitch' },
+  marsh: { drifts: ['wisp', 'spark', 'husk', 'husk'], post: 'wisp' },
+  relay: { drifts: ['spark', 'glitch', 'glitch', 'surge'], post: 'glitch' },
+  causeway: { drifts: ['spark', 'front', 'front', 'husk'], post: 'husk' },
+  static: { drifts: ['spark', 'husk', 'imp', 'husk'], post: 'husk' },
 };
+
+/**
+ * How fast each species runs a chase down, in units a second. The player walks faster
+ * than all of these, so every pursuit is escapable — but the imp nearly keeps up, which
+ * is exactly why it lives at the far end of the road.
+ */
+const CHASE_SPEED: Record<string, number> = {
+  mite: 3.2, walker: 4.2, spark: 5.2, glitch: 5.6, wisp: 4.2, husk: 2.8,
+  imp: 6.4, surge: 4.6, front: 4.4, mirror: 5,
+};
+
+/** Chase speed for an archetype, on the map and in the duel it opens. */
+export function chaseSpeedFor(archetype: string): number {
+  return CHASE_SPEED[archetype] ?? 4.2;
+}
+
+/**
+ * Encounters nearest-first from the trailhead; wardens always last, whatever ground
+ * they stand on, because they are the gate. The road's difficulty, species and drops
+ * all key off this order: near is weak, far is strong, and wandering further is the
+ * only risk dial the Line has.
+ */
+export function distOrder(region: RegionId): string[] {
+  const l = lineLayout(region);
+  const dist = (id: string): number => {
+    const s = l.encounters.find((e) => e.id === id);
+    return s ? Math.hypot(s.x - l.spawn.x, s.z - l.spawn.z) : Infinity;
+  };
+  return ENCOUNTERS.filter((e) => e.region === region)
+    .sort((a, b) => (a.kind === 'warden' ? 1 : 0) - (b.kind === 'warden' ? 1 : 0) || dist(a.id) - dist(b.id))
+    .map((e) => e.id);
+}
 
 /** Which archetype an encounter fields, in the duel it opens. */
 export function archetypeForEncounter(encounterId: string): string {
   const def = ENCOUNTER_BY_ID.get(encounterId);
   if (!def) return 'spark';
   if (def.kind === 'warden') return REGION_BY_ID.get(def.region)?.boss.archetype ?? 'baron';
-  const roster = ROSTER[def.region];
-  if (def.kind === 'post') return roster.post;
-  const drifts = ENCOUNTERS.filter((e) => e.region === def.region && e.kind === 'drift');
-  const i = drifts.findIndex((e) => e.id === encounterId);
-  return roster.drifts[i] ?? 'spark';
+  const ladder = LADDER[def.region];
+  if (def.kind === 'post') return ladder.post;
+  const drifts = distOrder(def.region).filter((id) => ENCOUNTER_BY_ID.get(id)?.kind === 'drift');
+  const i = drifts.indexOf(encounterId);
+  return ladder.drifts[Math.max(0, i)] ?? 'spark';
 }
 
 /** Every mob on the Line, for the spawn audit. Throws on a duplicate id. */
@@ -214,4 +267,114 @@ export function mobFacing(m: MobSpawn, nowMs: number, seed = 0): number {
   const dz = a.z - b.z;
   if (dx * dx + dz * dz < 1e-6) return 0;
   return Math.atan2(dx, dz);
+}
+
+/**
+ * The aggro radius: inside it a mob notices you and starts the run over. Both sides
+ * run the same step below — the server with the moving player (or the nearest one in
+ * the region for the snapshot), the client with its own boots — so the walk you see
+ * is the walk you bump into.
+ */
+export const AGGRO_R = 14;
+/** How far past the rim the foe has to get before the mob gives up and walks home. */
+export const GIVE_UP_R = 4;
+/** Close enough to touch: the run ends here and the duel opens on contact. */
+export const CHASE_CONTACT = 2.5;
+
+/**
+ * Where a chase started, and when. The run itself is a pure function of the anchor,
+ * the clock and the live foe position, so both sides agree from the same anchor — but
+ * the anchor is state, kept per mob: a pursuit has to remember where it began. A back
+ * anchor is the walk home after a give-up: same shape, the patrol as target.
+ */
+export interface ChaseAnchor {
+  fx: number;
+  fz: number;
+  since: number;
+  back?: boolean;
+}
+
+/** Run from an anchor toward a target at the mob's own speed, hugging dry ground. */
+function runToward(
+  m: MobSpawn,
+  anchor: ChaseAnchor,
+  toX: number,
+  toZ: number,
+  contactR: number,
+  nowMs: number,
+): { x: number; z: number } {
+  const dx = toX - anchor.fx;
+  const dz = toZ - anchor.fz;
+  const d = Math.hypot(dx, dz);
+  if (d <= contactR) return { x: toX, z: toZ };
+  const speed = m.chaseSpeed > 0 ? m.chaseSpeed : 4.2;
+  const travelled = speed * Math.max(0, (nowMs - anchor.since) / 1000);
+  const step = Math.min(travelled, d - contactR);
+  const ux = dx / d;
+  const uz = dz / d;
+  // Step back along the run until dry: a chase that would cross water strains at
+  // the shore instead of snapping home.
+  for (const k of [1, 0.75, 0.5, 0.25]) {
+    const x = anchor.fx + ux * step * k;
+    const z = anchor.fz + uz * step * k;
+    if (walkable(m.region, x, z)) return { x, z };
+  }
+  return { x: anchor.fx, z: anchor.fz };
+}
+
+/**
+ * One step of the pursuit: where the body is and which way it faces, and the anchor
+ * to keep for the next step. The server persists the anchor per mob; the client keeps
+ * its own copy per figure — same function, same rules, same walk.
+ *
+ * Out, the mob runs the foe down at its species speed and stops at contact. Past the
+ * rim it gives up and walks home to the live patrol point, turning straight back
+ * around if a foe steps in mid-return. Nothing teleports: every transition starts
+ * from the position the last step ended on.
+ */
+export function chaseStep(
+  prev: ChaseAnchor | null,
+  m: MobSpawn,
+  nowMs: number,
+  foe: { x: number; z: number } | null,
+  seed = 0,
+): { anchor: ChaseAnchor | null; x: number; z: number; facing: number } {
+  const patrol = mobAt(m, nowMs, seed);
+  const d = foe ? Math.hypot(foe.x - patrol.x, foe.z - patrol.z) : Infinity;
+  let anchor = prev ?? null;
+  if (!anchor) {
+    if (foe && d < AGGRO_R) anchor = { fx: patrol.x, fz: patrol.z, since: nowMs };
+  } else if (!anchor.back) {
+    if (!foe || d > AGGRO_R + GIVE_UP_R) {
+      const cur = runToward(m, anchor, foe?.x ?? anchor.fx, foe?.z ?? anchor.fz, CHASE_CONTACT, nowMs);
+      anchor = { fx: cur.x, fz: cur.z, since: nowMs, back: true };
+    }
+  } else if (foe && d < AGGRO_R) {
+    const cur = runToward(m, anchor, patrol.x, patrol.z, 0, nowMs);
+    anchor = { fx: cur.x, fz: cur.z, since: nowMs };
+  } else {
+    const cur = runToward(m, anchor, patrol.x, patrol.z, 0, nowMs);
+    const stuck = Math.hypot(cur.x - anchor.fx, cur.z - anchor.fz) < 1e-6 && nowMs - anchor.since > 1200;
+    if (stuck || Math.hypot(cur.x - patrol.x, cur.z - patrol.z) < 0.05) anchor = null;
+  }
+  if (!anchor) return { anchor, x: patrol.x, z: patrol.z, facing: mobFacing(m, nowMs, seed) };
+  const target = anchor.back ? patrol : foe!;
+  const contactR = anchor.back ? 0 : CHASE_CONTACT;
+  const at = runToward(m, anchor, target.x, target.z, contactR, nowMs);
+  // Face the run itself: the velocity between two samples of the same chase. Facing
+  // the foe directly whipped every time the player strafed; facing where the body is
+  // actually going turns with it instead.
+  const patrolB = anchor.back ? mobAt(m, nowMs - 400, seed) : patrol;
+  const targetB = anchor.back ? patrolB : target;
+  const b = runToward(m, anchor, targetB.x, targetB.z, contactR, nowMs - 400);
+  const vx = at.x - b.x;
+  const vz = at.z - b.z;
+  let facing: number;
+  if (vx * vx + vz * vz > 1e-6) facing = Math.atan2(vx, vz);
+  else if (!anchor.back && foe) {
+    const fx = foe.x - at.x;
+    const fz = foe.z - at.z;
+    facing = fx * fx + fz * fz > 1e-4 ? Math.atan2(fx, fz) : mobFacing(m, nowMs, seed);
+  } else facing = mobFacing(m, nowMs, seed);
+  return { anchor, x: at.x, z: at.z, facing };
 }

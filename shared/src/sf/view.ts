@@ -47,10 +47,14 @@ export interface BossView {
   burn: { ticks: number; damage: number } | null;
   /** Milliseconds of FREEZE left on its clock. */
   freezeMs: number;
+  /** STUN clock on the body across the field (boss stun in PvE, rival stun in PvP). */
+  stunMs: number;
   /** A file it has walled off for the fight. */
   blocked: number | null;
   /** How many files this floor is cut into. */
   cols: number;
+  /** How many lanes deep this floor is: five PvE, six PvP. */
+  lanes: number;
   node: boolean;
   training: boolean;
   tier: string;
@@ -77,6 +81,13 @@ export interface PlayerView {
   /** The cover hold this player is running for somebody else, 0..1. */
   reviving: { target: string; fraction: number } | null;
   frozen: boolean;
+  /**
+   * Status ailment clocks, PvP only. `frozen` above is the input lock (menu open or
+   * program firing); `chillMs` is the FREEZE ailment slowing the charge.
+   */
+  stunMs: number;
+  chillMs: number;
+  burn: { ticks: number; damage: number } | null;
   /** BARRIER charges held: each eats one landed hit. */
   barrier: number;
   /** PvP side: 0 holds the near half, 1 the far. Always 0 outside PvP. */

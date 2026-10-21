@@ -11,6 +11,8 @@ import {
   tick,
   volumeOf,
   hotSector,
+  HOUSE_SPAWN,
+  type HouseLayout,
   starterCard,
   SECTORS,
   VOLUME_WINDOW_MS,
@@ -45,9 +47,13 @@ import {
   allMobSpawns,
   archetypeForEncounter,
   encounterGate,
+  chaseStep,
+  type ChaseAnchor,
   mobAt,
   mobFacing,
   mobSpawns,
+  type MobSpawn,
+  walkable,
   ENCOUNTER_BY_ID,
   REGION_BY_ID,
   REGION_IDS,
@@ -67,9 +73,10 @@ import {
 import { BattleSession, type JoinSpec, type SessionEvent } from './battle.ts';
 import { CFG } from './config.ts';
 import { createFeed, type Feed } from './feed.ts';
+import type { DepositFact } from './chain.ts';
 import { traits } from './meta.ts';
-import { Profiles, VAULT_TOKEN, type GrantResult, type LevelUp, type RefundLine } from './profiles.ts';
-import { SaveStore, levelOf, type SaveRow } from './save.ts';
+import { Profiles, VAULT_KEY, type GrantResult, type LevelUp, type RefundLine } from './profiles.ts';
+import { SaveStore, levelOf, normalizeKey, type SaveRow } from './save.ts';
 import { Social, type Presence, type TradeOffer } from './social.ts';
 import { War } from './war.ts';
 
@@ -139,6 +146,11 @@ export interface Player {
    * signs the wallet in, and it used to stop there.
    */
   wallet: string | null;
+  /**
+   * The save this body writes to: the wallet when signed in, `token:<id>` for a
+   * visitor without one. Set once at join — a body never changes owners mid-life.
+   */
+  saveKey: string;
   sector: SectorId;
   room: string;
   x: number;
@@ -165,7 +177,7 @@ export interface Player {
   /** Kept on the player so the roster can show it without a per-row profile read. */
   level: number;
   /** On the street, or inside a building. Nobody sees you from the street while you are in a room. */
-  place: 'street' | 'room' | 'line';
+  place: 'street' | 'room' | 'line' | 'house';
   /**
    * Which region of the Line the player is walking, when place is 'line'.
    *
@@ -175,6 +187,8 @@ export interface Player {
    * mean every place that reads a sector had to learn to mean two different things by 0.
    */
   region: RegionId | null;
+  /** Whose house this player is standing in, when place is 'house'. */
+  houseOf: string | null;
   /** Where the street position was when the player stepped through a door. */
   street: { x: number; y: number };
   /**
@@ -299,7 +313,7 @@ export class World {
   /** One live field per room. The server, not the client, decides if a card lands. */
   readonly sessions = new Map<string, BattleSession>();
   /** playerId -> the bout waiting for their boots, read once by `duelEnter`. */
-  private pendingPvp = new Map<string, { key: string; brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerToken: number; rivalToken: number; wager: number } }>();
+  private pendingPvp = new Map<string, { key: string; brawl: { rivalId: string; rivalName: string; challengerName: string; challengerId: string; challengerKey: string; rivalKey: string; wager: number } }>();
   /**
    * Loot lying on the street. Keyed by drop id, and owned: the street is shared, the loot is not.
    * Bounded by the TTL sweep in `broadcast`, so a busy server cannot grow this forever.
@@ -336,7 +350,45 @@ export class World {
     this.feed = createFeed(
       (evs) => this.push(evs),
       (f) => this.onFills(f),
+      (d) => this.creditDeposits(d),
     );
+    this.refundStrandedEscrow();
+  }
+
+  /**
+   * Real $CHOG arriving at the vault. Every Transfer is recorded by tx hash before
+   * anything is credited, so a re-polled window or a restart can never pay twice.
+   * Dust (under one whole $CHOG) is recorded but not credited: balances are integers.
+   */
+  creditDeposits(facts: DepositFact[]): void {
+    for (const f of facts) {
+      if (this.saves.depositSeen(f.txHash)) continue;
+      this.saves.depositPut(f.txHash, f.from, f.amount, f.block);
+      const whole = Math.floor(f.amount);
+      if (whole < 1) continue;
+      this.profiles.addChog(f.from, whole);
+      for (const p of this.players.values()) {
+        if ((p.wallet ?? '').toLowerCase() === f.from) {
+          this.pushTo(p.id, { t: 'chog', deposit: { amount: whole, tx: f.txHash } });
+          this.notifyProfile(p.id);
+        }
+      }
+    }
+  }
+
+  /**
+   * Stakes left in escrow by a dead process come straight back: both sides were
+   * deducted at accept, neither was paid, so the only honest settle is a refund.
+   * Runs before the first connection, so no bout can settle mid-refund.
+   */
+  private refundStrandedEscrow(): void {
+    const stranded = this.saves.escrowAll();
+    for (const e of stranded) {
+      this.profiles.addChog(e.challenger, e.wager);
+      this.profiles.addChog(e.rival, e.wager);
+      this.saves.escrowDel(e.key);
+    }
+    if (stranded.length) console.log('[escrow] refunded ' + stranded.length + ' stranded bout(s)');
   }
 
   get feedMode() {
@@ -349,10 +401,29 @@ export class World {
       const now = Date.now();
       const dt = (now - this.last) / 1000;
       this.last = now;
-      this.emit(tick(this.sectors, now, dt, this.players.size));
-      this.stepSessions(Math.round(dt * 1000));
-      this.sweepDrops();
-      this.broadcast();
+      // One poisoned stage must not take the process — and every other player's
+      // connection — down with it. Each stage is guarded, so a throw costs one
+      // tick of one system, and the log names the stage that threw.
+      try {
+        this.emit(tick(this.sectors, now, dt, this.players.size));
+      } catch (err) {
+        console.error('[loop:season]', err);
+      }
+      try {
+        this.stepSessions(Math.round(dt * 1000));
+      } catch (err) {
+        console.error('[loop:duel]', err);
+      }
+      try {
+        this.sweepDrops();
+      } catch (err) {
+        console.error('[loop:drops]', err);
+      }
+      try {
+        this.broadcast();
+      } catch (err) {
+        console.error('[loop:cast]', err);
+      }
       this.timer = setTimeout(loop, CFG.broadcastMs);
     };
     loop();
@@ -418,7 +489,7 @@ export class World {
       .map((id) => this.players.get(id))
       .filter((q): q is Player => !!q)
       .map((q) => SF.seatOf({ id: q.id, owner: q.wallet ?? `unverified:${q.id}`, tokenId: q.tokenId, name: q.build.callsign, loadout: q.build.loadout, level: q.level }));
-    return SF.applySteps(SF.duelStatsOf({ loadout: p.build.loadout, level: p.level }), SF.partySteps(seats, p.id));
+    return SF.applySteps(SF.duelStatsOf({ loadout: p.build.loadout, level: p.level, attrs: p.build.attrs }), SF.partySteps(seats, p.id));
   }
 
   private refreshFieldParty(session: BattleSession): void {
@@ -435,11 +506,11 @@ export class World {
   /** Persist the integrity actually left, including departures and lost bodies. No client HP. */
   private syncRunHp(p: Player, session: BattleSession, lost = false): void {
     if (!session.nodeFight) return;
-    const doc = this.profiles.doc(p.tokenId);
+    const doc = this.profiles.doc(p.saveKey);
     const hp = session.hpOf(p.id);
     if (!doc.run || !hp || doc.area?.id !== session.spec.areaId || doc.run.at !== session.spec.nodeId) return;
     doc.run = { ...doc.run, hp: Math.max(0, hp.hp), maxHp: hp.maxHp, failed: doc.run.failed || lost || hp.hp <= 0 };
-    this.saves.writeProgress(p.tokenId, doc);
+    this.saves.writeProgress(p.saveKey, doc);
   }
 
   /**
@@ -484,10 +555,10 @@ export class World {
         if (e.type === 'hit' && e.damage > 0) {
           const chain = e.chain;
           owner.bestProgram = Math.max(owner.bestProgram, e.damage);
-          this.profiles.best(owner.tokenId, e.damage, chain);
+          this.profiles.best(owner.saveKey, e.damage, chain);
           this.trackFightQuests(owner.id, this.quest(owner.id, [{ type: 'damage', amount: Math.max(1, Math.round(e.damage / 500)) }, ...(chain ? [{ type: 'chainRun' as const, amount: chain }] : [])]));
         } else if (e.type === 'dodge') {
-          this.profiles.countFor(owner.tokenId, 'dodges');
+          this.profiles.countFor(owner.saveKey, 'dodges');
           this.trackFightQuests(owner.id, this.quest(owner.id, [{ type: 'dodge' }]));
         }
       }
@@ -506,7 +577,7 @@ export class World {
        */
       for (const id of downed) {
         const p = this.players.get(id);
-        if (p) this.profiles.countFor(p.tokenId, 'deaths');
+        if (p) this.profiles.countFor(p.saveKey, 'deaths');
       }
 
       // Only a body nobody picked up pays for the run: out of the fight, and off the anomaly.
@@ -525,6 +596,9 @@ export class World {
         this.syncRunHp(p, session, true);
         this.downedUntil.set(id, now + SF.DEFEAT_LOCKOUT_MS);
         this.pushDuelEnd(p, session, { won: false, reason: 'wiped' });
+        // Out of the corpse session: staying in it bricks the next ambush check while
+        // the downed lockout covers the refight, so the loss is a pause, not a trap.
+        this.duelLeave(id, 'wiped');
         if (session.brawl) this.endBrawl(session, session.state.winnerId);
       }
       if (expired.length) this.refreshFieldParty(session);
@@ -562,6 +636,15 @@ export class World {
        */
       if (session.spec.encounterId) {
         for (const p of members) {
+          // The win is spent by `line.clear`, which arrives when the plate closes — after
+          // this same step deletes the session. Bank the right to claim it here, so the
+          // claim checks the win and not the corpse's session.
+          // The body dies HERE, not at the claim: `pushDuelEnd` releases every mark, so a
+          // kill left for `line.clear` would find no body — live, every win paid purse 0
+          // and the mob stood straight back up. The purse and the ground it falls on are
+          // banked with the claim, and `line.clear` spends them instead of re-killing.
+          const kill = this.killLineMob(session.spec.encounterId, p.id);
+          this.lineClaims.set(p.id, { encounterId: session.spec.encounterId, at: now, kill: { wav: kill.wav, x: kill.x, z: kill.z } });
           this.pushDuelEnd(p, session, {
             won: true,
             reason: 'cleared',
@@ -577,16 +660,16 @@ export class World {
         for (const p of members) {
           if (!session.has(p.id)) continue;
           this.syncRunHp(p, session);
-          const doc = this.profiles.doc(p.tokenId);
+          const doc = this.profiles.doc(p.saveKey);
           const valid = doc.area?.id === session.spec.areaId && doc.run?.at === nodeId && !!doc.run && !doc.run.failed;
           // The kill is *issued* here, for the tile this field mirrors, and `area.kill` will not pay
           // without it. A body that walked off mid-fight stands on a different node, so its own arm
           // is refused and its run stays as it left it.
-          const questsBefore = new Set(this.profiles.view(p.tokenId, p.sector, this.volume.mon, p.build).quests.filter((q) => q.done).map((q) => q.id));
-          const kill = valid && nodeId && this.profiles.armNode(p.tokenId, nodeId)
+          const questsBefore = new Set(this.profiles.view(p.saveKey, p.sector, this.volume.mon, p.build, p.tokenId).quests.filter((q) => q.done).map((q) => q.id));
+          const kill = valid && nodeId && this.profiles.armNode(p.saveKey, nodeId)
             ? this.loop(p.id, { action: 'area.kill' }) as unknown as KillReceipt
             : null;
-          this.trackFightQuests(p.id, this.profiles.view(p.tokenId, p.sector, this.volume.mon, p.build).quests.filter((q) => q.done && !questsBefore.has(q.id)).map((q) => q.id));
+          this.trackFightQuests(p.id, this.profiles.view(p.saveKey, p.sector, this.volume.mon, p.build, p.tokenId).quests.filter((q) => q.done && !questsBefore.has(q.id)).map((q) => q.id));
           // What the tile paid is answered by the kill itself, so the plate can show it: a body whose
           // arm was refused gets nothing, which is exactly true rather than a number guessed at.
           const receipts = [kill?.grant, kill?.cleared?.grant].filter((g): g is GrantResult => !!g);
@@ -603,13 +686,13 @@ export class World {
       } else if (session.training) {
         for (const p of members) {
           if (!session.has(p.id)) continue;
-          const res = this.profiles.onTrain(p.tokenId);
+          const res = this.profiles.onTrain(p.saveKey);
           this.trackFightQuests(p.id, this.quest(p.id, res.events));
           let grant = res.grant;
           if (res.first) {
             // a common card of the Chog's own tribe that it does not hold: the first thing to put in a deck
-            const card = starterCard(p.build, this.saves.get(p.tokenId).cards);
-            if (card) grant = mergeGrants([grant, this.profiles.grant(p.tokenId, { cards: [card] })]);
+            const card = starterCard(p.build, this.saves.get(p.saveKey).cards);
+            if (card) grant = mergeGrants([grant, this.profiles.grant(p.saveKey, { cards: [card] })]);
           }
           const lv = this.noteLevel(p, grant.level);
           this.pushDuelEnd(p, session, { won: true, reason: 'cleared', grant, first: res.first, level: lv });
@@ -645,6 +728,9 @@ export class World {
     r: { won: boolean; reason: DuelEndMsg['reason']; grant?: { xp: number; wav: number; cards: string[]; items: string[]; refunded?: RefundLine[] }; first?: boolean; level?: LevelUp | null; quests?: string[]; lootOnGround?: boolean },
   ): void {
     if (r.reason === 'wiped') this.downedUntil.set(p.id, Date.now() + SF.DEFEAT_LOCKOUT_MS);
+    // A wipe that keeps its mark bricks the body the same way a leave does; the downed
+    // lockout already covers the refight, this only frees the mob for everyone else.
+    this.releaseLineBodies(p.id);
     const outcome = session.outcomeOf(p.id);
     const seconds = session.secondsOf(p.id);
     const rank = outcome?.rank ?? SF.emptyRank();
@@ -668,7 +754,7 @@ export class World {
       ...(r.first !== undefined ? { first: r.first } : {}),
     });
     this.fightQuests.delete(p.id);
-    p.save = this.saves.get(p.tokenId);
+    p.save = this.saves.get(p.saveKey);
     this.notifyProfile(p.id);
     // The payout, made physical: what the fight just paid falls on the street where you stood.
     // Called after the profile push so the bag and the pile agree even if the client reads either.
@@ -690,7 +776,7 @@ export class World {
    * to be worth the two lines it costs to avoid.
    */
   private spawnDrops(p: Player, cards: readonly string[], items: readonly string[], wav = 0, atOverride?: { x: number; y: number } | { x: number; z: number }, regionOverride?: RegionId | null, deferred = false): void {
-    const at = p.place === 'room' ? p.street : { x: p.x, y: p.y };
+    const at = (p.place === 'room' || p.place === 'house') ? p.street : { x: p.x, y: p.y };
     const base = atOverride ? ('z' in atOverride ? { x: atOverride.x, y: atOverride.z } : { x: atOverride.x, y: atOverride.y }) : at;
     const region = regionOverride !== undefined ? regionOverride : (p.place === 'line' ? p.region : null);
     let i = 0;
@@ -797,18 +883,18 @@ export class World {
     if ((d.region ?? null) !== (p.place === 'line' ? p.region : null)) return { ok: false, reason: 'too far' };
     const age = Date.now() - d.bornAt;
     if (!(d.kind === 'card' && d.deferred) && age > DROP_TTL_MS) { this.drops.delete(dropId); this.pushDrops(p.id); return { ok: false, reason: 'the street took it back' }; }
-    const at = p.place === 'room' ? p.street : { x: p.x, y: p.y };
+    const at = (p.place === 'room' || p.place === 'house') ? p.street : { x: p.x, y: p.y };
     if (Math.hypot(at.x - d.x, at.y - d.z) > DROP_TAKE_RANGE) return { ok: false, reason: 'too far' };
 
     this.drops.delete(dropId);
     // Only the deferred side pays here. Dungeon/fold/anomaly piles were granted at the kill;
     // their take is the ceremony the old comment describes, and granting again would double-pay.
     if (d.deferred) {
-      if (d.kind === 'wav' && d.amount) this.profiles.grant(p.tokenId, { wav: d.amount });
-      else if (d.kind === 'item' && d.key) this.profiles.grant(p.tokenId, { items: { [d.key]: 1 } as never });
+      if (d.kind === 'wav' && d.amount) this.profiles.grant(p.saveKey, { wav: d.amount });
+      else if (d.kind === 'item' && d.key) this.profiles.grant(p.saveKey, { items: { [d.key]: 1 } as never });
       else if (d.kind === 'card' && d.key) {
-        this.profiles.giveCards(p.tokenId, [d.key]);
-        this.profiles.unoweCard(p.tokenId, d.key);
+        this.profiles.giveCards(p.saveKey, [d.key]);
+        this.profiles.unoweCard(p.saveKey, d.key);
       }
     }
     this.notifyProfile(p.id);
@@ -864,7 +950,7 @@ private park(p: Player, leaving: Player['place']): void {
    * wants to go farm Ash Pine belongs.
    */
   private openestRegion(p: Player): RegionId {
-    const line = this.profiles.doc(p.tokenId).line;
+    const line = this.profiles.doc(p.saveKey).line;
     let best: RegionId = REGION_IDS[0]!;
     for (const r of REGION_IDS) if (regionGate(line, r).open) best = r;
     if (p.region && REGION_IDS.indexOf(p.region) > REGION_IDS.indexOf(best)) return p.region;
@@ -899,7 +985,7 @@ private park(p: Player, leaving: Player['place']): void {
       p.at = Date.now();
       return { ok: true };
     }
-    const line = this.profiles.doc(p.tokenId).line;
+    const line = this.profiles.doc(p.saveKey).line;
     const want = from ? this.openestRegion(p) : region;
     const gate = regionGate(line, want);
     if (!gate.open) return { ok: false, reason: gate.reason };
@@ -930,7 +1016,14 @@ private park(p: Player, leaving: Player['place']): void {
    * same fight they left — and because a warden that stays dead has to stay dead in exactly one
    * place rather than in a per-region set that gets rebuilt on every arrival.
    */
-  private lineMobs = new Map<string, { deadAt: number; inFight: string | null }>();
+  private lineMobs = new Map<string, { deadAt: number; inFight: string | null; home?: { x: number; z: number }; chase?: ChaseAnchor | null }>();
+  /** Last sealed-touch toast per player: contact explains itself, but not every step. */
+  private sealedToastAt = new Map<string, number>();
+  /** No re-engage until this timestamp: leaving a fight buys breath, not another fight. */
+  private duelGrace = new Map<string, number>();
+  /** Wins the field already announced, remembered until the claim arrives: the tick reaps a
+   * finished session in the step that ends it, and the plate closes seconds later. */
+  private lineClaims = new Map<string, { encounterId: string; at: number; kill: { wav: number; x: number; z: number } }>();
 
   /**
    * Walk into a live mob and the fight starts by itself.
@@ -949,13 +1042,10 @@ private park(p: Player, leaving: Player['place']): void {
     if (!p.region) return;
     if (this.sessionOf(id)) return;
     const now = Date.now();
-    const line = this.profiles.doc(p.tokenId).line;
     for (const m of mobSpawns(p.region)) {
-      const state = this.lineMobs.get(m.id);
-      if (state?.inFight) continue;
-      if (state && now - state.deadAt < m.respawnS * 1000) continue;
-      if (m.kind === 'warden' && line.cleared.includes(m.encounterId)) continue;
-      const at = mobAt(m, now);
+      if (!this.mobStanding(m, now)) continue;
+      const spawn = this.mobSpawn(m);
+      const at = this.mobStep(spawn, now, { x: p.x, z: p.y });
       if (Math.hypot(p.x - at.x, p.y - at.z) > m.reach) continue;
       const res = this.lineEngage(id, p, m.encounterId, m.id);
       if (res.ok) {
@@ -968,7 +1058,19 @@ private park(p: Player, leaving: Player['place']): void {
         });
         return;
       }
+      if (!res.reason || res.reason.startsWith('catch your breath')) continue;
+      // Contact with a sealed mob explains itself instead of dying quietly: the figure
+      // visibly came over, so silence reads as a broken ambush.
+      const last = this.sealedToastAt.get(id) ?? 0;
+      if (now - last > 6000) {
+        this.sealedToastAt.set(id, now);
+        this.pushTo(id, { t: 'line', kind: 'sealed', encounterId: m.encounterId, reason: res.reason });
+      }
     }
+    // No second trigger at the marker. A duel used to start for standing on a site even
+    // with every body out on patrol, which read as bumping into something invisible:
+    // contact is the bodies' job now (inside the aggro radius they come over on their
+    // own), and the marker's job is the E prompt, which asks out loud.
   }
 
   /** Mark the mob dead when its fight is won, and pay the repeat purse when the cards are banked. */
@@ -985,7 +1087,8 @@ private park(p: Player, leaving: Player['place']): void {
       void enc;
       const spawn = allMobSpawns().find((m) => m.id === mobId);
       if (!spawn || spawn.encounterId !== encounterId) continue;
-      this.lineMobs.set(mobId, { deadAt: now, inFight: null });
+      const prev = this.lineMobs.get(mobId);
+      this.lineMobs.set(mobId, { deadAt: now, inFight: null, ...(prev?.home ? { home: prev.home } : {}), chase: null });
       // The purse is the mob's, not the region's, so it pays on every kill — first or repeat. The
       // `cleared` check only decides whether the REPEAT bonus is also owed, and that bonus is
       // granted by `lineCleared` rather than dropped, so nothing here can double-pay.
@@ -993,7 +1096,11 @@ private park(p: Player, leaving: Player['place']): void {
       // The pile falls where the body fell, not where the winner stood: the first killed body
       // of this encounter anchors the scatter, so loot waits on the road where the fight was.
       if (!placed) {
-        const at = mobAt(spawn, now);
+        // The pile falls where the body visibly fell — which, with aggro, is breathing
+        // down the winner, not out on its patrol.
+        const w = this.players.get(winnerId);
+        const eff = this.mobSpawn(spawn);
+        const at = w ? this.mobStep(eff, now, { x: w.x, z: w.y }) : mobAt(eff, now);
         x = at.x;
         z = at.z;
         placed = true;
@@ -1018,23 +1125,84 @@ private park(p: Player, leaving: Player['place']): void {
    * server's proximity check walks into � and a dead mob reports live: false rather than
    * vanishing, because the corpse fading out is the only feedback a win has on the field.
    */
+  /** The spawn a mob walks from right now: printed, or relocated by its last respawn. */
+  /**
+   * One step of a mob's pursuit, persisted: position, facing and the anchor to keep.
+   * Every reader of a mob's position — the ambush check, the snapshot, the drop —
+   * goes through here, so all of them walk the same chase.
+   */
+  private mobStep(spawn: MobSpawn, now: number, foe: { x: number; z: number } | null): { x: number; z: number; facing: number } {
+    const st = this.lineMobs.get(spawn.id);
+    const r = chaseStep(st?.chase ?? null, spawn, now, foe);
+    if (st) this.lineMobs.set(spawn.id, { ...st, chase: r.anchor });
+    else if (r.anchor) this.lineMobs.set(spawn.id, { deadAt: 0, inFight: null, chase: r.anchor });
+    return r;
+  }
+
+  /** The spawn a mob walks from right now: printed, or relocated by its last respawn. */
+  private mobSpawn(m: MobSpawn): MobSpawn {
+    const home = this.lineMobs.get(m.id)?.home;
+    return home ? { ...m, home } : m;
+  }
+
+  /**
+   * Liveness with lazy respawn: a body whose timer elapsed stands back up at a new
+   * walkable home near its site, so the road never runs out of bodies. Wardens
+   * (`respawnS: 0`) stay crossed — a gate that was crossed stays crossed.
+   */
+  private mobStanding(m: MobSpawn, now: number): boolean {
+    const state = this.lineMobs.get(m.id);
+    if (!state) return true;
+    if (state.inFight) return true;
+    if (state.deadAt <= 0) return true;
+    if (m.respawnS <= 0) return false;
+    if (now - state.deadAt < m.respawnS * 1000) return false;
+    const site = lineLayout(m.region).encounters.find((e) => e.id === m.encounterId);
+    const cx = site?.x ?? m.home.x;
+    const cz = site?.z ?? m.home.z;
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const d = 4 + Math.random() * 8;
+      const x = cx + Math.cos(a) * d;
+      const z = cz + Math.sin(a) * d;
+      if (walkable(m.region, x, z)) {
+        this.lineMobs.set(m.id, { deadAt: 0, inFight: null, home: { x, z }, chase: null });
+        return true;
+      }
+    }
+    this.lineMobs.set(m.id, { deadAt: 0, inFight: null, chase: null });
+    return true;
+  }
+
   private mobsFor(region: RegionId | null) {
     if (!region) return [];
     const now = Date.now();
+    const foes = [...this.players.values()].filter(
+      (q) => q.region === region && q.place === 'line',
+    );
     return mobSpawns(region).map((m) => {
-      const state = this.lineMobs.get(m.id);
-      const alive = !(state && (state.inFight || now - state.deadAt < m.respawnS * 1000));
-      const at = mobAt(m, now);
+      // Standing first: it performs the lazy respawn, and the spawn below must read the
+      // relocated home, not the dead one.
+      const alive = this.mobStanding(m, now);
+      const spawn = this.mobSpawn(m);
+      const patrol = mobAt(spawn, now);
+      let foe: { x: number; z: number } | null = null;
+      let best = Infinity;
+      for (const q of foes) {
+        const d = Math.hypot(q.x - patrol.x, q.y - patrol.z);
+        if (d < best) { best = d; foe = { x: q.x, z: q.y }; }
+      }
+      const at = this.mobStep(spawn, now, foe);
       return {
         id: m.id, encounterId: m.encounterId, region: m.region, kind: m.kind, name: m.name, element: m.element,
-        archetype: m.archetype, tier: m.tier, home: { x: +m.home.x.toFixed(1), z: +m.home.z.toFixed(1) }, roam: m.roam,
+        archetype: m.archetype, tier: m.tier, home: { x: +spawn.home.x.toFixed(1), z: +spawn.home.z.toFixed(1) }, roam: m.roam,
         x: +at.x.toFixed(1), z: +at.z.toFixed(1), alive,
         // The facing has to be on the wire. The client places the figure at exactly the position and
         // yaw the server reported — it does not predict, because a figure that drifted would be a
         // figure the player swings at and misses — and a missing yaw arrives as `undefined`, which
         // three.js turns into a NaN rotation, which is a mob that silently does not render at all.
-        // Derived from the walk itself, so bodies turn into their patrol instead of sliding sideways.
-        facing: +mobFacing(m, now).toFixed(3),
+        // Derived from the walk itself, so bodies turn into the foe they chase, else down the patrol.
+        facing: +at.facing.toFixed(3),
       };
     });
   }
@@ -1066,10 +1234,10 @@ private park(p: Player, leaving: Player['place']): void {
     let bestD = Infinity;
     for (const m of mobSpawns(p.region)) {
       if (m.encounterId !== encounterId) continue;
-      const state = this.lineMobs.get(m.id);
-      if (state?.inFight) continue;
-      if (state && now - state.deadAt < m.respawnS * 1000) continue;
-      const at = mobAt(m, now);
+      // Standing is the respawn's own verdict — which also performs the lazy stand-up — and
+      // the distance is walked from the relocated home, not the printed one.
+      if (!this.mobStanding(m, now)) continue;
+      const at = this.mobStep(this.mobSpawn(m), now, { x: p.x, z: p.y });
       const d = Math.hypot(p.x - at.x, p.y - at.z);
       if (d < bestD) {
         bestD = d;
@@ -1088,18 +1256,20 @@ private park(p: Player, leaving: Player['place']): void {
    * *before* this site, so moving a card between two encounters re-tunes both fights without
    * anyone touching a difficulty number.
    *
-   * A cleared site is refused, not silently re-fought: the reward is already banked and the
-   * player is told so rather than being handed a fight that pays nothing.
+   * A cleared site still opens: the road never runs out of fights, and the repeat pays
+   * the purse while the cards land once (`line.clear` splits the two). Only the gate refuses —
+   * a sealed region, a skipped predecessor — and it says which.
    */
   private lineEngage(id: string, p: Player, encounterId: string, mobId?: string): { ok: boolean; reason?: string } {
-    const line = this.profiles.doc(p.tokenId).line;
+    const line = this.profiles.doc(p.saveKey).line;
     if (!p.region) return { ok: false, reason: 'you are not on the Line' };
     const gate = encounterGate(line, encounterId);
     if (!gate.open) return { ok: false, reason: gate.reason };
     const def = ENCOUNTER_BY_ID.get(encounterId);
     const budget = encounterBudget(encounterId);
     if (!def || !budget) return { ok: false, reason: 'no such encounter' };
-    if (line.cleared.includes(encounterId)) return { ok: false, reason: 'already cleared — walk on' };
+    const grace = (this.duelGrace.get(id) ?? 0) - Date.now();
+    if (grace > 0) return { ok: false, reason: `catch your breath — ${Math.ceil(grace / 1000)}s` };
 
     // Keyed per encounter, not per player, so a party that walks into the same drift fights the
     // same thing and its reward is shared once by `partyRewardScale`, not once per body.
@@ -1144,7 +1314,13 @@ private park(p: Player, leaving: Player['place']): void {
      * nothing at all, because the loop found no body to kill. Whichever way a fight starts, the
      * mob that is now being fought has to be the one that pays.
      */
-    if (mobId) this.lineMobs.set(mobId, { deadAt: 0, inFight: id });
+    // The mark keeps the relocated home: a body that respawned walks from its new
+    // ground, and wiping it here would teleport the figure back to the printed site the
+    // instant the fight opens.
+    if (mobId) {
+      const prev = this.lineMobs.get(mobId);
+      this.lineMobs.set(mobId, { deadAt: 0, inFight: id, ...(prev?.home ? { home: prev.home } : {}), ...(prev?.chase ? { chase: prev.chase } : {}) });
+    }
     return { ok: true };
   }
 
@@ -1158,7 +1334,7 @@ private park(p: Player, leaving: Player['place']): void {
     id: string,
     msg: {
       action: string;
-      kind?: 'card' | 'item';
+      kind?: 'card' | 'item' | 'furniture';
       stockId?: string;
       itemId?: string;
       questId?: string;
@@ -1166,6 +1342,8 @@ private park(p: Player, leaving: Player['place']): void {
       dungeonId?: string;
       tier?: number;
       damage?: number;
+      /**  amounts (withdraw). Re-checked against the ledger, never trusted. */
+      amount?: number;
       npcId?: string;
       waveId?: string;
       door?: string;
@@ -1178,6 +1356,13 @@ private park(p: Player, leaving: Player['place']): void {
       encounterId?: string;
       /** Which of the 3 dealt draft cards the player picked. */
       card?: string;
+      /** House calls: who, what piece, where, which way, which uid. */
+      with?: string;
+      fid?: string;
+      x?: number;
+      z?: number;
+      rot?: number;
+      uid?: string;
     },
   ): { ok: boolean; reason?: string; [k: string]: unknown } {
     const p = this.players.get(id);
@@ -1198,12 +1383,12 @@ private park(p: Player, leaving: Player['place']): void {
         return msg.dropId ? this.takeDrop(p, msg.dropId) : { ok: false, reason: 'which pile?' };
 
       case 'shop':
-        return { ok: true, shops: this.profiles.shops(p.tokenId, p.sector, volume), wav: this.profiles.doc(p.tokenId).bag.wav };
+        return { ok: true, shops: this.profiles.shops(p.saveKey, p.sector, volume), wav: this.profiles.doc(p.saveKey).bag.wav };
 
       case 'buy': {
         if (!msg.stockId || !msg.kind) return { ok: false, reason: 'missing line' };
-        const res = this.profiles.buy(p.tokenId, p.sector, msg.kind, msg.stockId, volume, Date.now(), p.build.library);
-        p.save = this.saves.get(p.tokenId);
+        const res = this.profiles.buy(p.saveKey, p.sector, msg.kind, msg.stockId, volume, Date.now(), p.build.library);
+        p.save = this.saves.get(p.saveKey);
         this.notifyProfile(id);
         if (res.ok && res.line) this.announce(`${p.build.callsign} bought ${res.line.name}`, p.sector);
         return { ...res, save: p.save };
@@ -1211,15 +1396,15 @@ private park(p: Player, leaving: Player['place']): void {
 
       case 'sell': {
         if (!msg.stockId) return { ok: false, reason: 'missing card' };
-        const res = this.profiles.sell(p.tokenId, msg.stockId, [p.build.signature]);
-        p.save = this.saves.get(p.tokenId);
+        const res = this.profiles.sell(p.saveKey, msg.stockId, [p.build.signature]);
+        p.save = this.saves.get(p.saveKey);
         this.notifyProfile(id);
         return res;
       }
 
       case 'use': {
         if (!msg.itemId) return { ok: false, reason: 'missing item' };
-        const res = this.profiles.use(p.tokenId, msg.itemId as never);
+        const res = this.profiles.use(p.saveKey, msg.itemId as never);
         // A field heal lands on the session this player is actually standing in.
         if (res.ok && res.effect?.heal) {
           const healed = this.sessionOf(id)?.heal(id, res.effect.heal) ?? 0;
@@ -1243,11 +1428,85 @@ private park(p: Player, leaving: Player['place']): void {
       case 'quest.turnin':
         return msg.questId && msg.npcId ? this.turnInQuest(p, msg.questId, msg.npcId) : { ok: false, reason: 'missing quest' };
 
+      case 'house.get': {
+        const { layout, owned } = this.profiles.houseOf(p.saveKey);
+        return { ok: true, layout, owned };
+      }
+      case 'house.enter':
+        return this.houseEnter(id, p, p.saveKey);
+      case 'house.leave':
+        return this.houseLeave(p);
+      case 'house.place': {
+        if (p.place !== 'house' || p.houseOf !== p.saveKey) return { ok: false, reason: 'only the host arranges the room' };
+        if (!msg.fid || typeof msg.x !== 'number' || typeof msg.z !== 'number') return { ok: false, reason: 'missing piece' };
+        const uid = Date.now().toString(36) + Math.floor(Math.random() * 36 * 36 * 36).toString(36);
+        const res = this.profiles.housePlace(p.saveKey, String(msg.fid), msg.x, msg.z, Math.floor(Number(msg.rot ?? 0)), uid);
+        if (res.ok && res.layout) this.pushHouse(p.saveKey, res.layout);
+        return res;
+      }
+      case 'house.pickup': {
+        if (p.place !== 'house' || p.houseOf !== p.saveKey) return { ok: false, reason: 'only the host arranges the room' };
+        if (!msg.uid) return { ok: false, reason: 'which piece?' };
+        const res = this.profiles.housePickup(p.saveKey, String(msg.uid));
+        if (res.ok && res.layout) this.pushHouse(p.saveKey, res.layout);
+        return res;
+      }
+      case 'house.rotate': {
+        if (p.place !== 'house' || p.houseOf !== p.saveKey) return { ok: false, reason: 'only the host arranges the room' };
+        if (!msg.uid) return { ok: false, reason: 'which piece?' };
+        const res = this.profiles.houseRotate(p.saveKey, String(msg.uid));
+        if (res.ok && res.layout) this.pushHouse(p.saveKey, res.layout);
+        return res;
+      }
+      case 'house.invite': {
+        const other = msg.with ? this.players.get(String(msg.with)) : undefined;
+        if (!other) return { ok: false, reason: 'that player is gone' };
+        const r = this.social.inviteHome(id, other.id);
+        if (!r.ok) return { ok: false, reason: r.reason };
+        this.pushTo(other.id, { t: 'house', invite: { from: id, name: p.build.callsign } });
+        return { ok: true };
+      }
+      case 'house.accept': {
+        if (p.inBattle) return { ok: false, reason: 'finish your fight first' };
+        const r = this.social.acceptHomeInvite(id);
+        if (!r.ok || !r.from) return { ok: false, reason: r.reason };
+        const host = this.players.get(r.from);
+        if (!host) return { ok: false, reason: 'your host is gone' };
+        const entered = this.houseEnter(id, p, host.saveKey);
+        if (!entered.ok) return entered;
+        this.pushTo(host.id, { t: 'house', notice: p.build.callsign + ' came over' });
+        return entered;
+      }
+      case 'house.decline': {
+        const from = this.social.declineHomeInvite(id);
+        if (from) {
+          const host = this.players.get(from);
+          if (host) this.pushTo(host.id, { t: 'house', notice: p.build.callsign + ' declined' });
+        }
+        return { ok: true };
+      }
       case 'door.enter':
         return msg.door ? this.enterDoor(p, msg.door) : { ok: false, reason: 'which door?' };
 
       case 'wave.collect':
         return msg.waveId ? this.catchWave(p, msg.waveId) : { ok: false, reason: 'which wave?' };
+
+      // ---- Real $CHOG ------------------------------------------------------
+      // Deposits arrive on their own (the chain poll credits the vault's inbox);
+      // withdrawals queue for a manual payout from the vault by the operator.
+
+      case 'chog.deposit':
+        return { ok: true, vault: CFG.vault || null, balance: this.profiles.chogOf(p.saveKey) };
+
+      case 'chog.withdraw': {
+        if (!p.wallet) return { ok: false, reason: 'link a wallet first' };
+        const amount = Math.floor(Number(msg.amount ?? 0));
+        if (!Number.isFinite(amount) || amount < 1) return { ok: false, reason: 'name a real amount' };
+        if (!this.profiles.addChog(p.saveKey, -amount)) return { ok: false, reason: 'insufficient $CHOG' };
+        const req = this.saves.withdrawReqPut(p.wallet.toLowerCase(), amount);
+        this.notifyProfile(id);
+        return { ok: true, request: req, amount, note: 'queued for manual payout from the vault' };
+      }
 
       case 'area.open': {
         // A fold is data, not a door: it opens from the menu wherever you are standing. Walking to
@@ -1256,8 +1515,8 @@ private park(p: Player, leaving: Player['place']): void {
         const guide = this.foldGuide(p, dungeonId);
         // Either this Chog opens a fold of its own, or it walks the one its party is already inside.
         const res = guide
-          ? this.profiles.attachFold(p.tokenId, guide, this.fieldHpOf(p))
-          : this.profiles.openDungeon(p.tokenId, dungeonId, this.fieldHpOf(p));
+          ? this.profiles.attachFold(p.saveKey, guide, this.fieldHpOf(p))
+          : this.profiles.openDungeon(p.saveKey, dungeonId, this.fieldHpOf(p));
         if (res.ok) this.announce(`${p.build.callsign} went into ${res.area?.name}${guide ? ' after their party' : ''}`, p.sector);
         this.notifyProfile(id);
         if (res.ok && res.area) this.boardFold(p, res.area);
@@ -1267,17 +1526,17 @@ private park(p: Player, leaving: Player['place']): void {
       case 'area.step': {
         if (!msg.nodeId) return { ok: false, reason: 'missing node' };
         if (this.sessionOf(id)?.nodeFight) return { ok: false, reason: 'leave or finish the current fight first' };
-        const doc = this.profiles.doc(p.tokenId);
+        const doc = this.profiles.doc(p.saveKey);
         if (!doc.run || doc.run.done || doc.run.failed) return { ok: false, reason: 'no active dungeon run' };
-        if (this.profiles.areaEnemy(p.tokenId) && !doc.run.cleared.includes(doc.run.at)) return { ok: false, reason: 'clear the current room before moving on' };
-        const res = this.profiles.stepArea(p.tokenId, msg.nodeId);
+        if (this.profiles.areaEnemy(p.saveKey) && !doc.run.cleared.includes(doc.run.at)) return { ok: false, reason: 'clear the current room before moving on' };
+        const res = this.profiles.stepArea(p.saveKey, msg.nodeId);
         this.notifyProfile(id);
         // The client now decides when to engage after seeing the enemy band.
         return res;
       }
 
       case 'area.engage': {
-        const enemy = this.profiles.areaEnemy(p.tokenId);
+        const enemy = this.profiles.areaEnemy(p.saveKey);
         if (!enemy) return { ok: false, reason: 'nothing to fight here' };
         if (this.sessionOf(id)?.nodeFight) return { ok: false, reason: 'already fighting' };
         return this.duelEnter(id, 'node');
@@ -1288,15 +1547,15 @@ private park(p: Player, leaving: Player['place']): void {
         // refuses a tile without one, so a client cannot claim a room it never fought. The payout is
         // then read off the bodies still standing on that field — a four-person pull pays as one.
         const field = this.sessionOf(id);
-        const doc = this.profiles.doc(p.tokenId);
+        const doc = this.profiles.doc(p.saveKey);
         if (!field?.nodeFight || field.state.result !== 'win' || field.spec.areaId !== doc.area?.id || field.spec.nodeId !== doc.run?.at || doc.run?.failed) return { ok: false, reason: 'the current field has not been cleared' };
         const bodies = [...this.players.values()].filter((x) => field.has(x.id));
         const scale = bodies.length > 0 ? partyRewardScale(bodies.length, ownersOf(bodies)) : 1;
-        const res = this.profiles.clearCurrent(p.tokenId, 0, scale, p.build);
+        const res = this.profiles.clearCurrent(p.saveKey, 0, scale, p.build);
         // The room's own grant is what usually moves the needle, so its level-up is said here instead
         // of only being folded into the cached number a banner reads off later.
         if (res.ok && res.grant) this.noteLevel(p, res.grant.level);
-        const levelNow = this.profiles.level(p.tokenId);
+        const levelNow = this.profiles.level(p.saveKey);
         if (levelNow !== p.level) p.level = levelNow;
         if (res.ok && res.cleared) {
           const { def, first, grant } = res.cleared;
@@ -1329,25 +1588,25 @@ private park(p: Player, leaving: Player['place']): void {
         // pick is validated inside `takeDraft`, so naming a card you were never offered buys
         // nothing — and a duplicate is bought back by the counter through the normal grant path.
         const card = typeof msg.card === 'string' ? msg.card : '';
-        const res = this.profiles.takeDraft(p.tokenId, card);
+        const res = this.profiles.takeDraft(p.saveKey, card);
         this.notifyProfile(id);
         // The sheet repaints off the reply, so the run rides along like area.step.
-        return { ...res, run: this.profiles.doc(p.tokenId).run };
+        return { ...res, run: this.profiles.doc(p.saveKey).run };
       }
 
       case 'area.shrine': {
         // Thin the deck at a shrine rest. Ownership and the signature guard live in
         // `shrineRemove`, so the message names a card and the server decides.
         const card = typeof msg.card === 'string' ? msg.card : '';
-        const res = this.profiles.shrineRemove(p.tokenId, card, [p.build.signature]);
+        const res = this.profiles.shrineRemove(p.saveKey, card, [p.build.signature]);
         this.notifyProfile(id);
         // The sheet repaints off the reply, so the run rides along like area.step.
-        return { ...res, run: this.profiles.doc(p.tokenId).run };
+        return { ...res, run: this.profiles.doc(p.saveKey).run };
       }
 
       case 'area.close':
         this.duelLeave(id);
-        const shut = this.profiles.closeArea(p.tokenId);
+        const shut = this.profiles.closeArea(p.saveKey);
         // Out of a fold you land by the quest board — unless the fold was opened from the road,
         // in which case there is a region to go back to and the client restores it instead.
         if (p.place !== 'line') {
@@ -1357,8 +1616,8 @@ private park(p: Player, leaving: Player['place']): void {
         return shut;
 
 case 'area.state': {
-        const view = this.profiles.areaView(p.tokenId);
-        return { ok: true, ...view, enemy: this.profiles.areaEnemy(p.tokenId) };
+        const view = this.profiles.areaView(p.saveKey);
+        return { ok: true, ...view, enemy: this.profiles.areaEnemy(p.saveKey) };
       }
 
       // ---- The Line ------------------------------------------------------------
@@ -1369,7 +1628,7 @@ case 'area.state': {
       // message.
 
       case 'line.state': {
-        const view = this.profiles.lineView(p.tokenId, this.mobsFor(p.region));
+        const view = this.profiles.lineView(p.saveKey, this.mobsFor(p.region));
         return {
           ok: true,
           ...view,
@@ -1386,7 +1645,7 @@ case 'area.state': {
         if (!res.ok) return res;
         if (want) this.announce(`${p.build.callsign} took the road to ${REGION_BY_ID.get(res.region!)!.name}`, p.sector);
         this.notifyProfile(id);
-        return { ...res, state: this.profiles.lineView(p.tokenId) };
+        return { ...res, state: this.profiles.lineView(p.saveKey) };
       }
 
       case 'line.enter': {
@@ -1423,20 +1682,39 @@ case 'area.state': {
       }
 
       case 'line.clear': {
-        // The win has to be the session's, not the message's. A drift is a real `BattleSession`;
-        // without one there is nothing to have won, and that is the whole answer.
+        // The win has to be the field's, not the message's: either the live session says
+        // so, or the field said so when it ended and the claim was banked for this. The
+        // tick deletes a finished session in the step that announces it, so checking the
+        // session alone read as "no fight here" for every honest win.
         const field = this.sessionOf(id);
         const spec = field?.spec;
-        if (!field || spec?.encounterId !== msg.encounterId) {
+        const pending = this.lineClaims.get(id);
+        const claimed =
+          !!pending && pending.encounterId === msg.encounterId && Date.now() - pending.at < 10 * 60_000;
+        if ((!field || spec?.encounterId !== msg.encounterId) && !claimed) {
+          if (pending?.encounterId === msg.encounterId) this.lineClaims.delete(id);
           return { ok: false, reason: 'no fight here to have won' };
         }
-        if (field.state.result !== 'win') return { ok: false, reason: 'the fight is not over' };
-        const res = this.profiles.lineCleared(p.tokenId, [msg.encounterId!], p.build, true);
+        if (field && spec?.encounterId === msg.encounterId && field.state.result !== 'win') {
+          return { ok: false, reason: 'the fight is not over' };
+        }
+        // A repeat pays the purse, not the cards: the road never runs out of fights, but a
+        // card is progression and lands once. Without this the clear below answers "already
+        // cleared" to an honest second win and the purse never falls.
+        const banked = this.profiles.lineCleared(p.saveKey, [msg.encounterId!], p.build, true);
+        const res = !banked.ok && banked.reason === 'already cleared'
+          ? { ok: true as const, cards: [] as string[] }
+          : banked;
+        if (!res.ok) return res;
+        const bankedKill = claimed ? pending?.kill : undefined;
+        if (claimed) this.lineClaims.delete(id);
         // The mob goes down with the fight, and what it was carrying lands on the ground next to
         // the winner. First clears pay their named cards into the deck; repeats pay the purse
         // the spawn table printed, in WAV on the dirt, because a cleared region has to stay worth
         // walking. Wardens respawn never — `respawnS: 0` — so a gate that was crossed stays crossed.
-        const kill = this.killLineMob(msg.encounterId!, id);
+        // A reaped win already killed its body on the tick and banked the purse; killing
+        // again would find no mark and pay 0 at the winner's feet. A live session kills now.
+        const kill = bankedKill ?? this.killLineMob(msg.encounterId!, id);
         /*
          * What lands on the ground: everything the mob was carrying.
          *
@@ -1446,17 +1724,24 @@ case 'area.state': {
          * litter — and the profile remembers them as owed, so a restart re-plants them at
          * the owner’s boots on join. Repeats pay only the purse, as before.
          */
-        if (res.ok && res.cards?.length) this.profiles.oweCards(p.tokenId, res.cards);
+        if (res.ok && res.cards?.length) this.profiles.oweCards(p.saveKey, res.cards);
         this.spawnDrops(p, res.ok ? res.cards ?? [] : [], [], kill.wav, { x: kill.x, y: kill.z }, p.region, true);
+        // A banked fight is over for the banker: staying in the corpse session would brick
+        // the next ambush check and reopen a finished duel on E. Party members keep theirs.
+        this.duelLeave(id);
+        // The banker walks free with a breath on every path: a reaped win has no live
+        // session left for `duelLeave` to grant it from, and without it the next step
+        // re-opens a neighbour's duel before the plate has closed.
+        this.duelGrace.set(id, Date.now() + 5000);
         this.quest(id, [{ type: 'lineClear', target: msg.encounterId! }]);
         this.notifyProfile(id);
-        return { ...res, state: this.profiles.lineView(p.tokenId), repeatWav: kill.wav };
+        return { ...res, state: this.profiles.lineView(p.saveKey), repeatWav: kill.wav };
       }
 
       case 'deck.save': {
         // The deck is validated against the rules and the player's own collection; a client
         // that sends a card it does not hold is told which one.
-        const res = this.profiles.setDeck(p.tokenId, p.build, msg.cards ?? []);
+        const res = this.profiles.setDeck(p.saveKey, p.build, msg.cards ?? []);
         if (res.ok) {
           // "Equip" is a real act: a deck that fields a card the player collected, not the born set.
           const born = new Set(p.build.library);
@@ -1467,13 +1752,13 @@ case 'area.state': {
       }
 
       case 'deck.auto': {
-        const cards = this.profiles.autoDeck(p.tokenId, p.build);
+        const cards = this.profiles.autoDeck(p.saveKey, p.build);
         this.notifyProfile(id);
         return { ok: true, cards };
       }
 
       case 'deck.reset':
-        this.profiles.resetDeck(p.tokenId);
+        this.profiles.resetDeck(p.saveKey);
         this.notifyProfile(id);
         return { ok: true };
 
@@ -1482,7 +1767,7 @@ case 'area.state': {
         // a short allow-list so a client cannot fill the save with junk.
         const key = String(msg.flag ?? '');
         if (!/^[a-z0-9:_-]{1,40}$/.test(key)) return { ok: false, reason: 'bad flag' };
-        this.profiles.setFlag(p.tokenId, key);
+        this.profiles.setFlag(p.saveKey, key);
         this.notifyProfile(id);
         return { ok: true };
       }
@@ -1491,10 +1776,10 @@ case 'area.state': {
         return { ok: true, war: this.war.view(), mine: this.war.of(p.tokenId) };
 
       case 'ranks':
-        return { ok: true, ranks: this.ranksView(p.tokenId) };
+        return { ok: true, ranks: this.ranksView(p.saveKey) };
 
       case 'album':
-        return { ok: true, album: this.profiles.albumView(p.tokenId) };
+        return { ok: true, album: this.profiles.albumView(p.saveKey) };
 
       default:
         return { ok: false, reason: `unknown action ${msg.action}` };
@@ -1545,7 +1830,7 @@ case 'area.state': {
     if (!a || !this.near(p, a)) return { ok: false, reason: 'too far away to talk' };
     const npc = hit.npc;
     this.quest(p.id, [{ type: 'talk', target: npcId }]);
-    const { ready, offers, pending } = this.profiles.talk(p.tokenId, npcId);
+    const { ready, offers, pending } = this.profiles.talk(p.saveKey, npcId);
     const pages: string[] = [];
     const options: TalkView['options'] = [];
     let rewards: string[] | undefined;
@@ -1571,7 +1856,7 @@ case 'area.state': {
   private acceptQuest(p: Player, questId: string, npcId: string): { ok: boolean; reason?: string; name?: string } {
     const a = this.anchorOf(p.sector, npcId);
     if (!a || !this.near(p, a)) return { ok: false, reason: 'too far away' };
-    const res = this.profiles.accept(p.tokenId, questId, npcId);
+    const res = this.profiles.accept(p.saveKey, questId, npcId);
     if (!res.ok || !res.def) return { ok: false, reason: res.reason };
     this.notifyProfile(p.id);
     return { ok: true, name: res.def.name };
@@ -1580,10 +1865,10 @@ case 'area.state': {
   private turnInQuest(p: Player, questId: string, npcId: string): { ok: boolean; reason?: string; [k: string]: unknown } {
     const a = this.anchorOf(p.sector, npcId);
     if (!a || !this.near(p, a)) return { ok: false, reason: 'too far away' };
-    const res = this.profiles.turnIn(p.tokenId, questId, npcId);
+    const res = this.profiles.turnIn(p.saveKey, questId, npcId);
     if (!res.ok || !res.def) return { ok: false, reason: res.reason };
-    p.save = this.saves.get(p.tokenId);
-    const levelNow = this.profiles.level(p.tokenId);
+    p.save = this.saves.get(p.saveKey);
+    const levelNow = this.profiles.level(p.saveKey);
     if (levelNow !== p.level) p.level = levelNow;
     this.announce(`${p.build.callsign} closed ${res.name}`, p.sector);
     const lv = res.reward?.level;
@@ -1593,6 +1878,50 @@ case 'area.state': {
   }
 
   /** Stepping through a door: an objective like "go into the Card Shop" is this. */
+  /**
+   * Step through your own door, or a host's on an accepted invitation. The street
+   * (or the road) is parked like any other door, the boots land on the welcome
+   * mat, and the room comes back in the answer so the client draws it at once.
+   */
+  private houseEnter(id: string, p: Player, of: string): { ok: boolean; reason?: string; layout?: HouseLayout; of?: string; owned?: Record<string, number> } {
+    if (p.inBattle) return { ok: false, reason: 'finish your fight first' };
+    this.park(p, p.place);
+    p.place = 'house';
+    p.houseOf = of;
+    p.x = HOUSE_SPAWN.x;
+    p.y = HOUSE_SPAWN.z;
+    p.at = Date.now();
+    void id;
+    const { layout, owned } = this.profiles.houseOf(of);
+    return of === p.saveKey ? { ok: true, layout, of, owned } : { ok: true, layout, of };
+  }
+
+  /** Back out the door: the parked street position is where the boots land. */
+  private houseLeave(p: Player): { ok: boolean; reason?: string } {
+    if (p.place !== 'house') return { ok: false, reason: 'you are not inside a house' };
+    const back = p.street;
+    if (back) {
+      p.x = back.x;
+      p.y = back.y;
+    }
+    p.place = 'street';
+    p.houseOf = null;
+    p.at = Date.now();
+    return { ok: true };
+  }
+
+  /** Everyone standing in one host's room, for the room's own snapshots. */
+  private playersInHouse(of: string): string[] {
+    const out: string[] = [];
+    for (const p of this.players.values()) if (p.place === 'house' && p.houseOf === of) out.push(p.id);
+    return out;
+  }
+
+  /** The room changed under its roof: everyone inside draws it again. */
+  private pushHouse(of: string, layout: HouseLayout): void {
+    for (const pid of this.playersInHouse(of)) this.pushTo(pid, { t: 'house', layout, of });
+  }
+
   private enterDoor(p: Player, kind: string): { ok: boolean; reason?: string } {
     const door = cityOf(p.sector).anchors.find((a) => (a.kind === 'door' || a.kind === 'fold') && a.sub === kind && this.near(p, a, 5));
     if (!door) return { ok: false, reason: 'no such door here' };
@@ -1606,7 +1935,7 @@ case 'area.state': {
     if (!a || a.kind !== 'wave') return { ok: false, reason: 'no such wave' };
     if (!this.near(p, a, 0.9)) return { ok: false, reason: 'too far to catch it' };
     const heat = this.sectors.find((s) => s.sector === p.sector)?.wave ?? 0;
-    const res = this.profiles.collectWave(p.tokenId, { id: a.id, element: (a.sub ?? 'wave') as Element }, { sector: p.sector, tribe: p.tribe, heat });
+    const res = this.profiles.collectWave(p.saveKey, { id: a.id, element: (a.sub ?? 'wave') as Element }, { sector: p.sector, tribe: p.tribe, heat });
     if (!res.ok || !res.roll) return { ok: false, reason: res.reason };
     this.quest(p.id, [{ type: 'collect' }]);
     this.notifyProfile(p.id);
@@ -1622,7 +1951,7 @@ case 'area.state': {
       if (d <= r && !p.inPoi.has(a.id)) {
         p.inPoi.add(a.id);
         this.quest(p.id, [{ type: 'reach', target: a.id }]);
-        const found = this.profiles.discover(p.tokenId, a.id);
+        const found = this.profiles.discover(p.saveKey, a.id);
         if (found?.first) {
           this.pushTo(p.id, { t: 'found', id: a.id, name: found.name, text: found.text, xp: found.xp, kind: poiOf(a.id)?.poi.kind ?? 'landmark' });
           this.notifyProfile(p.id);
@@ -1648,13 +1977,13 @@ case 'area.state': {
   private atFoldGate(p: Player): boolean {
     const gate = cityOf(p.sector).anchors.find((a) => a.kind === 'fold');
     if (!gate) return false;
-    const at = p.place === 'room' ? p.street : { x: p.x, y: p.y };
+    const at = (p.place === 'room' || p.place === 'house') ? p.street : { x: p.x, y: p.y };
     return Math.hypot(at.x - gate.x, at.y - gate.z) <= (gate.radius ?? 3) + 8;
   }
 
   /** The integrity a fold run starts on — the same bar the field will spend, gear and all. */
   private fieldHpOf(p: Player): number {
-    return SF.duelStatsOf({ loadout: p.build.loadout, level: p.level }).hp;
+    return SF.duelStatsOf({ loadout: p.build.loadout, level: p.level, attrs: p.build.attrs }).hp;
   }
 
   /**
@@ -1669,7 +1998,7 @@ case 'area.state': {
       if (pid === p.id) continue;
       const q = this.players.get(pid);
       if (!q || q.sector !== p.sector) continue;
-      const doc = this.profiles.doc(q.tokenId);
+      const doc = this.profiles.doc(q.saveKey);
       const area = doc.area;
       if (area?.dungeonId === dungeonId && area && doc.run && !doc.run.done && !doc.run.failed) return area;
     }
@@ -1693,12 +2022,12 @@ case 'area.state': {
       const q = this.players.get(pid);
       if (!q) continue;
       // Already on this very map is not a refusal: they came in behind somebody else's open.
-      if (this.profiles.doc(q.tokenId).area?.id === area.id) continue;
+      if (this.profiles.doc(q.saveKey).area?.id === area.id) continue;
       if (q.sector !== host.sector || !this.atFoldGate(q)) {
         this.pushTo(pid, { t: 'dungeon', kind: 'refused', name: area.name, reason: 'stand at the same Fold Gate as your party' });
         continue;
       }
-      const res = this.profiles.attachFold(q.tokenId, area, this.fieldHpOf(q));
+      const res = this.profiles.attachFold(q.saveKey, area, this.fieldHpOf(q));
       if (!res.ok) {
         this.pushTo(pid, { t: 'dungeon', kind: 'refused', name: area.name, reason: res.reason ?? 'the fold will not take you' });
         continue;
@@ -1729,6 +2058,17 @@ case 'area.state': {
     if (!p) return { ok: false, reason: 'not connected' };
     const active = this.sessionOf(id);
     if (active) {
+      // Rejoining the fight you are already in is not a second fight: walking into a
+      // drift ambushes you, and pressing E on its site reopens the duel instead of
+      // scolding you. Anything else still has to wait its turn — and a rejoin is still
+      // an entry, so the recovering and the finished stay out like everyone else.
+      if (mode === 'line' && encounterId && active.spec?.encounterId === encounterId) {
+        const wait = (this.downedUntil.get(id) ?? 0) - Date.now();
+        if (wait > 0) return { ok: false, reason: `still recovering — ${Math.ceil(wait / 1000)}s` };
+        if (active.state.over) return { ok: false, reason: 'that fight is over — step out and back in' };
+        this.pushDuelStart(p);
+        return { ok: true };
+      }
       if (active.nodeFight !== (mode === 'node') || active.training !== (mode === 'train') || active.state.pvp !== (mode === 'pvp')) return { ok: false, reason: 'leave the current field first' };
       this.pushDuelStart(p);
       return { ok: true };
@@ -1736,13 +2076,13 @@ case 'area.state': {
     const wait = (this.downedUntil.get(id) ?? 0) - Date.now();
     if (wait > 0) return { ok: false, reason: `still recovering — ${Math.ceil(wait / 1000)}s` };
 
-    const stats = SF.duelStatsOf({ loadout: p.build.loadout, level: p.level });
+    const stats = SF.duelStatsOf({ loadout: p.build.loadout, level: p.level, attrs: p.build.attrs });
     let hp = stats.hp;
     let maxHp = hp;
     let session: BattleSession;
 
-    const doc = this.profiles.doc(p.tokenId);
-    const candidate = this.profiles.areaEnemy(p.tokenId);
+    const doc = this.profiles.doc(p.saveKey);
+    const candidate = this.profiles.areaEnemy(p.saveKey);
     const node = candidate && doc.run && doc.run.hp > 0 && !doc.run.done && !doc.run.failed && !doc.run.cleared.includes(candidate.id) ? candidate : null;
     if (mode === 'node' && !node) return { ok: false, reason: 'no uncleared room under you' };
     if (mode !== 'node' && doc.run && !doc.run.done && !doc.run.failed) return { ok: false, reason: 'leave the dungeon before entering the station' };
@@ -1750,7 +2090,7 @@ case 'area.state': {
       // It spends the run's own integrity, not a fresh bar, and the field is keyed on the *map* as
       // well as the tile: a party walking the host's mirrored layout meets one monster here, not four,
       // and that single field is what decides how big the monster had better be.
-      const run = this.profiles.doc(p.tokenId).run;
+      const run = this.profiles.doc(p.saveKey).run;
       if (run) {
         hp = Math.max(1, run.hp);
         maxHp = Math.max(hp, run.maxHp);
@@ -1860,7 +2200,7 @@ case 'area.state': {
       tokenId: p.tokenId,
       aggro: p.build.loadout.voice.aggro ?? 0,
       resist: p.build.loadout.resist,
-      deck: this.profiles.deckFor(p.tokenId, p.build),
+      deck: this.profiles.deckFor(p.saveKey, p.build),
       // The basic attack, priced off this token's own attributes. Carried on the body rather than
       // looked up per deal so two Chogs in one party press different buttons and hit for
       // different damage — the gap a common and a Legendary open, and the only gap that exists
@@ -1875,7 +2215,21 @@ case 'area.state': {
     this.refreshFieldParty(session);
     p.inBattle = true;
     this.pushDuelStart(p);
+    // PvP: the boots already on the field started faceless — their starts went out before this
+    // body stepped on. Hand each the newcomer's doc now, so no rival waits on a rival that
+    // will never be announced.
+    if (session.state.pvp) {
+      for (const b of session.state.players) {
+        if (b.id === id) continue;
+        this.pushTo(b.id, { t: 'duel', kind: 'rival', rival: this.rivalDocOf(p) });
+      }
+    }
     return { ok: true };
+  }
+
+  /** The doc the other Chog builds its rival model from: token, name, tribe, traits. */
+  private rivalDocOf(p: Player): { tokenId: number; name: string; element: Element; traits: Record<string, string> } {
+    return { tokenId: p.tokenId, name: p.build.callsign, element: p.tribe, traits: p.attributes ?? {} };
   }
 
   private pushDuelStart(p: Player): void {
@@ -1883,17 +2237,29 @@ case 'area.state': {
     if (!s) return;
     const body = s.bodyOf(p.id);
     if (!body) return;
-    const rivalBody = s.state.pvp ? s.state.players.find((b) => b.id !== p.id) ?? null : null;
+    const rivalId = s.state.pvp ? s.state.players.find((b) => b.id !== p.id)?.id : undefined;
+    const rivalPlayer = rivalId ? this.players.get(rivalId) ?? null : null;
     const pool = SF.ARCHETYPES[s.archetype].pool;
     this.pushTo(p.id, {
       t: 'duel', kind: 'start', view: s.view(p.id), place: s.state.place,
-      ...(rivalBody ? { rival: { tokenId: rivalBody.tokenId, name: rivalBody.name, element: rivalBody.tribe, traits: this.players.get(rivalBody.id)?.attributes ?? {} } } : {}),
+      ...(rivalPlayer ? { rival: this.rivalDocOf(rivalPlayer) } : {}),
       caps: SF.capsOf(body),
       moves: s.state.pvp ? [] : pool.map((id) => SF.MOVES[id]!).filter((move, i) => i === 0 || move.depth <= s.difficulty).map(({ id, name, read }) => ({ id, name, read })),
     });
   }
 
   /** Step off the field. Leaving mid-fight is allowed and costs nothing but the fight. */
+  /** Free every body this player had marked: a finished fight leaves no mark behind. */
+  private releaseLineBodies(id: string): void {
+    for (const [mobId, state] of this.lineMobs) {
+      // The release keeps the relocated home: a body that respawned must not teleport
+      // back to the printed site because somebody walked out of the duel.
+      if (state.inFight === id) {
+        this.lineMobs.set(mobId, { deadAt: 0, inFight: null, ...(state.home ? { home: state.home } : {}), ...(state.chase ? { chase: state.chase } : {}) });
+      }
+    }
+  }
+
   duelLeave(id: string, reason: 'left' | 'wiped' = 'left'): void {
     const p = this.players.get(id);
     if (!p) return;
@@ -1902,6 +2268,13 @@ case 'area.state': {
     s?.leave(id);
     if (s) this.refreshFieldParty(s);
     p.inBattle = false;
+    if (!s) return;
+    // Walking out unmarks the body — a mob bricked in `inFight` neither ambushes nor
+    // respawns, which reads as a road that died with the duel. And the field grants a
+    // breath: without it the next step re-opens the same duel, forever. No session, no
+    // breath: travel calls here on every trip, and a trip is not a fight.
+    this.releaseLineBodies(id);
+    this.duelGrace.set(id, Date.now() + 5000);
     for (const [key, sess] of this.sessions) {
       if (sess.empty) {
         this.sessions.delete(key);
@@ -1912,9 +2285,18 @@ case 'area.state': {
     if (s && reason === 'left') this.pushDuelEnd(p, s, { won: false, reason: 'left' });
     if (s?.brawl && reason === 'left') {
       // Walking out hands the bout to whoever is still on the field — or refunds it if
-      // nobody is, because a pot cannot strand on an empty room.
-      const still = [...this.players.values()].find((q) => q.id !== id && s.has(q.id))?.id ?? null;
-      this.endBrawl(s, still, true);
+      // nobody is, because a pot cannot strand on an empty room. The survivor gets the
+      // end screen, not just the pot toast: a win that never closes the field reads as
+      // the duel hanging, and the winner's only way out was abandoning their own win.
+      const survivor = [...this.players.values()].find((q) => q.id !== id && s.has(q.id)) ?? null;
+      if (survivor) {
+        survivor.inBattle = false;
+        s.leave(survivor.id);
+        this.pushDuelEnd(survivor, s, { won: true, reason: 'cleared' });
+        this.announce(survivor.build.callsign + ' won the bout by walkover', s.sector);
+      }
+      this.refreshFieldParty(s);
+      this.endBrawl(s, survivor?.id ?? null, true);
     }
   }
 
@@ -1925,10 +2307,10 @@ case 'area.state': {
     const session = this.sessionOf(id);
     if (!session || session.duelTier !== 'storm') return false;
     if (!this.social.shieldHeld(id, session.occupiedCols())) return false;
-    if (!consume) return !this.profiles.has(p.tokenId, 'ward');
+    if (!consume) return !this.profiles.has(p.saveKey, 'ward');
     // A Portable Ward is the money answer to the friendship answer: it drops the shield for
     // one program, and only the server knows it was spent.
-    if (this.profiles.consume(p.tokenId, 'ward')) {
+    if (this.profiles.consume(p.saveKey, 'ward')) {
       this.announce(`${p.build.callsign} burned a portable ward`, p.sector);
       return false;
     }
@@ -1943,7 +2325,7 @@ case 'area.state': {
   enterBattle(id: string): BattleSession | null {
     const p = this.players.get(id);
     if (!p) return null;
-    const r = this.duelEnter(id, this.profiles.areaEnemy(p.tokenId) ? 'node' : 'anomaly');
+    const r = this.duelEnter(id, this.profiles.areaEnemy(p.saveKey) ? 'node' : 'anomaly');
     return r.ok ? this.sessionOf(id) : null;
   }
 
@@ -1963,7 +2345,7 @@ case 'area.state': {
     if ('placements' in msg || 'queue' in msg || 'col' in msg) return reply({ kind: 'refused', reason: 'legacy placements are disabled' });
     if (msg.action === 'enter') {
       if (msg.mode === 'room') {
-        const doc = this.profiles.doc(p.tokenId);
+        const doc = this.profiles.doc(p.saveKey);
         if (!doc.area || !doc.run || doc.run.failed || doc.run.done || msg.dungeonId !== (doc.area.dungeonId ?? doc.area.id) || msg.roomId !== doc.run.at) {
           return reply({ kind: 'refused', reason: 'walk to that room through the dungeon first' });
         }
@@ -2056,7 +2438,7 @@ case 'area.state': {
       if (this.chatLog.length > 60) this.chatLog.splice(0, this.chatLog.length - 60);
     }
     this.emitChat(line);
-    this.profiles.countFor(p.tokenId, 'chats');
+    this.profiles.countFor(p.saveKey, 'chats');
     this.quest(id, [{ type: 'chat' }]);
     return { ok: true };
   }
@@ -2167,7 +2549,7 @@ case 'area.state': {
         if (me.inBattle) return void this.pushTo(id, { t: 'pvp', refused: 'finish your fight first' });
         const wager = Math.max(0, Math.min(MAX_WAGER, Math.floor(Number(msg.wager ?? 0))));
         if (!Number.isFinite(wager)) return void this.pushTo(id, { t: 'pvp', refused: 'name a real amount' });
-        if (wager > 0 && this.profiles.chogOf(me.tokenId) < wager) {
+        if (wager > 0 && this.profiles.chogOf(me.saveKey) < wager) {
           return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
         }
         const r = this.social.challenge(id, other.id, wager);
@@ -2188,18 +2570,18 @@ case 'area.state': {
         }
         const wager = r.wager ?? 0;
         if (wager > 0) {
-          if (this.profiles.chogOf(from.tokenId) < wager) {
+          if (this.profiles.chogOf(from.saveKey) < wager) {
             this.pushTo(from.id, { t: 'pvp', refused: 'you cannot cover that anymore' });
             return void this.pushTo(id, { t: 'pvp', refused: 'they cannot cover it anymore' });
           }
-          if (this.profiles.chogOf(me.tokenId) < wager) {
+          if (this.profiles.chogOf(me.saveKey) < wager) {
             return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
           }
           // Both stakes leave now, into the fight itself: a disconnect mid-brawl
           // can never strand a half-locked pot.
-          this.profiles.addChog(from.tokenId, -wager);
-          if (!this.profiles.addChog(me.tokenId, -wager)) {
-            this.profiles.addChog(from.tokenId, wager);
+          this.profiles.addChog(from.saveKey, -wager);
+          if (!this.profiles.addChog(me.saveKey, -wager)) {
+            this.profiles.addChog(from.saveKey, wager);
             return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
           }
         }
@@ -2207,7 +2589,7 @@ case 'area.state': {
 
         // Both boots step on: the challenger builds the field, the acceptor joins it, and the
         // only gap left is the piloting. Either door failing refunds both stakes on the spot.
-        const bout = { rivalId: id, rivalName: me.build.callsign, challengerName: from.build.callsign, challengerId: from.id, challengerToken: from.tokenId, rivalToken: me.tokenId, wager };
+        const bout = { rivalId: id, rivalName: me.build.callsign, challengerName: from.build.callsign, challengerId: from.id, challengerKey: from.saveKey, rivalKey: me.saveKey, wager };
         const key = `pvp:${from.id}:${id}`;
         this.pendingPvp.set(from.id, { key, brawl: bout });
         this.pendingPvp.set(id, { key, brawl: bout });
@@ -2224,12 +2606,15 @@ case 'area.state': {
             this.lastTick.delete(key);
           }
           if (wager > 0) {
-            this.profiles.addChog(from.tokenId, wager);
-            this.profiles.addChog(me.tokenId, wager);
+            this.profiles.addChog(from.saveKey, wager);
+            this.profiles.addChog(me.saveKey, wager);
           }
           this.pushTo(from.id, { t: 'pvp', refused: joined.reason });
           return void this.pushTo(id, { t: 'pvp', refused: joined.reason });
         }
+        // The bout is real now: both stakes are deducted and the field exists, so
+        // the pot is written down. If the process dies mid-brawl, the boot refunds it.
+        if (wager > 0) this.saves.escrowPut(key, from.saveKey, me.saveKey, wager);
         this.pushTo(id, { t: 'pvp', notice: wager > 0 ? `${from.build.callsign} stepped in for ${wager} $CHOG a side — the bout is on` : `${from.build.callsign} stepped in — the bout is on` });
         this.pushTo(from.id, { t: 'pvp', notice: `${me.build.callsign} accepted — the bout is on` });
         return;
@@ -2271,14 +2656,14 @@ case 'area.state': {
     this.endBrawl(session, winner);
   }
 
-  private ranksView(you: number): import('@chog/shared').RanksView {
+  private ranksView(you: string): import('@chog/shared').RanksView {
     const view = this.profiles.ranks();
     view.you = you;
-    const names = new Map<number, string>();
-    for (const q of this.players.values()) names.set(q.tokenId, q.build.callsign);
+    const names = new Map<string, string>();
+    for (const q of this.players.values()) names.set(q.saveKey, q.build.callsign);
     for (const board of [view.level, view.pvp, view.chog, view.line]) {
       for (const row of board) {
-        const live = names.get(row.tokenId);
+        const live = names.get(row.key);
         if (live) row.name = live;
       }
     }
@@ -2289,12 +2674,22 @@ case 'area.state': {
     const b = session.brawl;
     if (!b || b.told) return;
     b.told = true;
+    // The pot pays or refunds below either way, so the escrow row dies here, on
+    // the one path every settle funnels through.
+    if (b.wager > 0) {
+      for (const [k, s] of this.sessions) {
+        if (s === session) {
+          this.saves.escrowDel(k);
+          break;
+        }
+      }
+    }
     if (refund || !winnerId) {
       // The field fell apart, the second pair never came, or both went down together:
       // both stakes go home, and the boards hear nothing — a draw is not a loss.
       if (b.wager > 0) {
-        this.profiles.addChog(b.challengerToken, b.wager);
-        this.profiles.addChog(b.rivalToken, b.wager);
+        this.profiles.addChog(b.challengerKey, b.wager);
+        this.profiles.addChog(b.rivalKey, b.wager);
       }
       const story = refund ? 'the field fell apart — stakes returned' : 'a draw — stakes returned';
       for (const pid of [b.challengerId, b.rivalId]) {
@@ -2306,11 +2701,11 @@ case 'area.state': {
     const wonChallenger = winnerId === b.challengerId;
     const pay = b.wager > 0 ? wagerPayout(b.wager) : null;
     if (pay) {
-      this.profiles.addChog(wonChallenger ? b.challengerToken : b.rivalToken, pay.prize);
-      this.profiles.addChog(VAULT_TOKEN, pay.rake);
+      this.profiles.addChog(wonChallenger ? b.challengerKey : b.rivalKey, pay.prize);
+      this.profiles.addChog(VAULT_KEY, pay.rake);
     }
-    this.profiles.recordBrawl(b.challengerToken, wonChallenger);
-    this.profiles.recordBrawl(b.rivalToken, !wonChallenger);
+    this.profiles.recordBrawl(b.challengerKey, wonChallenger);
+    this.profiles.recordBrawl(b.rivalKey, !wonChallenger);
     const purse = pay ? ` (+${pay.prize} $CHOG)` : '';
     const loser = wonChallenger ? b.rivalName : b.challengerName;
     const winner = wonChallenger ? b.challengerName : b.rivalName;
@@ -2353,11 +2748,23 @@ case 'area.state': {
     this.pushTo(to, { t: 'rtc', from: id, kind, data: msg.data ?? null });
   }
 
-  /** Everyone connected, with what they are doing. Derived, never stored. */
+  /**
+   * Everyone connected, with what they are doing. Derived, never stored — and
+   * rebuilt at most once a second, because it is O(everyone) and the snapshot
+   * runs at 20Hz. A join or a leave changes the headcount, so those rebuild
+   * immediately; only the doing flickers, a second late at most.
+   */
+  private rosterAt = 0;
+  private rosterCached: Presence[] = [];
   roster(): Presence[] {
-    return [...this.players.values()].map((p) =>
-      this.social.presence(p, this.sessions.get(p.room) && p.inBattle ? 'battle' : p.inBattle ? 'trading' : 'street'),
-    );
+    const now = Date.now();
+    if (now - this.rosterAt > 1000 || this.rosterCached.length !== this.players.size) {
+      this.rosterAt = now;
+      this.rosterCached = [...this.players.values()].map((p) =>
+        this.social.presence(p, this.sessions.get(p.room) && p.inBattle ? 'battle' : p.inBattle ? 'trading' : p.place === 'house' ? 'idle' : 'street'),
+      );
+    }
+    return this.rosterCached;
   }
 
   /**
@@ -2394,7 +2801,7 @@ case 'area.state': {
     if (!give || !want || !giveItems || !wantItems) return { ok: false, reason: 'that offer names things that do not exist' };
     if (!give.length && !want.length && !giveItems.length && !wantItems.length) return { ok: false, reason: 'an empty offer trades nothing' };
     if (!give.every((c) => a.save.cards.includes(c))) return { ok: false, reason: 'you no longer hold it' };
-    const bag = this.profiles.doc(a.tokenId).bag.items as Record<string, number>;
+    const bag = this.profiles.doc(a.saveKey).bag.items as Record<string, number>;
     for (const [id, n] of counts(giveItems)) {
       if ((bag[id] ?? 0) < n) return { ok: false, reason: 'you no longer hold it' };
     }
@@ -2431,7 +2838,7 @@ case 'area.state': {
     };
     if (t.giving.some(trait) || t.wanting.some(trait)) return { ok: false, reason: 'trait cards cannot be traded' };
     const holdings = Object.fromEntries([...this.players.values()].map((pl) => [pl.id, pl.save.cards]));
-    const itemHoldings = Object.fromEntries([...this.players.values()].map((pl) => [pl.id, { ...(this.profiles.doc(pl.tokenId).bag.items as Record<string, number>) }]));
+    const itemHoldings = Object.fromEntries([...this.players.values()].map((pl) => [pl.id, { ...(this.profiles.doc(pl.saveKey).bag.items as Record<string, number>) }]));
     const r = this.social.accept(tradeId, byId, holdings, itemHoldings);
     if (!r.ok) return r;
     if (r.swap.give.some((c) => from.save.cards.includes(c)) || r.swap.take.some((c) => by.save.cards.includes(c))) {
@@ -2462,18 +2869,18 @@ case 'area.state': {
     const mine = a.save.cards;
     const theirs = b.save.cards;
     if (!take.every((c) => mine.includes(c)) || !give.every((c) => theirs.includes(c))) return false;
-    if ((giveItems.length || takeItems.length) && !this.profiles.moveItems(a.tokenId, b.tokenId, takeItems, giveItems)) return false;
+    if ((giveItems.length || takeItems.length) && !this.profiles.moveItems(a.saveKey, b.saveKey, takeItems, giveItems)) return false;
     a.save.cards = [...mine.filter((c) => !take.includes(c)), ...give];
     b.save.cards = [...theirs.filter((c) => !give.includes(c)), ...take];
-    this.saves.setChips(a.tokenId, a.save.cards);
-    this.saves.setChips(b.tokenId, b.save.cards);
-    this.saves.chapter(a.tokenId, 'trade', `traded ${[...take, ...takeItems].join('+') || 'nothing'} for ${[...give, ...giveItems].join('+') || 'nothing'}`);
-    this.saves.chapter(b.tokenId, 'trade', `traded ${[...give, ...giveItems].join('+') || 'nothing'} for ${[...take, ...takeItems].join('+') || 'nothing'}`);
+    this.saves.setChips(a.saveKey, a.save.cards);
+    this.saves.setChips(b.saveKey, b.save.cards);
+    this.saves.chapter(a.saveKey, 'trade', `traded ${[...take, ...takeItems].join('+') || 'nothing'} for ${[...give, ...giveItems].join('+') || 'nothing'}`);
+    this.saves.chapter(b.saveKey, 'trade', `traded ${[...give, ...giveItems].join('+') || 'nothing'} for ${[...take, ...takeItems].join('+') || 'nothing'}`);
     for (const [x, other] of [[a, b], [b, a]] as [Player, Player][]) {
-      this.profiles.countFor(x.tokenId, 'trades');
+      this.profiles.countFor(x.saveKey, 'trades');
       this.quest(x.id, [{ type: 'trade' }]);
       // Cards are also collection entries: a trade is a sighting for both sides.
-      this.profiles.sight(x.tokenId, keysOfSource(other.attributes));
+      this.profiles.sight(x.saveKey, keysOfSource(other.attributes));
       this.notifyProfile(x.id);
     }
     return true;
@@ -2504,7 +2911,7 @@ case 'area.state': {
       for (const l of this.signals) l(s);
       if (s.type === 'ravaged') {
         for (const p of this.players.values()) {
-          if (p.sector === s.sector) p.save = this.saves.recordRout(p.tokenId);
+          if (p.sector === s.sector) p.save = this.saves.recordRout(p.saveKey);
         }
       }
     }
@@ -2623,7 +3030,7 @@ case 'area.state': {
   snapshot(forPlayerId?: string): WorldSnapshot {
     const me = forPlayerId ? this.players.get(forPlayerId) : undefined;
     const visible = me
-      ? [...(me.place === 'line' && me.region ? this.playersOnLine(me.region) : this.rooms.get(me.room)?.players ?? [])]
+      ? [...(me.place === 'line' && me.region ? this.playersOnLine(me.region) : me.place === 'house' && me.houseOf != null ? this.playersInHouse(me.houseOf) : this.rooms.get(me.room)?.players ?? [])]
           .map((id) => this.players.get(id))
           .filter((p): p is Player => !!p)
       : [...this.players.values()];
@@ -2634,10 +3041,10 @@ case 'area.state': {
     // side of the world.
     const forRegion = me?.region ?? null;
     const forSector = me?.sector;
-    const onStreet = visible.filter((p) => (p.place === 'street' && p.sector === forSector) || (p.place === 'line' && p.region === forRegion));
+    const onStreet = visible.filter((p) => (p.place === 'street' && p.sector === forSector) || (p.place === 'line' && p.region === forRegion) || (me?.place === 'house' && p.place === 'house' && p.houseOf === me.houseOf));
     return {
       sectors: this.sectors,
-      players: onStreet.map(({ build, save: _s, room: _r, street: _st, lineAt: _la, at: _at, inPoi: _ip, place: _pl, ...rest }) => ({ ...rest, name: build.callsign })),
+      players: onStreet.map(({ build, save: _s, wallet: _w, saveKey: _sk, room: _r, street: _st, lineAt: _la, at: _at, inPoi: _ip, place: _pl, houseOf: _h, ...rest }) => ({ ...rest, name: build.callsign })),
       feed: { mode: this.feed.mode, describe: this.feed.describe(), seen: { ...this.seen } },
       room: me?.room,
       anomalies: this.recentAnomalies(),
@@ -2657,7 +3064,9 @@ case 'area.state': {
     for (const [playerId, listener] of this.listeners) {
       const p = this.players.get(playerId);
       if (!p) continue;
-      listener(byRoom.get(p.room) ?? this.snapshot(p.id));
+      // A room snapshot is drawn from its own doorstep: housemates do not share the
+      // street-room view, so each of them gets a snapshot computed as themselves.
+      listener(p.place === 'house' ? this.snapshot(p.id) : (byRoom.get(p.room) ?? this.snapshot(p.id)));
     }
   }
 
@@ -2691,6 +3100,9 @@ case 'area.state': {
       source = { ...source, attributes: known.attributes };
     }
     const build = deriveBuild(source);
+    // Lowercased: chain addresses arrive checksummed and log topics lowercase, and the
+    // save key has to be one string. The only live wallet save is already lowercase.
+    const saveKey = normalizeKey(wallet ? wallet.toLowerCase() : source.tokenId);
     const room = this.assignRoom(sector);
     // Arrive beside the district's quest board, with a little scatter so a crowd logging in
     // does not stand in one place.
@@ -2699,6 +3111,7 @@ case 'area.state': {
       id,
       tokenId: source.tokenId,
       wallet: wallet ?? null,
+      saveKey,
       sector,
       room: room.id,
       x: arrival.x + (Math.random() - 0.5) * 5,
@@ -2711,14 +3124,15 @@ case 'area.state': {
       laserCharge: 0,
       bestProgram: 0,
       build,
-      save: this.saves.get(source.tokenId),
+      save: this.saves.get(saveKey),
       inBattle: false,
       tribe: build.loadout.element,
       traitsSource: known.source,
       attributes: source.attributes ?? {},
-      level: this.profiles.level(source.tokenId),
+      level: this.profiles.level(saveKey),
       place: 'street',
       region: null,
+      houseOf: null,
       lineAt: {},
       street: { x: 0, y: 0 },
       at: Date.now(),
@@ -2730,17 +3144,17 @@ case 'area.state': {
 
     // Owning the token fills its own entries; that is the floor of the Album, and the
     // reason a holder starts ahead of anybody who does not.
-    this.profiles.sight(p.tokenId, keysOfSource(source.attributes));
-    this.profiles.ensureBounties(p.tokenId, [...SECTORS]);
-    p.level = this.profiles.level(p.tokenId);
+    this.profiles.sight(p.saveKey, keysOfSource(source.attributes));
+    this.profiles.ensureBounties(p.saveKey, [...SECTORS]);
+    p.level = this.profiles.level(p.saveKey);
     // Everyone already in the room just met a new Chog, and the newcomer met them.
     for (const other of room.players) {
       const op = this.players.get(other);
       if (!op || op.id === id) continue;
-      if (this.profiles.sight(op.tokenId, keysOfSource(p.attributes)).added.length) this.notifyProfile(op.id);
-      if (this.profiles.sight(p.tokenId, keysOfSource(op.attributes)).added.length) this.notifyProfile(p.id);
+      if (this.profiles.sight(op.saveKey, keysOfSource(p.attributes)).added.length) this.notifyProfile(op.id);
+      if (this.profiles.sight(p.saveKey, keysOfSource(op.attributes)).added.length) this.notifyProfile(p.id);
     }
-    this.profiles.questEvents(p.tokenId, [{ type: 'visit', sector }]);
+    this.profiles.questEvents(p.saveKey, [{ type: 'visit', sector }]);
     // Loot outlives the process only on paper: a restart empties the drops map, so cards
     // still owed come back as piles at the owner’s boots. Anything with a live pile already
     // is left exactly where it fell.
@@ -2751,7 +3165,7 @@ case 'area.state': {
 
   /** Re-drop owed Line cards that have no live pile. See `oweCards`. */
   private replantOwed(id: string, p: Player): void {
-    const owed = this.profiles.owedCardsOf(p.tokenId);
+    const owed = this.profiles.owedCardsOf(p.saveKey);
     if (!owed.length) return;
     const live = new Set(
       [...this.drops.values()].filter((d) => d.owner === id && d.kind === 'card').map((d) => d.key),
@@ -2769,7 +3183,7 @@ case 'area.state': {
   profileFor(id: string): ProfileView | null {
     const p = this.players.get(id);
     if (!p) return null;
-    return this.profiles.view(p.tokenId, p.sector, this.volume.mon, p.build);
+    return this.profiles.view(p.saveKey, p.sector, this.volume.mon, p.build, p.tokenId);
   }
 
   notifyProfile(id: string): void {
@@ -2782,7 +3196,7 @@ case 'area.state': {
   private quest(id: string, evs: Parameters<Profiles['questEvents']>[1]): string[] {
     const p = this.players.get(id);
     if (!p) return [];
-    const done = this.profiles.questEvents(p.tokenId, evs);
+    const done = this.profiles.questEvents(p.saveKey, evs);
     if (p.inBattle && done.length) this.trackFightQuests(id, done);
     if (done.length) {
       this.announce(`objective complete — report to ${done.join(' / ')}`, p.sector);
@@ -2798,6 +3212,9 @@ case 'area.state': {
     this.leaveParty(id);
     this.chatTimes.delete(id);
     this.downedUntil.delete(id);
+    this.duelGrace.delete(id);
+    this.lineClaims.delete(id);
+    this.sealedToastAt.delete(id);
     this.fightQuests.delete(id);
     this.pushSends.delete(id);
     this.players.delete(id);
@@ -2839,6 +3256,7 @@ case 'area.state': {
     p.x = arrival.x;
     p.y = arrival.z;
     p.place = 'street';
+    p.houseOf = null;
     p.street = { x: p.x, y: p.y };
     p.at = Date.now();
     p.inPoi = new Set();
@@ -2847,8 +3265,8 @@ case 'area.state': {
     for (const other of room.players) {
       const op = this.players.get(other);
       if (!op || op.id === id) continue;
-      if (this.profiles.sight(op.tokenId, keysOfSource(p.attributes)).added.length) this.notifyProfile(op.id);
-      if (this.profiles.sight(p.tokenId, keysOfSource(op.attributes)).added.length) this.notifyProfile(p.id);
+      if (this.profiles.sight(op.saveKey, keysOfSource(p.attributes)).added.length) this.notifyProfile(op.id);
+      if (this.profiles.sight(p.saveKey, keysOfSource(op.attributes)).added.length) this.notifyProfile(p.id);
     }
     return p;
   }
@@ -2867,7 +3285,7 @@ case 'area.state': {
     const now = Date.now();
     // Stepping through a door swaps coordinate systems. The street position is parked
     // and restored, so a round trip through the shop cannot be used to teleport.
-if ((patch.place === 'room' || patch.place === 'street' || patch.place === 'line') && patch.place !== p.place) {
+if ((patch.place === 'room' || patch.place === 'street' || patch.place === 'line' || patch.place === 'house') && patch.place !== p.place) {
       // Into the Line, and back out of it. The per-region parking is what stops a round trip
       // through Ash Pine from dropping you into the middle of Tolls — the two are different
       // coordinate systems that share a plane, so one parked slot is not enough.
@@ -2875,9 +3293,13 @@ if ((patch.place === 'room' || patch.place === 'street' || patch.place === 'line
         const region = p.region;
         if (region) this.park(p, patch.place);
         else this.travel(id, this.openestRegion(p), true);
-      } else if (patch.place === 'room') {
+      } else if (patch.place === 'room' || patch.place === 'house') {
+        // A house is entered through its own door (enter, or an accepted invitation),
+        // which sets the host first: a bare patch naming 'house' with no host is a
+        // forged key and opens nothing.
+        if (patch.place === 'house' && p.houseOf == null) return;
         this.park(p, 'street');
-        p.place = 'room';
+        p.place = patch.place;
         p.at = now;
       } else {
         const back = p.place === 'line' ? p.lineAt[p.region ?? ''] : p.street;
@@ -2886,12 +3308,13 @@ if ((patch.place === 'room' || patch.place === 'street' || patch.place === 'line
           p.y = back.y;
         }
         p.place = 'street';
+        p.houseOf = null;
       }
       p.at = now;
       return;
     }
     if (typeof patch.x === 'number' && Number.isFinite(patch.x) && typeof patch.y === 'number' && Number.isFinite(patch.y)) {
-      const b = p.place === 'room' ? ROOM : p.place === 'line' && p.region ? boundsOfRegion(p.region) : boundsOf(p.sector);
+      const b = p.place === 'room' || p.place === 'house' ? ROOM : p.place === 'line' && p.region ? boundsOfRegion(p.region) : boundsOf(p.sector);
       let nx = Math.max(b.x0, Math.min(b.x1, patch.x));
       let ny = Math.max(b.z0, Math.min(b.z1, patch.y));
       if (p.place === 'street' || p.place === 'line') {
@@ -2979,14 +3402,14 @@ if (p.place === 'street') this.checkPois(p);
       const cards = this.rollLoot(outcome.drop);
       const tier = own.bossTier;
       // Profile grants own card capacity and duplicate buybacks; SaveStore only records the clear.
-      w.save = this.saves.recordClear(w.tokenId, tier, sector.peakWave, []);
-      const reward = this.profiles.onClear({ tokenId: w.tokenId, tier, sector: sector.sector, damage: own.bestOf(w.id), scale });
-      const grant = mergeGrants([reward.grant, this.profiles.grant(w.tokenId, { cards: cards })]);
+      w.save = this.saves.recordClear(w.saveKey, tier, sector.peakWave, []);
+      const reward = this.profiles.onClear({ saveKey: w.saveKey, tier, sector: sector.sector, damage: own.bestOf(w.id), scale });
+      const grant = mergeGrants([reward.grant, this.profiles.grant(w.saveKey, { cards: cards })]);
       this.war.add({ tokenId: w.tokenId, tribe: w.tribe, sector: sector.sector, points: this.profiles.warPoints({ tier, scale, hotSector: hot, sector: sector.sector, volumeMon: this.volume.mon }), clear: true });
-      if (party.length > 1) this.profiles.countFor(w.tokenId, 'links');
+      if (party.length > 1) this.profiles.countFor(w.saveKey, 'links');
       this.trackFightQuests(w.id, this.quest(w.id, [...reward.events, ...(party.length > 1 ? [{ type: 'link' as const }] : [])]));
       this.noteLevel(w, grant.level);
-      w.save = this.saves.get(w.tokenId);
+      w.save = this.saves.get(w.saveKey);
       this.emit([{ type: 'reward', sector: sector.sector, tokenId: w.tokenId, tier, cards: grant.cards, kills: w.save.kills, level: w.level }]);
       w.inBattle = false;
       this.pushDuelEnd(w, own, { won: true, reason: 'cleared', grant, level: grant.level, lootOnGround: true });
