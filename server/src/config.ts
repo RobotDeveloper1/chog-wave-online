@@ -35,6 +35,8 @@ export const CFG = {
   chainId: process.env.CHAIN_ID ?? '',
   /** $CHOG deposit vault. Empty disables real deposits (paper wagers keep working). */
   vault: process.env.VAULT_ADDRESS ?? '',
+  /** Hot wallet key that signs automatic $CHOG payouts. Empty keeps the manual queue. Never logged. */
+  hotKey: process.env.HOT_WALLET_KEY ?? '',
   /** getLogs window; keep under rpc2's ~10k cap. */
   logWindow: Number(process.env.LOG_WINDOW ?? 900),
   tickMs: Number(process.env.TICK_MS ?? 250),

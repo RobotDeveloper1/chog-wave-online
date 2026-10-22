@@ -22,6 +22,7 @@ import { moodFor } from './dungeon/themes.ts';
 import { RemoteAvatars, WALK_SPEED, bindKeys, clearKeys, createPlayer, setVirtualInput, stepPlayer } from './player.ts';
 import { bindDeck } from './deckPages.ts';
 import { bindDungeons } from './dungeonPage.ts';
+import { bindCash, type CashView } from './cashPage.ts';
 import { bindOptions } from './sheet/optionsPage.ts';
 import { bindParty, social } from './partyPage.ts';
 import { closeTradeComposer, openTradeComposer, tradeLines, tradeNames } from './tradePage.ts';
@@ -281,6 +282,9 @@ let fightingSite: string | null = null;
   let war: WarView | null = null;
   let ranks: RanksView | null = null;
   let ranksProblem = '';
+  let cash: CashView | null = null;
+  let cashProblem = '';
+  let cashNotice = '';
   let area: AreaView | null = null;
   let tracked: string | null = null;
   let talkingTo: string | null = null;
@@ -452,6 +456,9 @@ tracked,
     lineProblem,
     ranks,
     ranksProblem,
+    cash,
+    cashProblem,
+    cashNotice,
   });
 
   let paintedTab: Tab | null = null;
@@ -503,6 +510,17 @@ hud.sheetEl.innerHTML = renderSheet(tab, net.profile, war, area, sheetCtx());
     }
     hud.sheetEl.querySelectorAll<HTMLElement>('[data-t]').forEach((b) => b.addEventListener('click', () => openTab(b.dataset.t!)));
     if (tab === 'dungeons') bindDungeons(hud.sheetEl, paint);
+    if (tab === 'cash') {
+      bindCash(hud.sheetEl, {
+        withdraw: (amount) => net.loop('chog.withdraw', { amount }),
+        copy: (text) => {
+          void navigator.clipboard?.writeText(text).then(
+            () => say('vault address copied', 'sys'),
+            () => say('copy refused — select it by hand', 't-storm'),
+          );
+        },
+      });
+    }
     if (tab === 'options') bindOptions(hud.sheetEl, paint);
     if (tab === 'party') {
       bindParty(hud.sheetEl, {
@@ -606,6 +624,7 @@ closeArea: () => {
     tab = (t === 'home' || TABS.some((x2) => x2.id === t) ? t : 'home') as Tab;
 if (tab === 'war') net.loop('war');
     if (tab === 'ranks') net.loop('ranks');
+    if (tab === 'cash') { cashNotice = ''; net.loop('chog.deposit'); }
     if (tab === 'dungeons') net.loop('area.state');
     // The MAPS tab is entirely the server's — every gate, every lock reason. Ask on open, the
     // same way `war` and `area.state` do, and let the reply repaint once.
@@ -1892,6 +1911,19 @@ case 'j':
 
   // The street's loot. The list arrives whole, so a missed push heals on the next one instead of
   // leaving a pile that exists only on screen. `take` is answered by the same push, minus the pile.
+  // The cashier settled a withdrawal: coins arrived, or the debit came back.
+  net.on('chog', (m) => {
+    const w = (m.withdraw ?? {}) as { amount?: number; ok?: boolean; tx?: string | null; note?: string | null };
+    if (w.ok) {
+      cashNotice = `${w.amount} $CHOG paid — ${w.tx ?? 'confirmed'}`;
+      hud.toast({ icon: 'wav', title: 'PAYOUT SENT', sub: cashNotice, colour: 'var(--gold)' });
+    } else {
+      cashNotice = w.note ? `payout failed (${w.note}) — refunded` : 'payout failed — refunded';
+      hud.toast({ icon: 'wav', title: 'PAYOUT FAILED', sub: cashNotice, colour: 'var(--rose)' });
+    }
+    net.loop('profile');
+    if (tab === 'cash') { net.loop('chog.deposit'); paint(); }
+  });
   net.on('drops', (m) => {
     const list = (m as unknown as { drops?: DropView[] }).drops ?? [];
     drops.set(list);
@@ -2057,6 +2089,22 @@ case 'j':
         break;
       case 'war':
         if (m.ok) war = (m as { war?: WarView }).war ?? null;
+        break;
+      case 'chog.deposit':
+        if (m.ok) { cash = { vault: (m.vault as string) ?? null, balance: Number(m.balance ?? 0) }; cashProblem = ''; } else { cashProblem = String(m.reason ?? 'refused'); }
+        if (tab === 'cash') paint();
+        break;
+      case 'chog.withdraw':
+        if (m.ok) {
+          cashNotice = String(m.note ?? `queued — ${m.amount} $CHOG on the way`);
+          cash = cash ? { ...cash, balance: Math.max(0, cash.balance - Number(m.amount ?? 0)) } : cash;
+          say(cashNotice, 't-anomaly');
+        } else {
+          cashNotice = String(m.reason ?? 'refused');
+          say(cashNotice, 't-storm');
+        }
+        net.loop('profile');
+        if (tab === 'cash') paint();
         break;
       case 'ranks':
         if (m.ok) { ranks = (m as { ranks?: RanksView }).ranks ?? null; ranksProblem = ''; } else { ranksProblem = String(m.reason ?? 'refused'); }

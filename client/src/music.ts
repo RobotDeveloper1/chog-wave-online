@@ -6,7 +6,8 @@ import type { RegionId } from '@chog/shared';
  *
  * The synthesiser in `audio.ts` stays exactly what it is good at — effects and, where no
  * track exists yet, the generative bed it already plays. Everything else moved here: each
- * place names a file under `public/music/`, this keeps at most one playing, and switches
+ * place names a file under `public/audio/` (all four are renders of `CHOG WORLD ORDER`),
+ * this keeps at most one playing, and switches
  * crossfade over two seconds so walking through a door never clicks.
  *
  * Missing files are normal, not an error. A slot whose file 404s falls back down its chain
@@ -22,11 +23,11 @@ import type { RegionId } from '@chog/shared';
 export type MusicSlot = 'title' | 'city' | 'duel' | 'dungeon' | 'line' | RegionId;
 
 const FILE: Record<MusicSlot, string> = {
-  title: '/music/title.mp3',
-  city: '/music/city.mp3',
-  duel: '/music/duel.mp3',
-  dungeon: '/music/dungeon.mp3',
-  line: '/music/line.mp3',
+  title: '/audio/chog-wave-login.ogg',
+  city: '/audio/chog-wave-street.ogg',
+  duel: '/audio/chog-wave-duel.ogg',
+  dungeon: '/audio/chog-wave-dungeon.ogg',
+  line: '/audio/chog-wave-street.ogg',
   tolls: '/music/tolls.mp3',
   ashpine: '/music/ashpine.mp3',
   marsh: '/music/marsh.mp3',

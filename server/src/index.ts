@@ -162,6 +162,12 @@ async function handle(req: import('node:http').IncomingMessage, res: import('nod
     return json(res, 200, { ok: true, ...holdingsView(address) });
   }
 
+  // Demo levers, off unless asked: Caddy proxies /api/*, so on prod these would be
+  // griefing buttons for the whole street (fake sales, wave resets). Local work
+  // sets DEV_LEVERS=1; the host envs do not, and the game never calls them.
+  if (url.pathname.startsWith('/api/dev/') && process.env.DEV_LEVERS !== '1') {
+    return json(res, 404, { error: 'not found' });
+  }
   if (url.pathname === '/api/dev/surge' && req.method === 'POST') {
     world.surge(Number(url.searchParams.get('n') ?? 8));
     return json(res, 200, { ok: true });

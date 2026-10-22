@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { STARTING_CHOG } from '@chog/shared';
 
 /**
- * Real $CHOG: vault deposits in, manual payouts out.
+ * Real $CHOG: vault deposits in, automatic payouts out.
  *
  * The claims worth defending:
  *
@@ -14,8 +14,8 @@ import { STARTING_CHOG } from '@chog/shared';
  *    windows pay nothing twice;
  *  - **only the vault counts** — a $CHOG move between strangers is market
  *    traffic, not a deposit, and dust under one whole coin is recorded but unpaid;
- *  - **withdrawals debit first and queue visibly** — the operator pays from the
- *    vault by hand, so a request without a debit would be free money;
+ *  - **withdrawals debit first and queue visibly** — the pump pays from the
+ *    hot wallet, so a request without a debit would be free money;
  *  - **histories never cross chains** — a mainnet launch must not read testnet
  *    rows as provenance, so the ledger file is chain-namespaced when CHAIN_ID
  *    is set and keeps the legacy name when it is not.
@@ -126,13 +126,14 @@ describe('creditDeposits', () => {
 });
 
 describe('chog.withdraw', () => {
-  it('debits first and queues a visible request for the operator', () => {
+  it('debits first and queues a visible request for the payout pump', () => {
     const world = new World();
     world.join('pc', { tokenId: 91003, transferCount: 0, daysHeld: 0 }, 'ashflat', CAROL);
+    world.creditDeposits([{ txHash: '0xw1', from: CAROL.toLowerCase(), amount: 10, block: 9 }]);
     const res = world.loop('pc', { action: 'chog.withdraw', amount: 3 }) as { ok: boolean; request: number; amount: number };
     expect(res.ok).toBe(true);
     expect(res.amount).toBe(3);
-    expect(profilesOf(world).chogOf(CAROL.toLowerCase())).toBe(STARTING_CHOG - 3);
+    expect(profilesOf(world).chogOf(CAROL.toLowerCase())).toBe(STARTING_CHOG + 10 - 3);
     const rows = (world as unknown as SavesOf).saves.withdrawReqAll();
     expect(rows).toContainEqual(expect.objectContaining({ id: res.request, wallet: CAROL.toLowerCase(), amount: 3, status: 'pending' }));
   });

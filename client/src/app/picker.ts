@@ -1,6 +1,7 @@
 import './picker.css';
 import { GENESIS_SUPPLY, describeBuild, type HolderCard, type HoldingsView } from '@chog/shared';
 import { net } from '../net.ts';
+import { musicStatus, playMusic, unlockMusic } from '../music.ts';
 import { wallet } from '../wallet.ts';
 
 import { wordmark } from './brand.ts';
@@ -93,6 +94,7 @@ class Picker {
   private poll: ReturnType<typeof setTimeout> | null = null;
   private offChange: (() => void) | null = null;
   private keyHandler: ((e: KeyboardEvent) => void) | null = null;
+  private wakeHandler: (() => void) | null = null;
 
   open(refusal?: string): Promise<Pick> {
     this.note = refusal ?? '';
@@ -104,6 +106,13 @@ class Picker {
       this.offChange = wallet.onChange(() => void this.sync());
       this.keyHandler = (e) => this.onKey(e);
       addEventListener('keydown', this.keyHandler);
+      this.wakeHandler = () => unlockMusic();
+      addEventListener('keydown', this.wakeHandler);
+      addEventListener('pointerdown', this.wakeHandler);
+      playMusic('title');
+      if (new URLSearchParams(location.search).has('capture')) {
+        (window as unknown as { __music?: () => unknown }).__music = () => musicStatus();
+      }
       void this.sync();
     });
   }
@@ -632,6 +641,10 @@ class Picker {
     if (this.poll) clearTimeout(this.poll);
     this.offChange?.();
     if (this.keyHandler) removeEventListener('keydown', this.keyHandler);
+    if (this.wakeHandler) {
+      removeEventListener('keydown', this.wakeHandler);
+      removeEventListener('pointerdown', this.wakeHandler);
+    }
     this.root.remove();
     resolve?.(pick);
   }

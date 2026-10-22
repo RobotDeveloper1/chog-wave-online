@@ -278,7 +278,9 @@ export const STARTING_CHOG = 1000;
 /** The team's cut of every wagered pot, in basis points. */
 export const WAGER_RAKE_BPS = 500;
 /** A wager outside this is a typo, not a bet. */
-export const MAX_WAGER = 1_000_000;
+export const MAX_WAGER = 500;
+/** Automatic $CHOG payouts per wallet per UTC day. Above this, the cashier refuses. */
+export const WITHDRAW_DAILY_MAX = 2000;
 
 /** Split a matched stake into the pot, the rake and the prize. One formula, both sides. */
 export function wagerPayout(stake: number): { pot: number; rake: number; prize: number } {

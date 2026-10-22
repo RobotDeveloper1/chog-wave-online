@@ -9,6 +9,19 @@ export type SaveRow = SaveView;
 /** A save key: the signer's wallet address, or a bare token id for callers without one. */
 export type SaveKeyInput = number | string;
 
+/** One row of the withdraw queue: requested on the ledger, settled on chain. */
+export interface WithdrawRow {
+  id: number;
+  wallet: string;
+  amount: number;
+  status: string;
+  made: number;
+  savekey: string;
+  tx: string;
+  note: string;
+  done: number;
+}
+
 /**
  * Every save belongs to a wallet. A bare token id is the anonymous fallback —
  * a visitor playing without signing in keeps the old per-token behaviour under
@@ -74,6 +87,10 @@ CREATE TABLE IF NOT EXISTS withdraw (
   wallet TEXT NOT NULL,
   amount INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
+  savekey TEXT NOT NULL DEFAULT '',
+  tx TEXT NOT NULL DEFAULT '',
+  note TEXT NOT NULL DEFAULT '',
+  done INTEGER NOT NULL DEFAULT 0,
   made   INTEGER NOT NULL
 );
 `;
@@ -174,6 +191,18 @@ export class SaveStore {
           ALTER TABLE escrow_new RENAME TO escrow;
         `);
       }
+    }
+    const withdrawCols = new Set(
+      (this.db.prepare('PRAGMA table_info(withdraw)').all() as { name: string }[]).map((c) => c.name),
+    );
+    const withdrawWant: Record<string, string> = {
+      savekey: "TEXT NOT NULL DEFAULT ''",
+      tx: "TEXT NOT NULL DEFAULT ''",
+      note: "TEXT NOT NULL DEFAULT ''",
+      done: 'INTEGER NOT NULL DEFAULT 0',
+    };
+    for (const [name, decl] of Object.entries(withdrawWant)) {
+      if (!withdrawCols.has(name)) this.db.exec(`ALTER TABLE withdraw ADD COLUMN ${name} ${decl}`);
     }
     this.db.exec('CREATE INDEX IF NOT EXISTS chapters_key ON chapters (key, ts)');
     if (migrated) console.log('[saves] migrated token-keyed rows to wallet keys');
@@ -384,13 +413,49 @@ export class SaveStore {
     this.db.prepare('INSERT OR IGNORE INTO deposits (tx, wallet, amount, block, made) VALUES (?, ?, ?, ?, ?)').run(tx, wallet, amount, block, made);
   }
 
-  withdrawReqPut(wallet: string, amount: number, made = Date.now()): number {
-    const r = this.db.prepare("INSERT INTO withdraw (wallet, amount, status, made) VALUES (?, ?, 'pending', ?)").run(wallet, amount, made);
+  /**
+   * Whole $CHOG a wallet ever deposited — floored per tx, exactly like the
+   * credit. The ceiling on lifetime withdrawals: the starting grant and paper
+   * winnings are play money and must never leave as real coins.
+   */
+  depositedBy(wallet: string): number {
+    const rows = this.db.prepare('SELECT amount FROM deposits WHERE wallet = ?').all(wallet) as { amount: number }[];
+    let total = 0;
+    for (const r of rows) total += Math.floor(Number(r.amount) || 0);
+    return total;
+  }
+
+  withdrawReqPut(wallet: string, amount: number, saveKey = '', made = Date.now()): number {
+    const r = this.db.prepare("INSERT INTO withdraw (wallet, amount, status, made, savekey) VALUES (?, ?, 'pending', ?, ?)").run(wallet, amount, made, saveKey);
     return Number(r.lastInsertRowid);
   }
 
-  withdrawReqAll(): { id: number; wallet: string; amount: number; status: string; made: number }[] {
-    return this.db.prepare('SELECT id, wallet, amount, status, made FROM withdraw ORDER BY id').all() as { id: number; wallet: string; amount: number; status: string; made: number }[];
+  withdrawReqAll(): WithdrawRow[] {
+    return this.db.prepare('SELECT id, wallet, amount, status, made, savekey, tx, note, done FROM withdraw ORDER BY id').all() as unknown as WithdrawRow[];
+  }
+
+  withdrawPending(): WithdrawRow[] {
+    return this.db.prepare("SELECT id, wallet, amount, status, made, savekey, tx, note, done FROM withdraw WHERE status = 'pending' ORDER BY id").all() as unknown as WithdrawRow[];
+  }
+
+  /** Atomically claim a pending row for payout. False means someone else got it. */
+  withdrawClaim(id: number): boolean {
+    const r = this.db.prepare("UPDATE withdraw SET status = 'sending' WHERE id = ? AND status = 'pending'").run(id);
+    return Number(r.changes ?? 0) > 0;
+  }
+
+  withdrawSettle(id: number, status: 'done' | 'failed', tx = '', note = '', done = Date.now()): void {
+    this.db.prepare('UPDATE withdraw SET status = ?, tx = ?, note = ?, done = ? WHERE id = ?').run(status, tx, note, done, id);
+  }
+
+  withdrawRequeue(id: number): void {
+    this.db.prepare("UPDATE withdraw SET status = 'pending' WHERE id = ?").run(id);
+  }
+
+  /** Whole $CHOG a wallet already has queued, in flight or paid since `since` (UTC-day spend). Failed rows refunded, so they stop counting. */
+  withdrawDailyTotal(wallet: string, since: number): number {
+    const r = this.db.prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM withdraw WHERE wallet = ? AND status IN ('pending', 'sending', 'done') AND made >= ?").get(wallet, since) as { total: number };
+    return Number(r.total) || 0;
   }
 
   close(): void {

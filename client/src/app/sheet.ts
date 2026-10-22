@@ -2,6 +2,7 @@ import { ITEMS, SECTOR_NAME, card as cardOf, cityOf, type AreaRun, type DataArea
 import { ICON } from './hud/icons.ts';
 import { linePage } from './linePage.ts';
 import { renderRanks } from './ranksPage.ts';
+import { renderCash, type CashView } from './cashPage.ts';
 import { renderCareer } from './careerPage.ts';
 import { renderDeck, renderLibrary } from './deckPages.ts';
 import { renderDungeons } from './dungeonPage.ts';
@@ -20,7 +21,7 @@ import { cardImg } from './cardArt.ts';
  * the server computed, which is the only reason the screen can be trusted.
  */
 
-export type Tab = 'home' | 'map' | 'line' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'deck' | 'library' | 'party' | 'social' | 'ranks' | 'options';
+export type Tab = 'home' | 'map' | 'line' | 'bag' | 'shop' | 'jobs' | 'career' | 'album' | 'war' | 'dungeons' | 'deck' | 'library' | 'party' | 'social' | 'ranks' | 'cash' | 'options';
 
 export interface TabDef {
   id: Exclude<Tab, 'home'>;
@@ -47,6 +48,7 @@ export const TABS: TabDef[] = [
   { id: 'war', label: 'WAR', icon: 'skull', colour: 'var(--rose)' },
   { id: 'dungeons', label: 'DUNGEONS', icon: 'gate', colour: 'var(--void)', key: 'G' },
   { id: 'ranks', label: 'RANKS', icon: 'bolt', colour: 'var(--gold)', key: 'K' },
+  { id: 'cash', label: 'CASH', icon: 'wav', colour: 'var(--gold)' },
   { id: 'options', label: 'OPTIONS', icon: 'repair', colour: 'var(--dim)', key: 'O' },
 ];
 
@@ -72,6 +74,11 @@ export interface SheetCtx {
   /** The four RANKS boards. Asked on tab-open, like the war board. */
   ranks: RanksView | null;
   ranksProblem: string;
+  /** The CASH tab: vault address plus ledger balance. Asked on tab-open. */
+  cash: CashView | null;
+  cashProblem: string;
+  /** The last thing the cashier said — a queued payout, a refusal. */
+  cashNotice: string;
 }
 
 export interface WarView {
@@ -173,6 +180,8 @@ export function renderSheet(
       return warBoard(war, p);
     case 'ranks':
       return renderRanks(ctx.ranks, ctx.ranksProblem);
+    case 'cash':
+      return renderCash(ctx.cash, ctx.cashProblem, ctx.cashNotice);
     case 'line':
       return linePage(ctx.line, ctx.lineProblem);
     case 'dungeons':

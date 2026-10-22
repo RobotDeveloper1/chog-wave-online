@@ -21,6 +21,7 @@ import {
   isTraitCard,
   wagerPayout,
   MAX_WAGER,
+  WITHDRAW_DAILY_MAX,
   type ChogBuild,
   type DropView,
   type DuelEndMsg,
@@ -77,6 +78,7 @@ import type { DepositFact } from './chain.ts';
 import { traits } from './meta.ts';
 import { Profiles, VAULT_KEY, type GrantResult, type LevelUp, type RefundLine } from './profiles.ts';
 import { SaveStore, levelOf, normalizeKey, type SaveRow } from './save.ts';
+import { PayoutProcessor, createViemSender, type PayoutEvent } from './payouts.ts';
 import { Social, type Presence, type TradeOffer } from './social.ts';
 import { War } from './war.ts';
 
@@ -306,6 +308,8 @@ export class World {
   readonly saves = new SaveStore();
   /** XP, WAV, quests, album and the live Data Area run, all server-decided. */
   readonly profiles = new Profiles(this.saves);
+  /** Automatic $CHOG payouts. Null without a vault and a hot key (manual queue then). */
+  private payouts: PayoutProcessor | null = null;
   /** The weekly Tribe War ledger. */
   readonly war = new War(this.saves);
   readonly players = new Map<string, Player>();
@@ -353,6 +357,13 @@ export class World {
       (d) => this.creditDeposits(d),
     );
     this.refundStrandedEscrow();
+    if (CFG.vault && CFG.hotKey) {
+      this.payouts = new PayoutProcessor(this.saves, this.profiles, createViemSender(), (e) => this.onPayout(e));
+      void this.payouts.recover().then(() => this.payouts?.pump());
+      setInterval(() => {
+        void this.payouts?.pump();
+      }, 15_000);
+    }
   }
 
   /**
@@ -381,6 +392,18 @@ export class World {
    * deducted at accept, neither was paid, so the only honest settle is a refund.
    * Runs before the first connection, so no bout can settle mid-refund.
    */
+  /**
+   * A payout settled. Done carries the tx hash; failed already refunded the
+   * ledger, so all that is left is telling the owner what happened.
+   */
+  private onPayout(e: PayoutEvent): void {
+    for (const p of this.players.values()) {
+      if ((p.wallet ?? '').toLowerCase() !== e.wallet) continue;
+      this.pushTo(p.id, { t: 'chog', withdraw: { amount: e.amount, ok: e.ok, tx: e.tx || null, note: e.note || null } });
+      this.notifyProfile(p.id);
+    }
+  }
+
   private refundStrandedEscrow(): void {
     const stranded = this.saves.escrowAll();
     for (const e of stranded) {
@@ -1504,7 +1527,7 @@ private park(p: Player, leaving: Player['place']): void {
 
       // ---- Real $CHOG ------------------------------------------------------
       // Deposits arrive on their own (the chain poll credits the vault's inbox);
-      // withdrawals queue for a manual payout from the vault by the operator.
+      // withdrawals queue for the payout pump (hot wallet) — or the operator, with no hot key.
 
       case 'chog.deposit':
         return { ok: true, vault: CFG.vault || null, balance: this.profiles.chogOf(p.saveKey) };
@@ -1513,10 +1536,24 @@ private park(p: Player, leaving: Player['place']): void {
         if (!p.wallet) return { ok: false, reason: 'link a wallet first' };
         const amount = Math.floor(Number(msg.amount ?? 0));
         if (!Number.isFinite(amount) || amount < 1) return { ok: false, reason: 'name a real amount' };
+        const today = Date.now() - (Date.now() % 86_400_000);
+        if (this.saves.withdrawDailyTotal(p.wallet.toLowerCase(), today) + amount > WITHDRAW_DAILY_MAX) {
+          return { ok: false, reason: `daily payout cap is ${WITHDRAW_DAILY_MAX} $CHOG` };
+        }
+        const w = p.wallet.toLowerCase();
+        // Provenance: only what a wallet deposited can ever leave. The starting
+        // grant and paper winnings are play money — without this, every fresh
+        // wallet could withdraw 1000 real $CHOG it never put in.
+        const deposited = this.saves.depositedBy(w);
+        const alreadyOut = this.saves.withdrawDailyTotal(w, 0);
+        if (amount > deposited - alreadyOut) {
+          return { ok: false, reason: 'only deposited $CHOG can leave — the starting grant is play money' };
+        }
         if (!this.profiles.addChog(p.saveKey, -amount)) return { ok: false, reason: 'insufficient $CHOG' };
-        const req = this.saves.withdrawReqPut(p.wallet.toLowerCase(), amount);
+        const req = this.saves.withdrawReqPut(p.wallet.toLowerCase(), amount, String(p.saveKey));
+        void this.payouts?.pump();
         this.notifyProfile(id);
-        return { ok: true, request: req, amount, note: 'queued for manual payout from the vault' };
+        return { ok: true, request: req, amount, note: this.payouts ? 'payout queued — automatic' : 'queued for manual payout from the vault' };
       }
 
       case 'area.open': {
@@ -2573,11 +2610,12 @@ case 'area.state': {
       case 'challenge': {
         if (!other) return void this.pushTo(id, { t: 'pvp', refused: 'that player is gone' });
         if (me.inBattle) return void this.pushTo(id, { t: 'pvp', refused: 'finish your fight first' });
-        const wager = Math.max(0, Math.min(MAX_WAGER, Math.floor(Number(msg.wager ?? 0))));
-        if (!Number.isFinite(wager)) return void this.pushTo(id, { t: 'pvp', refused: 'name a real amount' });
-        if (wager > 0 && this.profiles.chogOf(me.saveKey) < wager) {
+        const bid = Math.floor(Number(msg.wager ?? 0));
+        if (!Number.isFinite(bid)) return void this.pushTo(id, { t: 'pvp', refused: 'name a real amount' });
+        if (bid > 0 && this.profiles.chogOf(me.saveKey) < bid) {
           return void this.pushTo(id, { t: 'pvp', refused: 'you cannot cover that' });
         }
+        const wager = Math.max(0, Math.min(MAX_WAGER, bid));
         const r = this.social.challenge(id, other.id, wager);
         if (!r.ok) return void this.pushTo(id, { t: 'pvp', refused: r.reason });
         this.pushTo(other.id, { t: 'pvp', challenge: { from: id, name: me.build.callsign, wager } });

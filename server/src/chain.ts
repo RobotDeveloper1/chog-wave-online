@@ -114,6 +114,7 @@ export function createChainFeed(
   const decode = (nft: RpcLog[], token: RpcLog[], tsFor: (block: number) => number, deposits: DepositFact[]): WaveEvent[] => {
     const out: WaveEvent[] = [];
     for (const log of nft) {
+      if (log.removed) continue;
       const block = fromHex(log.blockNumber);
       const ts = tsFor(block);
       const tokenId = fromHex(log.topics[3] ?? '0x0');
@@ -123,6 +124,7 @@ export function createChainFeed(
       out.push({ kind: 'nft-swap', tokenId, amount: 0, block, ts });
     }
     for (const log of token) {
+      if (log.removed) continue;
       const block = fromHex(log.blockNumber);
       out.push({ kind: 'token-swap', amount: fromHex(log.data || '0x0') / 1e18, block, ts: tsFor(block) });
       const dep = depositOf(log, CFG.vault);
@@ -136,13 +138,17 @@ export function createChainFeed(
     try {
       const head = fromHex(await rpc<string>('eth_blockNumber'));
       if (lastBlock === 0) lastBlock = Math.max(0, head - 64);
+      // Two blocks of confirmations: a deposit credited at the head can be
+      // reorged out from under it, and lastBlock has already moved past. Two
+      // seconds of delay is invisible; a phantom credit is a real payout.
+      const confirmed = Math.max(0, head - 2);
       // Public RPCs cap the getLogs range (rpc2 tolerates ~10k blocks,
       // rpc.monad.xyz only 100), so never ask for more than configured.
-      const fromBlock = Math.max(lastBlock + 1, head - CFG.logWindow);
+      const fromBlock = Math.max(lastBlock + 1, confirmed - CFG.logWindow);
 
-      if (head > lastBlock) {
+      if (confirmed > lastBlock) {
         const from = toHex(fromBlock);
-        const to = toHex(head);
+        const to = toHex(confirmed);
         // Four reads, one request. Measured against rpc2: batches come back
         // unordered and may drop a slot, so every result is checked rather than
         // trusted — a silently missing log array would read as a quiet chain and
@@ -220,7 +226,7 @@ export function createChainFeed(
         evs.push({ kind: 'chain-pulse', amount: ratio, block: head, ts: headTs });
 
         onEvents(evs);
-        lastBlock = head;
+        lastBlock = confirmed;
       }
     } catch (err) {
       console.warn('[chain] poll failed:', (err as Error).message);

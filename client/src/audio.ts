@@ -25,6 +25,7 @@ export function unlock(): void {
   master = ctx.createGain();
   master.gain.value = muted ? 0 : MASTER_BASE * sfxLevel;
   master.connect(ctx.destination);
+  if (new URLSearchParams(location.search).has('capture')) (window as unknown as { __master?: GainNode }).__master = master;
   unlocked = true;
   if (wanted) { const pending = wanted; wanted = null; setAmbience(pending); }
 }
