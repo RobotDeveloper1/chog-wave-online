@@ -5,10 +5,10 @@ import type { RegionId } from '@chog/shared';
  * Real music: file-backed tracks, one slot per place.
  *
  * The synthesiser in `audio.ts` stays exactly what it is good at — effects and, where no
- * track exists yet, the generative bed it already plays. Everything else moved here: each
- * place names a file under `public/audio/` (all four are renders of `CHOG WORLD ORDER`),
- * this keeps at most one playing, and switches
- * crossfade over two seconds so walking through a door never clicks.
+ * track exists yet, the generative bed it already plays. Everything else moved here: the
+ * gate plays the project's own `CHOG WORLD ORDER` render (`public/audio/`), the world
+ * plays licensed Kevin MacLeod MP3s (`public/music/`), this keeps at most one playing,
+ * and switches crossfade over two seconds so walking through a door never clicks.
  *
  * Missing files are normal, not an error. A slot whose file 404s falls back down its chain
  * (a region falls back to the shared `line` track) and, with nothing left to play, parks on
@@ -24,10 +24,10 @@ export type MusicSlot = 'title' | 'city' | 'duel' | 'dungeon' | 'line' | RegionI
 
 const FILE: Record<MusicSlot, string> = {
   title: '/audio/chog-wave-login.ogg',
-  city: '/audio/chog-wave-street.ogg',
-  duel: '/audio/chog-wave-duel.ogg',
-  dungeon: '/audio/chog-wave-dungeon.ogg',
-  line: '/audio/chog-wave-street.ogg',
+  city: '/music/city.mp3',
+  duel: '/music/duel.mp3',
+  dungeon: '/music/dungeon.mp3',
+  line: '/music/line.mp3',
   tolls: '/music/tolls.mp3',
   ashpine: '/music/ashpine.mp3',
   marsh: '/music/marsh.mp3',

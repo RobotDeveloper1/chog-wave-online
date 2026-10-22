@@ -5,8 +5,9 @@ keeps one track playing per scene, crossfades over 2 seconds on change, and neve
 when a file is missing — a region without its track falls back to the shared `line` track,
 and with nothing left it parks on the generative bed that place always had.
 
-All shipped tracks are renders of the project's own `CHOG WORLD ORDER`, so the
-game sounds like one place: the gate calls `playMusic('title')` on open
+Two libraries, one player: the gate plays the project's own `CHOG WORLD ORDER`
+render, the world plays licensed Kevin MacLeod MP3s (CC-BY, credited in
+`client/public/music/CREDITS.md`). The gate calls `playMusic('title')` on open
 (`client/src/app/picker.ts`), the shell takes it to `city`/`duel`/`dungeon`/Line
 regions from there, and scene changes crossfade.
 
@@ -14,19 +15,21 @@ regions from there, and scene changes crossfade.
 
 | slot | file | plays where |
 |---|---|---|
-| `title` | `chog-wave-login.ogg` | the gate |
-| `city` | `chog-wave-street.ogg` | the street |
-| `duel` | `chog-wave-duel.ogg` | every duel |
-| `dungeon` | `chog-wave-dungeon.ogg` | dungeon folds |
-| `line` | `chog-wave-street.ogg` | any Line region without its own track |
+| `title` | `audio/chog-wave-login.ogg` | the gate |
+| `city` | `music/city.mp3` | the street |
+| `duel` | `music/duel.mp3` | every duel |
+| `dungeon` | `music/dungeon.mp3` | dungeon folds |
+| `line` | `music/line.mp3` | any Line region without its own track |
 | `tolls` … `static` | (falls back to `line`) | that Line region |
 
-Files live in `client/public/audio/` (served at `/audio/` in dev, copied to `dist` on build).
+Files live in `client/public/audio/` + `client/public/music/` (served at
+`/audio/` + `/music/` in dev, copied to `dist` on build).
 
 ## File spec
 
-- OGG (Opus), 48 kHz stereo. Browsers without OGG support (Safari) fall back
-  to the generative bed per scene — never silence that used to have music.
+- Gate: OGG (Opus), 48 kHz stereo. Browsers without OGG support (Safari) fall
+  back to the generative bed — never silence that used to have music.
+  World: MP3 stereo (the licensed tracks), which plays everywhere.
 - Mixed around −14 LUFS integrated, peaks under −1 dBTP. The music bus sits
   under the effects; a hot master will still shout over them.
 - Seamless loop, 1–3 minutes, no intro/outro tails: the player hard-loops.

@@ -7,7 +7,7 @@ source page and direct link.
 
 | file | track | plays where |
 |---|---|---|
-| `title.mp3` | Adventures in Adventureland (4:21) | title screen |
+| `title.mp3` | Adventures in Adventureland (4:21) | retired — the gate plays `CHOG WORLD ORDER` now |
 | `city.mp3` | Neon Laser Horizon (2:59) | the street |
 | `duel.mp3` | Five Armies (2:36) | every duel |
 | `dungeon.mp3` | Eternal Terminal (3:18) | dungeon folds |
