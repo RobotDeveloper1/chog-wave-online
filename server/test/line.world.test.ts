@@ -134,6 +134,37 @@ function walkInto(s: ReturnType<typeof seat>, encounterId: string): string {
   return s.world.sessionOf(s.id)!.spec.encounterId as string;
 }
 
+type MobState = { deadAt: number; inFight: string | null; chase?: unknown };
+
+function mobState(s: ReturnType<typeof seat>, mobId: string): MobState {
+  return (s.world as unknown as { lineMobs: Map<string, MobState> }).lineMobs.get(mobId)!;
+}
+
+function markedId(s: ReturnType<typeof seat>): string | null {
+  const mobs = (s.world as unknown as { lineMobs: Map<string, MobState> }).lineMobs;
+  return [...mobs].find(([, st]) => st.inFight === s.id)?.[0] ?? null;
+}
+
+function driftIds(s: ReturnType<typeof seat>, encounterId: string): string[] {
+  void s;
+  return mobSpawns(REGION_BY_ID(encounterId)).filter((m) => m.encounterId === encounterId).map((m) => m.id);
+}
+
+/** Run the real chase machine with the player on top of every body of the drift. */
+function aggroDrift(s: ReturnType<typeof seat>, encounterId: string): void {
+  const w = s.world as unknown as {
+    mobSpawn(m: unknown): unknown;
+    mobStep(spawn: unknown, now: number, foe: { x: number; z: number }): unknown;
+  };
+  const now = Date.now();
+  for (const m of mobSpawns(REGION_BY_ID(encounterId)).filter((x) => x.encounterId === encounterId)) {
+    const at = mobAt(m, now);
+    s.p.x = at.x;
+    s.p.y = at.z;
+    w.mobStep(w.mobSpawn(m), now, { x: s.p.x, z: s.p.y });
+  }
+}
+
 describe('line — the maps tab', () => {
   it('takes you to Tolls from the street, and to nowhere else', () => {
     const s = seat();
@@ -750,6 +781,57 @@ describe('line — starting the fight', () => {
     const state = loop(s, 'line.state');
     const corpse = (state.mobs as { id: string; alive: boolean }[]).find((m) => m.id === mobId)!;
     expect(corpse.alive).toBe(false);
+  });
+
+  it('grants breath the moment a Line fight is won, not only at the claim', () => {
+    // The win-to-claim window: the tick reaps the session, the plate closes seconds
+    // later, and a winner who steps first re-opens a neighbour's duel with no breath.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    const fought = walkInto(s, enc);
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    s.world.stepSessions(100);
+    expect(s.world.sessionOf(s.id)).toBeNull();
+    const breath = loop(s, 'line.enter', { encounterId: fought });
+    expect(breath.ok).toBe(false);
+    expect(String(breath.reason)).toMatch('catch your breath');
+  });
+
+  it('stands the drift down when its fight is won', () => {
+    // Mates keep no chase: the drift watched its fight end and goes back to patrol
+    // instead of breathing down the winner for an instant second duel.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    const fought = walkInto(s, enc);
+    const drift = driftIds(s, fought);
+    expect(drift.length).toBeGreaterThan(1);
+    aggroDrift(s, fought);
+    for (const m of drift) expect(mobState(s, m).chase).toBeTruthy();
+    s.world.sessionOf(s.id)!.state.result = 'win';
+    s.world.stepSessions(100);
+    for (const m of drift) expect(mobState(s, m).chase ?? null).toBeNull();
+  });
+
+  it('despawns the mob you walk out on, and stands its drift down', () => {
+    // LEAVE removes the attacker — the respawn timer refills the road — instead of
+    // leaving it chasing through the grace for a second ambush on arrival.
+    const s = seat();
+    loop(s, 'line.travel', { region: 'tolls' });
+    const enc = nearestToSpawn();
+    const fought = walkInto(s, enc);
+    const marked = markedId(s);
+    expect(marked).toBeTruthy();
+    aggroDrift(s, fought);
+    s.world.duelLeave(s.id);
+    const st = mobState(s, marked!);
+    expect(st.inFight).toBeNull();
+    expect(st.chase ?? null).toBeNull();
+    const spawn = mobSpawns('tolls').find((m) => m.id === marked)!;
+    if (spawn.respawnS > 0) expect(st.deadAt).toBeGreaterThan(0);
+    else expect(st.deadAt).toBe(0);
+    for (const m of driftIds(s, fought)) expect(mobState(s, m).chase ?? null).toBeNull();
   });
 
   it('keeps the recovering and the finished out of the rejoin', () => {

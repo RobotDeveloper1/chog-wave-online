@@ -645,6 +645,9 @@ export class World {
           // banked with the claim, and `line.clear` spends them instead of re-killing.
           const kill = this.killLineMob(session.spec.encounterId, p.id);
           this.lineClaims.set(p.id, { encounterId: session.spec.encounterId, at: now, kill: { wav: kill.wav, x: kill.x, z: kill.z } });
+          // Breath starts at the win, not the claim: the plate closes seconds later,
+          // and a winner who steps first must not reopen a duel with no grace.
+          this.duelGrace.set(p.id, now + 5000);
           this.pushDuelEnd(p, session, {
             won: true,
             reason: 'cleared',
@@ -1105,6 +1108,14 @@ private park(p: Player, leaving: Player['place']): void {
         z = at.z;
         placed = true;
       }
+    }
+    // The drift stands down with the marked body: mates watched their fight end and go
+    // back to patrol. Swept here, after the pile anchor, because anchoring steps the
+    // corpse and the step re-arms its chase.
+    for (const [mateId, mateState] of this.lineMobs) {
+      if (!mateState.chase) continue;
+      const mateSpawn = allMobSpawns().find((m) => m.id === mateId);
+      if (mateSpawn && mateSpawn.encounterId === encounterId) this.lineMobs.set(mateId, { ...mateState, chase: null });
     }
     // No marked body (a fight started by E on the site rather than by walking into a mob):
     // fall back to the winner's own feet, which is where the old code always dropped.
@@ -2251,11 +2262,26 @@ case 'area.state': {
   /** Step off the field. Leaving mid-fight is allowed and costs nothing but the fight. */
   /** Free every body this player had marked: a finished fight leaves no mark behind. */
   private releaseLineBodies(id: string): void {
+    const freed: string[] = [];
     for (const [mobId, state] of this.lineMobs) {
       // The release keeps the relocated home: a body that respawned must not teleport
       // back to the printed site because somebody walked out of the duel.
       if (state.inFight === id) {
-        this.lineMobs.set(mobId, { deadAt: 0, inFight: null, ...(state.home ? { home: state.home } : {}), ...(state.chase ? { chase: state.chase } : {}) });
+        // Walking out disperses the attacker: it despawns — the respawn timer refills
+        // the road — instead of chasing through the grace for a second ambush.
+        // Wardens never despawn: respawnS 0 is a gate, and leaving must not brick it.
+        const spawn = allMobSpawns().find((m) => m.id === mobId);
+        const standing = !spawn || spawn.respawnS <= 0;
+        this.lineMobs.set(mobId, { deadAt: standing ? state.deadAt : Date.now(), inFight: null, ...(state.home ? { home: state.home } : {}), chase: null });
+        if (spawn) freed.push(spawn.encounterId);
+      }
+    }
+    // The freed drift stands down with its marked body.
+    for (const [mateId, mateState] of this.lineMobs) {
+      if (!mateState.chase) continue;
+      const mateSpawn = allMobSpawns().find((m) => m.id === mateId);
+      if (mateSpawn && freed.includes(mateSpawn.encounterId)) {
+        this.lineMobs.set(mateId, { ...mateState, chase: null });
       }
     }
   }

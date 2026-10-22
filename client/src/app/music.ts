@@ -137,6 +137,7 @@ class Music {
       this.analyser.smoothingTimeConstant = 0.72;
       this.bins = new Uint8Array(this.analyser.frequencyBinCount);
       this.analyser.connect(this.ctx.destination);
+      if (new URLSearchParams(location.search).has('capture')) (window as unknown as { __musicTap?: AnalyserNode }).__musicTap = this.analyser;
     }
     try {
       this.ctx.createMediaElementSource(audio).connect(this.analyser);
