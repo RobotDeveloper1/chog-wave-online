@@ -156,6 +156,9 @@ export async function bootShell(): Promise<Shell> {
   cancelAnimationFrame(attractId);
   stage.setCameraControl(null);
   document.body.classList.remove('prejoin');
+  // Score the arrival: the gate's track owns the speakers until something takes
+  // them. Without this, a still-buffering title lands in the city instead.
+  playMusic('city');
   const remotes = new RemoteAvatars(
     stage.scene,
     async (p) => {
