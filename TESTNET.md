@@ -7,7 +7,8 @@ nothing here moves real Chogs or real MON.
 ## 1. Privy app (dashboard, 5 minutes)
 
 1. Create an app at <https://dashboard.privy.io>.
-2. Login methods: enable **Email** (OTP) with embedded-wallet creation.
+2. Login methods: **wallet only** — the game opens Privy's own wallet modal,
+   no email, no socials.
 3. Chains: add **Monad Testnet** — id `10143`, RPC
    `https://testnet-rpc.monad.xyz`, currency MON, explorer
    `https://testnet.monadexplorer.com`.
@@ -47,12 +48,11 @@ address yet, start the server with the mainnet contract (or none —
 
 ## 4. First login (foster)
 
-1. Open the game, type your email, enter the code Privy sends.
-2. The game creates your embedded wallet on first login. No Chogs on it
-   yet → the shelf is empty and **foster** is the way in, exactly like
-   before.
-3. Copy your full wallet address (Privy dashboard → your user, or the
-   session): it is `MINT_TO` in the next step.
+1. Open the game, hit connect, pick your wallet in Privy's modal.
+2. No Chogs on it yet → the shelf is empty and **foster** is the way in,
+   exactly like before.
+3. Copy your full wallet address (your wallet app shows it; the game shows
+   it short): it is `MINT_TO` in the next step.
 
 ## 5. Deploy the replica and mint to yourself
 
@@ -87,9 +87,8 @@ exists.
 - `contracts/scripts/{compile,deploy}.mjs` — solc-js build, viem deploy
   + mint. Refuses to run without a key, a recipient, or faucet funds.
 - `shared/src/chain.ts` — `MONAD_TESTNET_*` constants.
-- `client/src/wallet.ts` — Privy only (email OTP → embedded wallet →
-  `POST /api/auth/privy`). Same outward shape, so the picker barely
-  changed; foster flow untouched.
+- `client/src/wallet.ts` — Privy only (wallet modal → `POST /api/auth/privy`).
+  Same outward shape, so the picker barely changed; foster flow untouched.
 - `server/src/privy.ts` + `POST /api/auth/privy` — verifies both Privy
   tokens with `@privy-io/server-auth`, reads the wallet off Privy's own
   user object, issues a game session. Unconfigured servers refuse with

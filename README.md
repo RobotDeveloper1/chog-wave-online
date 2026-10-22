@@ -4,6 +4,10 @@ A street-level monster-RPG on Monad: walk the city as your Chog, clear The Line,
 run dungeon folds, duel on the grid with cards + dodge, trade, brawl, party up.
 Your Chog's traits are its deck, its speed and its weaknesses.
 
+**Play now:** [chogwave.online](https://chogwave.online) (mainnet, real $CHOG)
+· [demo.chogwave.online](https://demo.chogwave.online) (testnet recording build).
+Judges start here: [SUBMISSION.md](./docs/trailer/SUBMISSION.md).
+
 ## Demo in 3 steps (no wallet, no chain)
 
 ```sh
@@ -37,10 +41,10 @@ Y/N answers invites. Trait cards never leave their token — not by trade, sale 
 
 ## Full mode (wallet + testnet)
 
-Copy `.env.example` to `.env` and follow it: Privy app (email OTP + embedded
-wallets), Monad testnet (chain 10143), the replica contract. Details in
-[TESTNET.md](./TESTNET.md). The server refuses to start in chain mode until the
-contract addresses are real.
+Copy `.env.example` to `.env` and follow it: Privy app (wallet-only login),
+Monad testnet (chain 10143), the replica contract. Details in
+[TESTNET.md](./TESTNET.md). Without chain config the server runs the synthetic
+feed instead; mainnet is the default (see [MAINNET.md](./MAINNET.md)).
 
 ## Scripts
 
@@ -57,4 +61,4 @@ contract addresses are real.
 - `server/` — world, battles, profiles, trade, Privy auth. Never trusts the client.
 - `client/` — street, duels, sheets, HUD. Three.js + DOM.
 - `contracts/` — the testnet replica + deploy scripts.
-- `docs/` — architecture, duel blueprint, roadmap, The Line.
+- `docs/` — systems, architecture, audit, music, The Line, duel blueprint.

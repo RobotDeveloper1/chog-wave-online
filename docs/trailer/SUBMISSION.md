@@ -9,7 +9,7 @@ Chog Wave Online
 Upload `docs/trailer/banner.png` (1920x1080, logo over the gate).
 
 **DESCRIPTION**
-CHOG WAVE is a real-time multiplayer RPG where your Chog is your fighter. Connect through Privy, roam Genesis City, duel mobs in card battler combat where your NFT traits are your stats, crawl dungeons, chase collection-volume anomalies, party up with friends, and wager real $CHOG in PvP brawls. Built on Monad. Inspiration: EarthBound's weird city meets Mega Man Battle Network's grid combat, with your NFT as the fighter.
+CHOG WAVE is a real-time multiplayer RPG where your Chog is your fighter. Connect through Privy, roam Genesis City, duel mobs in card battler combat where your NFT traits are your stats, crawl dungeons, chase collection-volume anomalies, party up with friends, and wager real $CHOG in PvP brawls — deposits and withdrawals settle on-chain with automatic payouts. Built on Monad. Inspiration: EarthBound's weird city meets Mega Man Battle Network's grid combat, with your NFT as the fighter.
 
 ## 02 SHOW IT
 
@@ -20,7 +20,7 @@ https://chogwave.online
 Upload `docs/trailer/chog-wave-trailer-v2.mp4` to YouTube as unlisted (1:38) and paste the link here.
 
 **TECH STACK**
-TypeScript · Vite · Babylon.js · Node.js · SQLite · Solidity · Privy · Monad · Caddy
+TypeScript · Three.js · Vite · Node.js · SQLite · viem · Privy · Monad · Caddy
 
 ## 03 FOR JUDGES (private)
 

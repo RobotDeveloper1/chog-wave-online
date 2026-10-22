@@ -1,4 +1,4 @@
-import { MONAD_TESTNET_CHAIN_ID, type HoldingsView } from '@chog/shared';
+import type { HoldingsView } from '@chog/shared';
 import { SERVER_HTTP } from './config.ts';
 import { ensurePrivyIsland, privyIsland, waitPrivyReady } from './app/privyIsland.tsx';
 
@@ -29,7 +29,26 @@ export class Wallet {
   session: string | null = null;
   /** Privy wallets are chain-agnostic: once logged in, the badge is lit. */
   onMonad = false;
-  readonly chainId = MONAD_TESTNET_CHAIN_ID;
+  /**
+   * The chain the server is actually on, read off its own /health. This used
+   * to be a build-time constant (testnet), which lied on mainnet — and one
+   * bundle serves both sites, so a constant can never be right. 0 until asked.
+   */
+  chainId = 0;
+
+  async readChain(): Promise<void> {
+    try {
+      const r = await fetch(`${SERVER_HTTP}/health`);
+      const h = (await r.json().catch(() => null)) as { chainId?: unknown } | null;
+      const id = Number(h?.chainId ?? 0);
+      if (id && id !== this.chainId) {
+        this.chainId = id;
+        this.notify();
+      }
+    } catch {
+      /* offline: the badge keeps its placeholder */
+    }
+  }
 
   private watchers = new Set<() => void>();
   private pending: { resolve: (s: SignIn) => void; reject: (e: Error) => void } | null = null;
@@ -134,6 +153,7 @@ export class Wallet {
     this.address = String(verified.address ?? address);
     this.session = verified.session;
     this.onMonad = true;
+    void this.readChain();
     localStorage.setItem(SESSION_KEY, JSON.stringify({ session: this.session, address: this.address }));
     this.notify();
     return { address: this.address, session: this.session };

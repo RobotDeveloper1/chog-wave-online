@@ -1,8 +1,8 @@
 # Mainnet launch
 
-The recording demo runs on testnet. Going live (`pro ar`) is a config change
-plus a client rebuild — no code changes, no migration. This file is the whole
-procedure.
+Mainnet is live at <https://chogwave.online> (testnet recording build at
+<https://demo.chogwave.online>). Both run the same code; the chain is config.
+This file is the whole procedure.
 
 ## Server: `.env`
 
@@ -14,12 +14,16 @@ CHOG_GENESIS_CONTRACT=0xc96d31f8626c6d03fae5dcd3d61e3fb9f4a73763
 # Namespace the provenance ledger, so mainnet history never reads testnet rows.
 CHAIN_ID=143
 
-# $CHOG deposit vault (a wallet YOU control; see below). Empty = deposits off.
+# $CHOG vault + hot wallet (same address; see "Real $CHOG ops" below).
+# Empty vault = deposits off (paper mode); empty key = manual payout queue.
 VAULT_ADDRESS=0x...
+HOT_WALLET_KEY=0x...
 
-# Keep both for the demo:
-FEED=chain        # live chain feed, not the simulator
-DEV_TOKENS=1      # judges can demo any token without holding one
+# Live chain feed, not the simulator.
+FEED=chain
+
+# NEVER on mainnet: DEV_TOKENS=1 lets anyone play any token without holding
+# it. It exists for the testnet recording build only.
 ```
 
 Restart the server process (`node --env-file-if-exists=../.env src/index.ts`
@@ -35,38 +39,39 @@ Rollback is the reverse: restore the testnet `.env` values (or just unset
 `CHAIN_ID`), restart. The testnet `transfers.json` is untouched — each chain
 keeps its own file.
 
-## Client: 4 lines + rebuild
+## Client: no per-chain edits
 
-Mirror the server, or holders get denied their own Chogs:
-
-1. `client/src/wallet.ts`: `MONAD_TESTNET_CHAIN_ID` → `MONAD_CHAIN_ID`
-   (import + `readonly chainId`).
-2. `client/src/app/picker.ts`: lede `chog testnet replicas · monad testnet` →
-   `chog genesis · monad mainnet`, and step 2 detail `a testnet Chog` →
-   `a mainnet Chog`.
-3. `npm run build -w client`, deploy `dist/`.
+One bundle serves both sites: the client is chain-agnostic (Privy login, no
+chain switch) and the picker badge reads the chain off the server's own
+`/health`. Rebuild and deploy `dist/` whenever client code changes —
+`npm run build -w client` with `VITE_PRIVY_APP_ID` set — but never to switch
+chains.
 
 Traits, art (`/art/:id`), the token map and the 1969 metadata records are
 chain-agnostic: mainnet token T is the same face and build on either chain.
 
 ## Real $CHOG ops
 
-- **Vault**: a fresh wallet whose key never leaves the operator. It only needs
-  MON for gas when paying withdrawals out.
+- **Vault = hot wallet**: one fresh address does both jobs. Player deposits
+  capitalize it, so it only ever needs MON for gas from the operator. Its key
+  lives in `HOT_WALLET_KEY` (host env + root-only backup) and is never logged.
 - **Deposits** credit automatically (whole $CHOG, floored; dust is recorded
-  but unpaid). Verify with a 1-$CHOG transfer to the vault, then check the
-  balance in game (`chog.deposit` loop action, or the brawl sheet).
-- **Withdrawals** queue for manual payout. List pendings:
-  `sqlite3 <DATA_DIR>/chog-wave.db "SELECT * FROM withdraw WHERE status='pending';"`
-  Pay from the vault, then mark it:
-  `sqlite3 <DATA_DIR>/chog-wave.db "UPDATE withdraw SET status='paid' WHERE id=?;"`
+  but unpaid), two blocks after they land. Verify with a 1-$CHOG transfer to
+  the vault, then check the balance in game (CASH tab).
+- **Withdrawals** pay automatically: request debits the ledger and queues;
+  the pump claims each row once, checks the float, sends the transfer, and
+  settles `done` with the tx hash — or settles `failed` and refunds. Only
+  deposited coins can ever leave (the grant is play money); caps are 500 per
+  wager, 2000 per wallet per day. Watch it live:
+  `SELECT id, wallet, amount, status, tx FROM withdraw ORDER BY id DESC LIMIT 10;`
 - Every applied vault Transfer is recorded by tx hash in `deposits`: re-polls
-  and restarts pay nothing twice.
+  and restarts pay nothing twice. Statuses: `pending` → `sending` → `done`
+  (or `failed`, refunded).
 
 ## Pre-launch verify (5 min)
 
 1. `/health` → `feed: chain`, `chainId: 143`, vault set.
 2. Foster join → travel Tolls → 13 mobs, packs of 2 and 3.
-3. Walk into a mob → ambush → duel → leave (see `LIVE_SMOKE`).
-4. DEV_TOKENS demo of a mainnet token id → real traits + real art.
-5. 1-$CHOG deposit → balance +1; withdraw request → row in `withdraw`.
+3. Walk into a mob → ambush → duel → leave.
+4. Holder login → real traits + real art for the held token.
+5. 1-$CHOG deposit → balance +1; withdraw 1 → payout tx on the explorer.

@@ -284,7 +284,7 @@ class Picker {
     const ribbon = this.bad ? '#ff5d72' : view && !view.ready ? '#f5c343' : '#43e2a8';
     this.markEl.innerHTML = wordmark(['CHOG', 'WAVE'], { cell: signed ? 3 : 6, ribbon });
 
-    this.chainEl.textContent = !wallet.address ? 'no session' : wallet.onMonad ? `chain ${wallet.chainId}` : 'off Monad';
+    this.chainEl.textContent = !wallet.address ? 'no session' : wallet.onMonad ? `chain ${wallet.chainId || '···'}` : 'off Monad';
     this.chainEl.classList.toggle('on', wallet.onMonad && !!wallet.address);
     this.chainEl.classList.toggle('bad', !!wallet.address && !wallet.onMonad);
     this.walletBtn.textContent = signed ? 'sign out' : wallet.available ? `connect ${wallet.label}` : 'no privy app id';

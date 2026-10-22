@@ -30,17 +30,18 @@ Clarity 15% · Execution 15%, tie-broken by Novelty then Retention. The NFT must
 
 ## 2. Repository layout
 
-npm workspaces monorepo, no git. Three packages plus tooling.
+npm workspaces monorepo on git (+ GitHub). Three packages plus tooling.
 
 ```
 chog/
   shared/    @chog/shared    pure game model — no DOM, no node, no three
   server/    @chog/server    node + ws + node:sqlite authoritative host
-  client/    @chog/client    vite + three.js (new) and phaser (legacy) entries
-  tools/     node/python scripts: MCP client, verifiers, generators, reports
-  blender/   OWNED BY ANOTHER SESSION — do not edit
+  client/    @chog/client    vite + three.js dual-screen shell
+  contracts/ testnet replica collection + deploy scripts
+  tools/     node/python scripts: checks, verifiers, generators, trailer capture
+  blender/   local 3D scratch (gitignored)
   .data/     metadata, traits.json, sprites, sqlite db, generated art
-  docs/      this document
+  docs/      systems, architecture, audit, music, design refs
 ```
 
 `shared` is imported by both `server` and `client` and is the only place gameplay rules
@@ -58,7 +59,7 @@ live. If a rule exists in two places, that is a bug.
 | regenerate the Album universe | `node tools/gen-album.mjs` |
 | attribute-per-token report | `node tools/formula-report.mjs` |
 | measured DPS / TTK / window report | `node tools/pacing-report.mjs` |
-| co-op / authority check against a live server | `npm run coop` — needs `DEV_TOKENS=1` on the server it points at; see §7.4 |
+| co-op / authority check against a live server | `npm run coop` — needs `DEV_TOKENS=1` + `DEV_LEVERS=1` on the server it points at; see §7.4 |
 
 TypeScript is `strict` with **`noUncheckedIndexedAccess: true`** — every array/object
 index read is `T | undefined`. This is why `pick()` and explicit guards exist in the
@@ -69,15 +70,16 @@ client geometry code; do not "simplify" them away.
 ## 3. Runtime topology
 
 ```
-browser ── vite :5173 ──┬── /            legacy Phaser entry (src/main.ts)
-                        ├── /shell.html  CURRENT entry (src/app/shell.ts)
+browser ── vite :5173 ──┬── /            shell entry (src/app/shell.ts)
+                        ├── /shell.html  same shell (legacy alias)
                         ├── /api,/chogs  proxied → :8787
                         └── /ws          proxied (ws:true) → :8787
 
 server :8787 ──── HTTP routes (index.ts)
-               ├── /api/auth/{nonce,verify,session,signout,holdings}  (auth.ts + owners.ts)
+               ├── /api/auth/{nonce,verify,privy,session,signout,holdings}  (auth.ts + privy.ts + owners.ts)
                ├── WebSocket world session
-               ├── chain poller (chain.ts, every ~9s window)
+               ├── chain poller (chain.ts, adaptive ~1s tick, 2-block confirmations)
+               ├── payout pump ($CHOG withdrawals, every 15s + on request)
                ├── node:sqlite  .data/chog-wave.db (WAL)
                └── .data/sprites/*.png atlases served on demand
 ```
@@ -87,10 +89,10 @@ the port to `VITE_PORT ?? 5173`; the server port is `process.env.PORT ?? 8787`. 
 servers on one machine therefore no longer have to fight over one world — point the second
 at its own server instead of sharing a world neither session started.
 
-**Two client entries exist.** `index.html` → `main.ts` is the original Phaser build
-(Title/Habitat/Battle scenes, 960×540). `shell.html` → `bootShell()` is the current
-Three.js dual-screen build that everything in sections 9–11 belongs to. They share
-`net.ts`, `config.ts`, `sprites.ts` and `audio.ts`.
+**One client entry exists.** `index.html` → `main.ts` → `bootShell()` is the
+Three.js dual-screen build that everything in sections 9–11 belongs to.
+(An old Phaser entry was removed; nothing references it. Shared: `net.ts`, `config.ts`,
+`sprites.ts` and `audio.ts`.)
 
 ---
 

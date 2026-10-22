@@ -73,6 +73,9 @@ Every claim below names the file that implements it. Paths are repo-rooted.
   failures refund the ledger and settle `failed`. Stale `sending` rows recover on boot.
 - Caps: `WITHDRAW_DAILY_MAX = 2000` per wallet per UTC day (`server/src/save.ts`
   `withdrawDailyTotal`); requests above it are refused before any debit.
+- Provenance: a wallet can only ever withdraw what it deposited
+  (`depositedBy`, floored per tx) — lifetime invariant **withdrawn ≤ deposited**.
+  The 1000 starting grant and paper winnings can never leave as real coins.
 - Config: `VAULT_ADDRESS` (deposits) + `HOT_WALLET_KEY` (signer) in `server/src/config.ts`;
   empty vault = paper mode, empty key = manual queue. `chog.deposit` returns vault +
   balance; `chog.withdraw` debits, queues, and pays automatically when configured.

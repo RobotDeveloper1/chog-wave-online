@@ -1,12 +1,15 @@
-# The Line — open-world progression (proposal, 2026-10-15)
+# The Line — open-world progression (shipped; design reference)
+
+> Proposed 2026-10-15, built since. The design below is the reference; current
+> behavior is in [SYSTEMS.md](./SYSTEMS.md).
 
 > Replaces the current progression: a Chog is born with a full 24–34 card folder and six
 > dungeons unlock cards at level 2. This document is the opposite of that. The rules, the
 > region tables and the exact code that changes are all below, so it can be argued with
 > before it is built.
 >
-> Read alongside `ARCHITECTURE.md` (what exists) and `ROADMAP.md` (what was being
-> changed). This one is what is being changed **now**.
+> Read alongside `ARCHITECTURE.md` and `SYSTEMS.md` (what exists). This one is
+> what was being changed **then** — it has been built since.
 
 ---
 

@@ -6,24 +6,13 @@ Destinado a ser implementado do zero. Nada aqui depende do código atual; onde o
 
 ---
 
-## 0. Estado da árvore hoje (leia antes de copiar qualquer coisa)
+## 0. Nota histórica (2026-10-11, sessão de trabalho)
 
-**Correção de 2026-10-11, fim do dia:** uma sessão paralela reescreveu o repo inteiro no meio deste
-documento. O motor velho (`shared/src/field.ts`, `duel.ts`, `custom.ts`, `moves.ts`) **foi apagado** e
-substituído por `shared/src/sf/` (element, card, field, custom, boss, stats, buster, busting, party,
-clock, session, view), exportado como `SF`. O novo motor **já remove a grade de colocação** (a carta
-mira pelo file onde você está, como Star Force) e **já tem** a câmera vertical atrás do Chog, o grado
-de Busting e o Buster. Os caminhos de arquivo citados nas seções 11 e 12 abaixo são do motor velho;
-o *design* continua de pé, os paths não. Antes de implementar qualquer coisa aqui, leia `sf/` primeiro.
-
-A working tree esteve **no meio de uma edição minha** quando este documento foi escrito, e o repo não
-é git — não há como desfazer. Especificamente:
-
-- Largura do chão virou dinâmica (`FieldState.cols`) mas **o cliente ainda tem um `((c.col % 3) + 3) % 3`** em `duel.ts:668` (mapping da carta pro tiro visual). O de `moveTo` já foi corrigido.
-- O laser do duelo foi ligado no servidor (`session.beam`, `LASER_CHARGE`, `DuelAction 'laser'`, `DuelPlayerView.laser`) e no dispatch do cliente, mas **faltam a tecla `L`, o método `beam()` e o handler `onLaser`**. Está compilando e os testes passam; só não há input.
-- O servidor que estava de pé em `:8799` é **anterior** a essas edições. Cliente (vite) e servidor divergem agora.
-
-Trate o código como referência de comportamento, não como fonte de verdade.
+Este blueprint foi escrito no meio de uma reescrita do motor de duelo
+(`shared/src/sf/`, exportado como `SF`). As notas de sessão originais desta
+seção (working tree, caminhos, portas) expiraram e foram removidas — o repo
+é git, o motor novo é o atual, e o *design* das seções abaixo continua de pé.
+Antes de implementar qualquer coisa aqui, leia `sf/` primeiro.
 
 ---
 
