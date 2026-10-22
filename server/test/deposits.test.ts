@@ -34,6 +34,7 @@ const ERIN = '0xEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE';
 let dir: string;
 let World: typeof import('../src/world.ts').World;
 let depositOf: typeof import('../src/chain.ts').depositOf;
+let nextWindow: typeof import('../src/chain.ts').nextWindow;
 let TransferLedger: typeof import('../src/ledger.ts').TransferLedger;
 let TRANSFER_TOPIC: string;
 
@@ -59,7 +60,7 @@ beforeAll(async () => {
   process.env.VAULT_ADDRESS = VAULT;
   process.env.CHAIN_ID = '143';
   ({ World } = await import('../src/world.ts'));
-  ({ depositOf } = await import('../src/chain.ts'));
+  ({ depositOf, nextWindow } = await import('../src/chain.ts'));
   ({ TransferLedger } = await import('../src/ledger.ts'));
   ({ TRANSFER_TOPIC } = await import('../src/rpc.ts'));
 });
@@ -90,6 +91,19 @@ describe('depositOf', () => {
     expect(depositOf(tokenLog(VAULT, hexWei(5)) as never, '')).toBeNull();
     // The vault paying out is not a deposit.
     expect(depositOf(tokenLog(VAULT, hexWei(5), '0xdef', VAULT) as never, VAULT)).toBeNull();
+  });
+});
+
+describe('nextWindow', () => {
+  it('walks one window per tick and never skips a gap', () => {
+    // Steady state: everything new in one window.
+    expect(nextWindow(100, 105, 900)).toEqual({ from: 101, to: 105 });
+    // Nothing new: no fetch.
+    expect(nextWindow(105, 105, 900)).toBeNull();
+    // A two-hour outage (7200 blocks) catches up 900 at a time, from the oldest.
+    expect(nextWindow(0, 7200, 900)).toEqual({ from: 1, to: 900 });
+    expect(nextWindow(900, 7200, 900)).toEqual({ from: 901, to: 1800 });
+    expect(nextWindow(6300, 7200, 900)).toEqual({ from: 6301, to: 7200 });
   });
 });
 

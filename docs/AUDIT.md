@@ -40,6 +40,16 @@ reorged deposit stayed credited — a phantom credit is a real payout.
   it) plus skipping `removed` logs (`server/src/chain.ts`). Two seconds of
   delay, invisible to players.
 
+### 4. Poll skipped deposits after downtime (MEDIUM)
+
+After a >900-block gap the poll clamped to the head and never looked back —
+deposits in the gap would sit uncredited until re-sent.
+
+- Fix: `nextWindow` (`server/src/chain.ts`) walks one window per tick from the
+  oldest unseen block. Steady state is byte-identical (one small window);
+  catch-up just takes one tick per 900 blocks.
+- Test: `nextWindow` in `server/test/deposits.test.ts`.
+
 ## Checked and sound
 
 - **Auth**: Privy access token verified server-side with id-token cross-check
@@ -51,6 +61,16 @@ reorged deposit stayed credited — a phantom credit is a real payout.
 - **Payout pump** (`server/src/payouts.ts`): atomic claim, float requeue,
   fail-refund, boot recover with receipt re-check. Unit-tested with a fake chain.
 - **Trades**: holdings re-checked at accept, single-threaded apply, no dup.
+- **Combat**: server-side sessions; hands, cells, cooldowns and damage all
+  resolve in `SF.*` — the client only names intentions. Wins are read off the
+  live session, never off the message (`line.clear`).
+- **Movement**: speed-clamped against the last accepted position; teleports
+  get walked at run speed. Doors park/restore coordinates, so room trips
+  cannot teleport.
+- **Dungeon/quests/shop**: node steps gated by `canEnter` (no boss skip);
+  turn-ins proximity-checked with server-side progress; shop prices and
+  ownership server-side; items consumed before effects.
+- **Chat**: 160 chars, control chars stripped, 6/10 s; client escapes on render.
 - **WS**: 60 msg/s + burst 150, 1 MB cap, 15 s heartbeat. CORS `*` is fine —
   bearer tokens, no cookies.
 - **Secrets**: `HOT_WALLET_KEY` never logged; `/health` exposes the vault
@@ -62,9 +82,9 @@ reorged deposit stayed credited — a phantom credit is a real payout.
   path — paper sink for now.
 - **Daily cap is per wallet**, so a determined user can split across wallets.
   Inherent without identity; the 2000 cap bounds the damage.
-- **Catch-up gap**: after >900 blocks (~15 min) of downtime the poll clamps and
-  skips the missed window instead of paginating it — deposits in the gap would
-  not credit until re-sent. Restarts take seconds; revisit before open launch.
+- **Catch-up gap**: fixed (see §4) — the poll now walks the gap instead of
+  skipping it. A multi-hour outage still takes ~1 tick per 900 blocks to
+  drain; fine for deploys, revisit before open launch.
 - **Mixed-coin wagering**: the invariant is per-wallet net (withdrawn ≤
   deposited), not per-coin taint. A depositor can always take back up to what
   they put in, never more.

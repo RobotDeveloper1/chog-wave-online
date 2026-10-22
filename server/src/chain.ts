@@ -76,6 +76,22 @@ async function priceTransfers(logs: RpcLog[]): Promise<SaleFact[]> {
   return dedupeFills(fills);
 }
 
+/**
+ * The next getLogs window, or null when there is nothing new. Walks forward
+ * one window per tick instead of jumping to the head: after downtime the poll
+ * catches up and credits every deposit in the gap rather than skipping it.
+ * Pure, so the catch-up rule is unit-testable without an RPC in the room.
+ */
+export function nextWindow(
+  lastBlock: number,
+  confirmed: number,
+  logWindow: number,
+): { from: number; to: number } | null {
+  if (confirmed <= lastBlock) return null;
+  const from = lastBlock + 1;
+  return { from, to: Math.min(confirmed, from + logWindow - 1) };
+}
+
 export interface ChainFeed {
   start(): Promise<void>;
   stop(): void;
@@ -144,11 +160,11 @@ export function createChainFeed(
       const confirmed = Math.max(0, head - 2);
       // Public RPCs cap the getLogs range (rpc2 tolerates ~10k blocks,
       // rpc.monad.xyz only 100), so never ask for more than configured.
-      const fromBlock = Math.max(lastBlock + 1, confirmed - CFG.logWindow);
+      const win = nextWindow(lastBlock, confirmed, CFG.logWindow);
 
-      if (confirmed > lastBlock) {
-        const from = toHex(fromBlock);
-        const to = toHex(confirmed);
+      if (win) {
+        const from = toHex(win.from);
+        const to = toHex(win.to);
         // Four reads, one request. Measured against rpc2: batches come back
         // unordered and may drop a slot, so every result is checked rather than
         // trusted — a silently missing log array would read as a quiet chain and
@@ -175,7 +191,7 @@ export function createChainFeed(
 
         const headTs = fromHex(latest.timestamp) * 1000;
         const span = (fromHex(latest.timestamp) - fromHex(first.timestamp)) * 1000;
-        if (span > 0 && head > fromBlock) blockTimeMs = span / (head - fromBlock);
+        if (span > 0 && head > win.from) blockTimeMs = span / (head - win.from);
         // The head's own timestamp is exact, so every log in the window is placed by
         // block distance rather than stamped with the time the poll happened to run.
         const tsFor = (block: number) => headTs - (head - block) * blockTimeMs;
@@ -226,7 +242,7 @@ export function createChainFeed(
         evs.push({ kind: 'chain-pulse', amount: ratio, block: head, ts: headTs });
 
         onEvents(evs);
-        lastBlock = confirmed;
+        lastBlock = win.to;
       }
     } catch (err) {
       console.warn('[chain] poll failed:', (err as Error).message);
