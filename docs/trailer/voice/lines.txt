@@ -1,0 +1,20 @@
+open|Your Chog is not a profile picture. It's your fighter. This is Chog Wave!
+01|One thousand nine hundred sixty-nine Chogs live on Monad. Connect your wallet and find yours!
+02|Every single token, rendered in full 3D. Pick the one you hold!
+03|Welcome to Genesis City! Grab a quest and hit the street!
+04|Past the line: the Tolls, packed with wild mobs and fat loot!
+05|They roam in packs. Bring backup!
+06|Get spotted and it's an ambush! No countdown, just combat!
+07|Six cards, one element. Preview the damage, then fire!
+08|Everything you kill drops cards! Walk over and take them!
+09|Loot goes straight into your deck. Zero waiting!
+10|Your Chog's traits ARE your stats! Rare head, real damage!
+11|Tune your deck until it hurts! Then tune it more!
+12|Bad pull? Sell it! The market is always open!
+13|And when the collection trades, the anomaly wakes! Volume is the raid boss!
+14|Dungeons, parties, ranks! A real endgame with zero subscription!
+15|Squad up! Cover your friends and drag them home!
+16|Climb the ranks! Somebody has to be first!
+17|Challenge anyone, anywhere! Two Chogs enter, one gets paid!
+18|Winner takes the pot, paid in real Chog!
+end|Chog Wave! Chogathon demo! Your move!

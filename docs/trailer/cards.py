@@ -41,7 +41,7 @@ def main() -> None:
     strip = Image.new('RGBA', (W, 130), (5, 3, 12, 220))
     end.paste(strip, (0, H - 130), strip)
     font = ImageFont.truetype(IMPACT, 64)
-    txt = 'CHOGATHON DEMO \u00b7 MONAD MAINNET'
+    txt = 'CHOGATHON DEMO \u00b7 MONAD TESTNET'
     tw = d.textlength(txt, font=font)
     d.text(((W - tw) / 2, H - 112), txt, font=font, fill=(245, 195, 67))
     end.save(CARDS / 'end.png')
@@ -54,7 +54,16 @@ def main() -> None:
         ('06', 'AMBUSH', 'walk in and it starts'),
         ('07', 'DUEL', 'programs, previews, pain'),
         ('08', 'DROPS', 'the purse on the ground'),
-        ('09', 'LOOT', 'your jpeg pays out'),
+        ('09', 'LOOT', 'new cards hit the deck'),
+        ('10', 'THE SHEET', 'your traits are your stats'),
+        ('11', 'THE DECK', 'build the program'),
+        ('12', 'THE MARKET', 'cards have prices'),
+        ('13', 'ANOMALY', 'spawned by real collection volume'),
+        ('14', 'DUNGEON', 'down the hatch'),
+        ('15', 'PARTY UP', 'never duel alone'),
+        ('16', 'RANKS', 'someone is better than you'),
+        ('17', 'CALLOUT', 'put chog where your mouth is'),
+        ('18', 'BOUT', 'two chogs enter, one gets paid'),
     ]
     for num, title, sub in sections:
         slug(title, sub).save(CARDS / f's{num}.png')
