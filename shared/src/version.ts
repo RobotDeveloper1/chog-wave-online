@@ -6,6 +6,6 @@
  * the npm package version.
  */
 export const GAME_NAME = 'CHOG WAVE';
-export const BUILD_VERSION = '0.0.5';
+export const BUILD_VERSION = '0.0.5b';
 /** The name this build carries on screen: shown beside the version in the top-right stamp. */
 export const BUILD_TAG = 'Chogathon build';

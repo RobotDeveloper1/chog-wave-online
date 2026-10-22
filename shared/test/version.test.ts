@@ -3,11 +3,12 @@ import { BUILD_VERSION, GAME_NAME } from '../src/version.ts';
 
 describe('the build label', () => {
   it('is a plain three-part version, so it reads the same everywhere it is printed', () => {
-    expect(BUILD_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+    // A single trailing letter marks a bugfix respin of the same build (0.0.5b).
+    expect(BUILD_VERSION).toMatch(/^\d+\.\d+\.\d+[a-z]?$/);
   });
 
   it('names the game the way the player was told', () => {
     expect(GAME_NAME).toBe('CHOG WAVE');
-    expect(BUILD_VERSION).toBe('0.0.5');
+    expect(BUILD_VERSION).toBe('0.0.5b');
   });
 });
